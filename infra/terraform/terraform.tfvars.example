@@ -1,0 +1,10 @@
+project_name      = "aws-smart-cash-flow"
+environment       = "shared"
+aws_region        = "us-east-1"
+github_repository = "OWNER/aws-smart-cash-flow"
+
+# Fill after the Amplify app exists.
+# Example shape:
+# amplify_app_arn = "arn:aws:amplify:us-east-1:123456789012:apps/APP_ID"
+amplify_app_arn = ""
+
