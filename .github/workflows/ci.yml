@@ -46,7 +46,7 @@ jobs:
             changed_files="$(git diff --name-only "$before" "$current")"
           fi
 
-          if echo "$changed_files" | grep -Eq '^(frontend/|\.github/workflows/ci\.yml$)'; then
+          if echo "$changed_files" | grep -Eq '^frontend/'; then
             echo "frontend=true" >> "$GITHUB_OUTPUT"
           else
             echo "frontend=false" >> "$GITHUB_OUTPUT"
