@@ -10,10 +10,16 @@
 
 Workflows:
 
-- `.github/workflows/ci.yml`: runs backend lint/tests and frontend build.
-- `.github/workflows/deploy.yml`: optionally runs Terraform and triggers AWS
-  Amplify branch deploys for `develop` and `main` when AWS variables are
-  configured.
+- `.github/workflows/ci.yml`: runs backend lint/tests and frontend lint/build.
+  On push to `develop` or `main`, the frontend deploy is triggered only after
+  these checks pass.
+
+Cost rule:
+
+- Feature branches and pull requests run CI only.
+- Amplify deploy is not triggered for feature branches.
+- Amplify deploy is triggered for `develop` and `main` only after backend and
+  frontend checks pass.
 
 ## Terraform
 
@@ -83,8 +89,10 @@ Bootstrap:
 4. Add the output `github_actions_deploy_role_arn` to GitHub repository
    variables as `AWS_ROLE_TO_ASSUME`.
 
-After bootstrap, set `TERRAFORM_DEPLOY_ENABLED=true` to let GitHub Actions apply
-Terraform on `develop` and `main`.
+Keep `TERRAFORM_DEPLOY_ENABLED=false` until Terraform state is split into a
+bootstrap state and an application-infra state. The current economical deploy
+path uses GitHub Actions only to run checks and trigger Amplify after checks
+pass.
 
 ## Required GitHub Variables
 
@@ -94,7 +102,8 @@ Repository variables:
 - `AWS_REGION`: AWS region used by Amplify/Lambda.
 - `AMPLIFY_APP_ID`: AWS Amplify app id.
 - `AMPLIFY_APP_ARN`: AWS Amplify app ARN used by Terraform IAM policy.
-- `TERRAFORM_DEPLOY_ENABLED`: set to `true` only after OIDC bootstrap.
+- `TERRAFORM_DEPLOY_ENABLED`: keep `false` until application Terraform state is
+  separated from bootstrap IAM/OIDC state.
 
 ## AWS OIDC
 

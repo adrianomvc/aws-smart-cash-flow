@@ -11,6 +11,10 @@ on:
       - develop
       - main
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   backend:
     name: Backend tests
@@ -59,3 +63,68 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  deploy-frontend:
+    name: Trigger Amplify deploy
+    runs-on: ubuntu-latest
+    needs:
+      - backend
+      - frontend
+    if: ${{ github.event_name == 'push' && (github.ref_name == 'develop' || github.ref_name == 'main') && vars.AWS_ROLE_TO_ASSUME != '' && vars.AWS_REGION != '' && vars.AMPLIFY_APP_ID != '' }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Trigger branch deploy
+        run: |
+          set -euo pipefail
+
+          app_id="${{ vars.AMPLIFY_APP_ID }}"
+          branch_name="${{ github.ref_name }}"
+
+          latest_status="$(aws amplify list-jobs \
+            --app-id "$app_id" \
+            --branch-name "$branch_name" \
+            --max-items 1 \
+            --query 'jobSummaries[0].status' \
+            --output text 2>/dev/null || true)"
+
+          if [ "$latest_status" = "PENDING" ] || [ "$latest_status" = "RUNNING" ]; then
+            echo "Amplify branch $branch_name already has a $latest_status job; skipping duplicate trigger."
+            exit 0
+          fi
+
+          set +e
+          start_output="$(aws amplify start-job \
+            --app-id "$app_id" \
+            --branch-name "$branch_name" \
+            --job-type RELEASE 2>&1)"
+          start_status=$?
+          set -e
+
+          if [ "$start_status" -ne 0 ]; then
+            if echo "$start_output" | grep -q "pending or running jobs"; then
+              echo "Amplify branch $branch_name already has a pending or running job; treating as success."
+              exit 0
+            fi
+
+            echo "$start_output"
+            exit "$start_status"
+          fi
+
+          echo "$start_output"
+
+  backend-deploy-placeholder:
+    name: Backend deploy gate
+    runs-on: ubuntu-latest
+    needs:
+      - backend
+    if: ${{ github.event_name == 'push' && (github.ref_name == 'develop' || github.ref_name == 'main') }}
+    steps:
+      - name: Explain backend deploy status
+        run: |
+          echo "Backend deploy is intentionally disabled until infra/Lambda template is added."
+          echo "Frontend Amplify deploy runs after backend tests and frontend build pass."
