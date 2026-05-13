@@ -162,3 +162,138 @@ def test_list_transactions_filters_by_category_and_paginates(
     assert payload["items"][0]["category_id"] == category.id
     assert payload["items"][0]["category_source"] == "manual"
     assert payload["items"][0]["category_review_status"] == "accepted"
+
+
+def test_update_transaction_category_creates_manual_assignment(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="fatura.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/fatura.csv",
+        content=b"data,lan\xc3\xa7amento,valor\n2026-05-08,PADARIA,26.06\n",
+    )
+    transaction = db_session.scalars(select(Transaction)).one()
+    category = Category(id=str(uuid4()), workspace_id=auth.workspace_id, name="Alimentacao")
+    db_session.add(category)
+    db_session.commit()
+
+    response = client.patch(
+        f"/v1/transactions/{transaction.id}/category",
+        json={"category_id": category.id},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["id"] == transaction.id
+    assert payload["category_id"] == category.id
+    assert payload["category_source"] == "manual"
+    assert payload["category_review_status"] == "accepted"
+
+    assignment = db_session.scalars(select(TransactionCategoryAssignment)).one()
+    assert assignment.workspace_id == auth.workspace_id
+    assert assignment.transaction_id == transaction.id
+    assert assignment.category_id == category.id
+    assert assignment.source == "manual"
+    assert assignment.confidence == Decimal("1.0000")
+    assert assignment.review_status == "accepted"
+
+
+def test_update_transaction_category_replaces_existing_assignment_with_manual(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="fatura.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/fatura.csv",
+        content=b"data,lan\xc3\xa7amento,valor\n2026-05-08,UBER,12.50\n",
+    )
+    transaction = db_session.scalars(select(Transaction)).one()
+    old_category = Category(id=str(uuid4()), workspace_id=auth.workspace_id, name="Antiga")
+    new_category = Category(id=str(uuid4()), workspace_id=auth.workspace_id, name="Transporte")
+    db_session.add_all([old_category, new_category])
+    db_session.add(
+        TransactionCategoryAssignment(
+            id=str(uuid4()),
+            workspace_id=auth.workspace_id,
+            transaction_id=transaction.id,
+            category_id=old_category.id,
+            source="rule",
+            confidence=Decimal("1.0000"),
+            review_status="accepted",
+        )
+    )
+    db_session.commit()
+
+    response = client.patch(
+        f"/v1/transactions/{transaction.id}/category",
+        json={"category_id": new_category.id},
+    )
+
+    assert response.status_code == 200
+    assignment = db_session.scalars(select(TransactionCategoryAssignment)).one()
+    assert assignment.category_id == new_category.id
+    assert assignment.source == "manual"
+    assert assignment.review_status == "accepted"
+
+
+def test_update_transaction_category_returns_404_for_other_workspace_resources(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    service = ImportService(db_session)
+    result = service.import_bytes(
+        auth=auth,
+        filename="fatura.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/fatura.csv",
+        content=b"data,lan\xc3\xa7amento,valor\n2026-05-08,PADARIA,26.06\n",
+    )
+    transaction = db_session.scalars(select(Transaction)).one()
+    other_auth = AuthContext(user_id=auth.user_id, workspace_id=str(uuid4()))
+    other_result = service.import_bytes(
+        auth=other_auth,
+        filename="outro-extrato.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{other_auth.workspace_id}/outro-extrato.txt",
+        content=b"01/07/2025;PIX OUTRO;-20,00\n",
+    )
+    current_category = Category(
+        id=str(uuid4()),
+        workspace_id=auth.workspace_id,
+        name="Alimentacao",
+    )
+    other_category = Category(
+        id=str(uuid4()),
+        workspace_id=other_auth.workspace_id,
+        name="Outro",
+    )
+    db_session.add_all([current_category, other_category])
+    db_session.commit()
+    other_transaction = db_session.scalars(
+        select(Transaction).where(Transaction.import_job_id == other_result.import_job_id)
+    ).one()
+
+    other_category_response = client.patch(
+        f"/v1/transactions/{transaction.id}/category",
+        json={"category_id": other_category.id},
+    )
+    other_transaction_response = client.patch(
+        f"/v1/transactions/{other_transaction.id}/category",
+        json={"category_id": current_category.id},
+    )
+
+    assert result.import_job_id != other_result.import_job_id
+    assert other_category_response.status_code == 404
+    assert other_transaction_response.status_code == 404
