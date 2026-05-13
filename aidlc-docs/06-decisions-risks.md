@@ -179,6 +179,16 @@ Motivo:
   isso evitar armazenar tokens sensiveis no state; os recursos AWS e permissoes
   associados devem permanecer sob controle do Terraform.
 
+DEC-019: Recursos AWS gerenciados por Terraform devem usar tags padrao de custo.
+
+Motivo:
+
+- Permite acompanhar custos por projeto, aplicacao, ambiente e centro de custo
+  no AWS Cost Explorer.
+- Evita misturar custos deste MVP com outros experimentos ou aplicacoes AWS.
+- Mantem rastreabilidade operacional sem incluir dados financeiros sensiveis em
+  nomes de recursos, logs ou tags.
+
 R-007: Banco gratuito pode impor limites de armazenamento, conexoes ou pausa por inatividade.
 
 Mitigacao:

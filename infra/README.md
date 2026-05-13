@@ -13,6 +13,8 @@ Cost guardrails:
 - Do not create NAT Gateway for MVP 1.
 - Do not enable WAF unless explicitly approved.
 - Keep CloudWatch logs concise and without financial details.
+- Every AWS resource managed by Terraform must carry the standard cost
+  allocation tags documented in `deployment.md`.
 
 Next infrastructure artifact:
 

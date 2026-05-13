@@ -4,6 +4,12 @@ variable "project_name" {
   default     = "aws-smart-cash-flow"
 }
 
+variable "application_name" {
+  description = "Human-readable application name used for cost allocation tags."
+  type        = string
+  default     = "smart-cash-flow"
+}
+
 variable "environment" {
   description = "Deployment environment name."
   type        = string
@@ -19,6 +25,24 @@ variable "aws_region" {
 variable "github_repository" {
   description = "GitHub repository in owner/name format."
   type        = string
+}
+
+variable "owner" {
+  description = "Business or technical owner used for AWS cost allocation tags."
+  type        = string
+  default     = "adrianomvc"
+}
+
+variable "cost_center" {
+  description = "Cost center used for AWS cost allocation tags."
+  type        = string
+  default     = "personal"
+}
+
+variable "additional_tags" {
+  description = "Additional tags merged into the standard AWS tag set."
+  type        = map(string)
+  default     = {}
 }
 
 variable "github_deploy_branches" {
@@ -38,4 +62,3 @@ variable "amplify_app_arn" {
   type        = string
   default     = ""
 }
-
