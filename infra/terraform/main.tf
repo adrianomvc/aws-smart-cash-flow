@@ -3,6 +3,20 @@ data "aws_caller_identity" "current" {}
 locals {
   name_prefix = "${var.project_name}-${var.environment}"
 
+  common_tags = merge(
+    {
+      Project            = var.project_name
+      Application        = var.application_name
+      Environment        = var.environment
+      ManagedBy          = "terraform"
+      Owner              = var.owner
+      CostCenter         = var.cost_center
+      Repository         = var.github_repository
+      DataClassification = "sensitive-financial"
+    },
+    var.additional_tags,
+  )
+
   deploy_branch_subjects = [
     for branch in var.github_deploy_branches :
     "repo:${var.github_repository}:ref:refs/heads/${branch}"
@@ -13,6 +27,7 @@ resource "aws_iam_openid_connect_provider" "github" {
   url             = "https://token.actions.githubusercontent.com"
   client_id_list  = ["sts.amazonaws.com"]
   thumbprint_list = var.github_oidc_thumbprints
+  tags            = local.common_tags
 }
 
 data "aws_iam_policy_document" "github_actions_assume_role" {
@@ -43,11 +58,7 @@ resource "aws_iam_role" "github_actions_deploy" {
   name               = "${local.name_prefix}-github-actions-deploy"
   assume_role_policy = data.aws_iam_policy_document.github_actions_assume_role.json
 
-  tags = {
-    Project     = var.project_name
-    Environment = var.environment
-    ManagedBy   = "terraform"
-  }
+  tags = local.common_tags
 }
 
 data "aws_iam_policy_document" "amplify_deploy" {
@@ -57,6 +68,7 @@ data "aws_iam_policy_document" "amplify_deploy" {
     effect = "Allow"
     actions = [
       "amplify:StartJob",
+      "amplify:ListJobs",
       "amplify:GetJob",
       "amplify:GetApp",
       "amplify:GetBranch",
@@ -76,4 +88,3 @@ resource "aws_iam_role_policy" "amplify_deploy" {
   role   = aws_iam_role.github_actions_deploy.id
   policy = data.aws_iam_policy_document.amplify_deploy[0].json
 }
-

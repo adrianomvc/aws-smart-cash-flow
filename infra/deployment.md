@@ -33,6 +33,47 @@ Initial scope:
 - GitHub Actions deploy role scoped to `develop` and `main`.
 - Optional Amplify deploy permission when `amplify_app_arn` is set.
 
+## AWS Cost Tags
+
+All AWS resources managed by Terraform must use the provider-level
+`default_tags` block. The standard tags are:
+
+```text
+Project=aws-smart-cash-flow
+Application=smart-cash-flow
+Environment=shared|develop|production
+ManagedBy=terraform
+Owner=adrianomvc
+CostCenter=personal
+Repository=adrianomvc/aws-smart-cash-flow
+DataClassification=sensitive-financial
+```
+
+Optional extra tags can be set with `additional_tags`, for example:
+
+```hcl
+additional_tags = {
+  Workload = "mvp"
+}
+```
+
+Cost tracking rule:
+
+- Use `Project` to separate this project from other AWS projects.
+- Use `Environment` to split development and production cost.
+- Use `CostCenter` for personal, client, or business allocation.
+- Use `Application` for dashboards across resources that belong to the same app.
+
+After the first tagged resources exist, activate these user-defined cost
+allocation tags in AWS Billing:
+
+```text
+Billing and Cost Management -> Cost allocation tags
+```
+
+Then use Cost Explorer grouped by `Project`, `Application`, `Environment`, or
+`CostCenter`.
+
 Bootstrap:
 
 1. Copy `infra/terraform/terraform.tfvars.example` to a local `terraform.tfvars`.
