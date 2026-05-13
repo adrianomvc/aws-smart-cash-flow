@@ -3,12 +3,12 @@ from collections.abc import Generator
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.core.config import settings
+from app.core.config import normalize_database_url, settings
 from app.db.models import Base
 
 
 def _database_url() -> str:
-    return settings.database_url or "sqlite:///./smart_cash_flow.db"
+    return normalize_database_url(settings.database_url) or "sqlite:///./smart_cash_flow.db"
 
 
 engine = create_engine(
