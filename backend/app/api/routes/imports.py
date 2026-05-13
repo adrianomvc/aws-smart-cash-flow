@@ -1,0 +1,188 @@
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from pydantic import BaseModel
+from sqlalchemy import desc, select
+from sqlalchemy.orm import Session
+
+from app.core.auth import AuthContext, AuthDependency
+from app.db.models import ImportError, ImportJob, SourceFile
+from app.db.session import get_db
+from app.services.import_service import ImportService
+
+router = APIRouter(prefix="/imports", tags=["imports"])
+UploadFileDependency = File(...)
+DbDependency = Depends(get_db)
+
+
+class SourceFileRead(BaseModel):
+    id: str
+    original_filename: str
+    source_kind: str
+    mime_type: str
+    size_bytes: int
+    storage_bucket: str
+    storage_path: str
+    received_at: datetime
+
+
+class ImportJobRead(BaseModel):
+    id: str
+    source_file_id: str
+    status: str
+    started_at: datetime | None
+    finished_at: datetime | None
+    total_rows: int
+    valid_rows: int
+    error_rows: int
+    created_at: datetime
+    source_file: SourceFileRead | None = None
+
+
+class ImportErrorRead(BaseModel):
+    id: str
+    import_job_id: str
+    source_line: int | None
+    field_name: str | None
+    raw_value: str | None
+    error_code: str
+    message: str
+    created_at: datetime
+
+
+class ImportListResponse(BaseModel):
+    workspace_id: str
+    items: list[ImportJobRead]
+
+
+class ImportErrorListResponse(BaseModel):
+    workspace_id: str
+    import_job_id: str
+    items: list[ImportErrorRead]
+
+
+@router.post("")
+async def create_import(
+    auth: AuthContext = AuthDependency,
+    file: UploadFile = UploadFileDependency,
+    db: Session = DbDependency,
+) -> dict[str, object]:
+    result = await ImportService(db).process_upload(auth=auth, file=file)
+    return result.model_dump()
+
+
+@router.get("")
+async def list_imports(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+    status_filter: str | None = Query(default=None, alias="status"),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> ImportListResponse:
+    query = (
+        select(ImportJob, SourceFile)
+        .join(SourceFile, SourceFile.id == ImportJob.source_file_id)
+        .where(ImportJob.workspace_id == auth.workspace_id)
+        .order_by(desc(ImportJob.created_at), desc(ImportJob.id))
+        .limit(limit)
+        .offset(offset)
+    )
+    if status_filter:
+        query = query.where(ImportJob.status == status_filter)
+
+    items = [
+        _import_job_read(import_job=import_job, source_file=source_file)
+        for import_job, source_file in db.execute(query).all()
+    ]
+    return ImportListResponse(workspace_id=auth.workspace_id, items=items)
+
+
+@router.get("/{import_job_id}")
+async def get_import(
+    import_job_id: str,
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> ImportJobRead:
+    row = db.execute(
+        select(ImportJob, SourceFile)
+        .join(SourceFile, SourceFile.id == ImportJob.source_file_id)
+        .where(
+            ImportJob.id == import_job_id,
+            ImportJob.workspace_id == auth.workspace_id,
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import not found")
+
+    import_job, source_file = row
+    return _import_job_read(import_job=import_job, source_file=source_file)
+
+
+@router.get("/{import_job_id}/errors")
+async def list_import_errors(
+    import_job_id: str,
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> ImportErrorListResponse:
+    import_job = db.scalar(
+        select(ImportJob).where(
+            ImportJob.id == import_job_id,
+            ImportJob.workspace_id == auth.workspace_id,
+        )
+    )
+    if import_job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import not found")
+
+    errors = db.scalars(
+        select(ImportError)
+        .where(
+            ImportError.import_job_id == import_job_id,
+            ImportError.workspace_id == auth.workspace_id,
+        )
+        .order_by(ImportError.source_line, ImportError.id)
+    ).all()
+    return ImportErrorListResponse(
+        workspace_id=auth.workspace_id,
+        import_job_id=import_job_id,
+        items=[
+            ImportErrorRead(
+                id=error.id,
+                import_job_id=error.import_job_id,
+                source_line=error.source_line,
+                field_name=error.field_name,
+                raw_value=error.raw_value,
+                error_code=error.error_code,
+                message=error.message,
+                created_at=error.created_at,
+            )
+            for error in errors
+        ],
+    )
+
+
+def _source_file_read(source_file: SourceFile) -> SourceFileRead:
+    return SourceFileRead(
+        id=source_file.id,
+        original_filename=source_file.original_filename,
+        source_kind=source_file.source_kind,
+        mime_type=source_file.mime_type,
+        size_bytes=source_file.size_bytes,
+        storage_bucket=source_file.storage_bucket,
+        storage_path=source_file.storage_path,
+        received_at=source_file.received_at,
+    )
+
+
+def _import_job_read(import_job: ImportJob, source_file: SourceFile | None) -> ImportJobRead:
+    return ImportJobRead(
+        id=import_job.id,
+        source_file_id=import_job.source_file_id,
+        status=import_job.status,
+        started_at=import_job.started_at,
+        finished_at=import_job.finished_at,
+        total_rows=import_job.total_rows,
+        valid_rows=import_job.valid_rows,
+        error_rows=import_job.error_rows,
+        created_at=import_job.created_at,
+        source_file=_source_file_read(source_file) if source_file is not None else None,
+    )

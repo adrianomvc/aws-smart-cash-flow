@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+dist/
+build/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Sensitive local financial inputs
+input/
+
+# Local development databases
+*.db
+*.sqlite
+*.sqlite3
+
+# AWS / local tooling
+.aws-sam/
+.serverless/
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+crash.*.log
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
