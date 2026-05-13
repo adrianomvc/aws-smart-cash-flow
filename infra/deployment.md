@@ -1,0 +1,82 @@
+# Deployment Plan
+
+## Branches
+
+- `feature/*`: development branches. Run CI on push and pull request.
+- `develop`: integration branch. Run CI and trigger the development deploy.
+- `main`: production branch. Run CI and trigger the production deploy.
+
+## GitHub Actions
+
+Workflows:
+
+- `.github/workflows/ci.yml`: runs backend lint/tests and frontend build.
+- `.github/workflows/deploy.yml`: optionally runs Terraform and triggers AWS
+  Amplify branch deploys for `develop` and `main` when AWS variables are
+  configured.
+
+## Terraform
+
+Terraform lives in `infra/terraform`.
+
+Decision:
+
+- AWS infrastructure is managed by Terraform.
+- This includes IAM/OIDC, Amplify-related AWS permissions, future Lambda/API
+  Gateway, CloudWatch logs, budgets, and environment-specific AWS settings.
+- Supabase is an external platform dependency and is documented/configured by
+  environment, not created as AWS infrastructure.
+
+Initial scope:
+
+- GitHub Actions OIDC provider.
+- GitHub Actions deploy role scoped to `develop` and `main`.
+- Optional Amplify deploy permission when `amplify_app_arn` is set.
+
+Bootstrap:
+
+1. Copy `infra/terraform/terraform.tfvars.example` to a local `terraform.tfvars`.
+2. Fill `github_repository` with `owner/aws-smart-cash-flow`.
+3. Run `terraform init` and `terraform apply` with AWS credentials that can
+   create IAM resources.
+4. Add the output `github_actions_deploy_role_arn` to GitHub repository
+   variables as `AWS_ROLE_TO_ASSUME`.
+
+After bootstrap, set `TERRAFORM_DEPLOY_ENABLED=true` to let GitHub Actions apply
+Terraform on `develop` and `main`.
+
+## Required GitHub Variables
+
+Repository variables:
+
+- `AWS_ROLE_TO_ASSUME`: IAM role ARN for GitHub OIDC.
+- `AWS_REGION`: AWS region used by Amplify/Lambda.
+- `AMPLIFY_APP_ID`: AWS Amplify app id.
+- `AMPLIFY_APP_ARN`: AWS Amplify app ARN used by Terraform IAM policy.
+- `TERRAFORM_DEPLOY_ENABLED`: set to `true` only after OIDC bootstrap.
+
+## AWS OIDC
+
+Use GitHub OIDC instead of long-lived AWS access keys. The IAM role should trust
+the repository and allow only the required actions.
+
+Minimum action for the current frontend deploy workflow:
+
+```text
+amplify:StartJob
+```
+
+Scope the permission to the Amplify app used by this project.
+
+## Backend Deploy
+
+Backend deploy is intentionally gated until the Lambda/API Gateway infrastructure
+template is created. The target remains:
+
+```text
+API Gateway HTTP API -> AWS Lambda Python -> Supabase
+```
+
+The next infra artifact should define the Lambda package, API Gateway routes,
+environment variables, and log retention before automatic backend deploy is
+enabled.

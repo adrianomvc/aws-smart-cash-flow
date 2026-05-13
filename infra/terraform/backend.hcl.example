@@ -1,0 +1,5 @@
+bucket       = "aws-smart-cash-flow-terraform-state"
+key          = "aws-smart-cash-flow/shared/terraform.tfstate"
+region       = "us-east-1"
+encrypt      = true
+use_lockfile = true
