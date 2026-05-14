@@ -82,6 +82,9 @@ def test_list_transactions_returns_current_workspace_transactions(
     assert response.status_code == 200
     payload = response.json()
     assert payload["workspace_id"] == auth.workspace_id
+    assert payload["total"] == 2
+    assert payload["limit"] == 50
+    assert payload["offset"] == 0
     assert [item["description"] for item in payload["items"]] == ["SALARIO", "PIX MERCADO"]
     assert payload["items"][0]["amount"] == "100.00"
     assert payload["items"][0]["direction"] == "credit"
@@ -116,6 +119,7 @@ def test_list_transactions_filters_by_date_source_and_query(
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["total"] == 1
     assert [item["description"] for item in payload["items"]] == ["PADARIA"]
 
 
@@ -157,6 +161,9 @@ def test_list_transactions_filters_by_category_and_paginates(
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["total"] == 1
+    assert payload["limit"] == 1
+    assert payload["offset"] == 0
     assert len(payload["items"]) == 1
     assert payload["items"][0]["description"] == "UBER"
     assert payload["items"][0]["category_id"] == category.id

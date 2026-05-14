@@ -137,8 +137,9 @@ Constraints:
 - `started_at` timestamptz null
 - `finished_at` timestamptz null
 - `total_rows` integer not null default 0
-- `valid_rows` integer not null default 0
+- `valid_rows` integer not null default 0; conta linhas validas que geraram novas transacoes persistidas
 - `error_rows` integer not null default 0
+- `duplicate_rows` nao possui coluna dedicada no MVP; e derivado nas respostas como `total_rows - valid_rows - error_rows`
 - `created_at` timestamptz not null
 
 Status:
@@ -305,13 +306,14 @@ sha256(file_bytes)
 Transacao:
 
 ```text
-sha256(workspace_id | source_file_id | source_line | transaction_date | raw_description | amount)
+sha256(workspace_id | source_type | transaction_date | raw_description | amount | direction)
 ```
 
 Regra:
 
 - Mesmo arquivo no mesmo workspace deve gerar `duplicate_file`.
-- Mesma transacao no mesmo workspace nao deve ser duplicada.
+- Mesma transacao no mesmo workspace nao deve ser duplicada, mesmo quando aparece em arquivo diferente com periodo sobreposto.
+- No MVP, duplicidade transacional e avaliada por `workspace_id`, `source_type`, `transaction_date`, `raw_description`, `amount` e `direction`.
 
 ## Endpoints
 
@@ -356,7 +358,8 @@ Resposta:
   "status": "completed",
   "total_rows": 10,
   "valid_rows": 9,
-  "error_rows": 1
+  "error_rows": 1,
+  "duplicate_rows": 0
 }
 ```
 

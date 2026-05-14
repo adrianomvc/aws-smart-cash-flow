@@ -75,8 +75,20 @@ def test_parse_credit_card_csv_valid_rows() -> None:
 
     assert result.total_rows == 2
     assert len(result.transactions) == 2
-    assert result.transactions[0].amount == Decimal("26.06")
+    assert result.transactions[0].amount == Decimal("-26.06")
+    assert result.transactions[0].direction == TransactionDirection.DEBIT
+    assert result.transactions[1].amount == Decimal("775.69")
     assert result.transactions[1].direction == TransactionDirection.PAYMENT
+
+
+def test_parse_credit_card_csv_negative_non_payment_becomes_credit() -> None:
+    content = "data,lançamento,valor\n2026-05-08,ESTORNO COMPRA,-26.06"
+
+    result = parse_credit_card_csv(content)
+
+    assert result.errors == []
+    assert result.transactions[0].amount == Decimal("26.06")
+    assert result.transactions[0].direction == TransactionDirection.CREDIT
 
 
 def test_parse_credit_card_csv_invalid_header() -> None:
@@ -134,4 +146,5 @@ def test_parse_credit_card_csv_preserves_accented_description() -> None:
     assert result.errors == []
     assert result.transactions[0].raw_description == "PADARIA SÃO JOSÉ   CAFÉ"
     assert result.transactions[0].description == "PADARIA SÃO JOSÉ CAFÉ"
+    assert result.transactions[0].amount == Decimal("-26.06")
     assert result.transactions[0].direction == TransactionDirection.DEBIT

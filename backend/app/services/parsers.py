@@ -191,11 +191,14 @@ def parse_credit_card_csv(content: str) -> ParseResult:
             )
             continue
 
+        amount = -amount
         normalized_description = " ".join(raw_description.split())
         direction = (
             TransactionDirection.PAYMENT
-            if amount < 0 and normalized_description.upper() == "PAGAMENTO EFETUADO"
+            if normalized_description.upper() == "PAGAMENTO EFETUADO"
             else TransactionDirection.DEBIT
+            if amount < 0
+            else TransactionDirection.CREDIT
         )
         transactions.append(
             ParsedTransaction(

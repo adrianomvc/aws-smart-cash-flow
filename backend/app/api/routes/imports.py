@@ -35,6 +35,7 @@ class ImportJobRead(BaseModel):
     total_rows: int
     valid_rows: int
     error_rows: int
+    duplicate_rows: int
     created_at: datetime
     source_file: SourceFileRead | None = None
 
@@ -183,6 +184,10 @@ def _import_job_read(import_job: ImportJob, source_file: SourceFile | None) -> I
         total_rows=import_job.total_rows,
         valid_rows=import_job.valid_rows,
         error_rows=import_job.error_rows,
+        duplicate_rows=max(
+            import_job.total_rows - import_job.valid_rows - import_job.error_rows,
+            0,
+        ),
         created_at=import_job.created_at,
         source_file=_source_file_read(source_file) if source_file is not None else None,
     )

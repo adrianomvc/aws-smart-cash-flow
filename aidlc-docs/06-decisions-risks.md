@@ -20,6 +20,7 @@ DEC-003: O sistema deve priorizar idempotencia desde o inicio.
 Motivo:
 
 - Importacoes financeiras frequentemente sao repetidas durante ajustes.
+- Extratos podem ser baixados com janelas sobrepostas; uma importacao de dois meses pode conter um mes ja processado.
 
 DEC-004: O backend sera desenvolvido em Python.
 
@@ -132,7 +133,9 @@ R-004: Dedupe pode descartar transacoes legitimamente repetidas.
 
 Mitigacao:
 
-- Incluir `source_file_id` e `source_line` na chave inicial.
+- Usar chave transacional por workspace, tipo de origem, data, descricao original, valor e direcao para cobrir arquivos com periodos sobrepostos.
+- Manter contagem de linhas duplicadas visivel na resposta de importacao.
+- Evoluir para incluir conta/cartao quando a inferencia dessa origem estiver disponivel, reduzindo risco de colisao entre fontes diferentes.
 
 R-005: Multiusuario implementado tarde pode exigir refatoracao profunda.
 

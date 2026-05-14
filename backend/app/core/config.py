@@ -35,8 +35,6 @@ class Settings(BaseSettings):
                 name
                 for name, value in {
                     "DATABASE_URL": self.database_url,
-                    "SUPABASE_URL": self.supabase_url,
-                    "SUPABASE_JWT_SECRET": self.supabase_jwt_secret,
                 }.items()
                 if not value
             ]

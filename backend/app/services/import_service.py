@@ -1,4 +1,5 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from hashlib import sha256
 from uuid import uuid4
 
@@ -98,6 +99,7 @@ class ImportService:
                 total_rows=0,
                 valid_rows=0,
                 error_rows=0,
+                duplicate_rows=0,
             )
 
         status_value = (
@@ -137,6 +139,7 @@ class ImportService:
             invalid_lines={error.source_line for error in parse_result.errors if error.source_line},
         )
         persisted_transactions = 0
+        duplicate_transactions = 0
         for parsed_transaction in parse_result.transactions:
             transaction = self.persist_transaction(
                 workspace_id=auth.workspace_id,
@@ -147,6 +150,8 @@ class ImportService:
             )
             if transaction.import_job_id == import_job.id:
                 persisted_transactions += 1
+            else:
+                duplicate_transactions += 1
 
         for parse_error in parse_result.errors:
             self.db.add(
@@ -171,6 +176,7 @@ class ImportService:
             total_rows=parse_result.total_rows,
             valid_rows=persisted_transactions,
             error_rows=len(parse_result.errors),
+            duplicate_rows=duplicate_transactions,
         )
 
     def persist_transaction(
@@ -181,22 +187,26 @@ class ImportService:
         raw_line: RawTransactionLine | None,
         parsed_transaction: ParsedTransaction,
     ) -> Transaction:
-        dedupe_key = self._transaction_dedupe_key(
+        source_type = self._source_type(source_file.source_kind)
+        existing_transaction = self._find_existing_transaction(
             workspace_id=workspace_id,
-            source_file_id=source_file.id,
-            source_line=parsed_transaction.source_line,
-            transaction_date=parsed_transaction.transaction_date.isoformat(),
+            source_type=source_type,
+            transaction_date=parsed_transaction.transaction_date,
             raw_description=parsed_transaction.raw_description,
-            amount=str(parsed_transaction.amount),
-        )
-        existing_transaction = self.db.scalar(
-            select(Transaction).where(
-                Transaction.workspace_id == workspace_id,
-                Transaction.dedupe_key == dedupe_key,
-            )
+            amount=parsed_transaction.amount,
+            direction=parsed_transaction.direction.value,
         )
         if existing_transaction is not None:
             return existing_transaction
+
+        dedupe_key = self._transaction_dedupe_key(
+            workspace_id=workspace_id,
+            source_type=source_type,
+            transaction_date=parsed_transaction.transaction_date.isoformat(),
+            raw_description=parsed_transaction.raw_description,
+            amount=str(parsed_transaction.amount),
+            direction=parsed_transaction.direction.value,
+        )
 
         transaction = Transaction(
             id=str(uuid4()),
@@ -204,7 +214,7 @@ class ImportService:
             source_file_id=source_file.id,
             import_job_id=import_job.id,
             raw_transaction_line_id=raw_line.id if raw_line is not None else None,
-            source_type=self._source_type(source_file.source_kind),
+            source_type=source_type,
             source_name=None,
             account_or_card=None,
             transaction_date=parsed_transaction.transaction_date,
@@ -327,23 +337,43 @@ class ImportService:
     def _transaction_dedupe_key(
         self,
         workspace_id: str,
-        source_file_id: str,
-        source_line: int,
+        source_type: str,
         transaction_date: str,
         raw_description: str,
         amount: str,
+        direction: str,
     ) -> str:
         raw_key = "|".join(
             [
                 workspace_id,
-                source_file_id,
-                str(source_line),
+                source_type,
                 transaction_date,
                 raw_description,
                 amount,
+                direction,
             ]
         )
         return sha256(raw_key.encode("utf-8")).hexdigest()
+
+    def _find_existing_transaction(
+        self,
+        workspace_id: str,
+        source_type: str,
+        transaction_date: date,
+        raw_description: str,
+        amount: Decimal,
+        direction: str,
+    ) -> Transaction | None:
+        return self.db.scalar(
+            select(Transaction).where(
+                Transaction.workspace_id == workspace_id,
+                Transaction.source_type == source_type,
+                Transaction.transaction_date == transaction_date,
+                Transaction.raw_description == raw_description,
+                Transaction.amount == amount,
+                Transaction.direction == direction,
+            )
+        )
 
     def _source_type(self, source_kind: str) -> str:
         if source_kind == SourceKind.BANK_STATEMENT_TXT.value:

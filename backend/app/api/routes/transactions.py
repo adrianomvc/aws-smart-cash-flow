@@ -45,6 +45,9 @@ class TransactionRead(BaseModel):
 class TransactionListResponse(BaseModel):
     workspace_id: str
     items: list[TransactionRead]
+    total: int
+    limit: int
+    offset: int
 
 
 @router.get("")
@@ -63,37 +66,44 @@ async def list_transactions(
         TransactionCategoryAssignment.transaction_id == Transaction.id,
         TransactionCategoryAssignment.workspace_id == Transaction.workspace_id,
     )
-    query = (
+    base_query = (
         select(Transaction, TransactionCategoryAssignment)
         .outerjoin(TransactionCategoryAssignment, assignment_join)
         .where(Transaction.workspace_id == auth.workspace_id)
-        .order_by(desc(Transaction.transaction_date), desc(Transaction.id))
-        .limit(limit)
-        .offset(offset)
     )
 
     if date_from is not None:
-        query = query.where(Transaction.transaction_date >= date_from)
+        base_query = base_query.where(Transaction.transaction_date >= date_from)
     if date_to is not None:
-        query = query.where(Transaction.transaction_date <= date_to)
+        base_query = base_query.where(Transaction.transaction_date <= date_to)
     if category_id is not None:
-        query = query.where(TransactionCategoryAssignment.category_id == category_id)
+        base_query = base_query.where(TransactionCategoryAssignment.category_id == category_id)
     if source_type is not None:
-        query = query.where(Transaction.source_type == source_type)
+        base_query = base_query.where(Transaction.source_type == source_type)
     if q:
         normalized_q = f"%{q.strip().lower()}%"
-        query = query.where(
+        base_query = base_query.where(
             or_(
                 func.lower(Transaction.description).like(normalized_q),
                 func.lower(Transaction.raw_description).like(normalized_q),
             )
         )
 
+    total = db.scalar(select(func.count()).select_from(base_query.subquery())) or 0
+    query = base_query.order_by(desc(Transaction.transaction_date), desc(Transaction.id)).limit(
+        limit
+    ).offset(offset)
     items = [
         _transaction_read(transaction=transaction, assignment=assignment)
         for transaction, assignment in db.execute(query).all()
     ]
-    return TransactionListResponse(workspace_id=auth.workspace_id, items=items)
+    return TransactionListResponse(
+        workspace_id=auth.workspace_id,
+        items=items,
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.patch("/{transaction_id}/category")

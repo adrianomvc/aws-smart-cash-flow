@@ -7,6 +7,7 @@ export type ImportJob = {
   total_rows: number;
   valid_rows: number;
   error_rows: number;
+  duplicate_rows: number;
   created_at: string;
   source_file?: {
     original_filename: string;
@@ -49,6 +50,12 @@ export type CategorizationRule = {
 export type ListResponse<T> = {
   workspace_id: string;
   items: T[];
+};
+
+export type PaginatedListResponse<T> = ListResponse<T> & {
+  total: number;
+  limit: number;
+  offset: number;
 };
 
 export type ApplyRulesResponse = {
@@ -95,14 +102,23 @@ export function uploadImport(token: string, file: File) {
     total_rows: number;
     valid_rows: number;
     error_rows: number;
+    duplicate_rows: number;
   }>("/imports", token, {
     method: "POST",
     body: form,
   });
 }
 
-export function listTransactions(token: string) {
-  return apiRequest<ListResponse<Transaction>>("/transactions?limit=100", token);
+export function listTransactions(
+  token: string,
+  options: { limit?: number; offset?: number } = {},
+) {
+  const limit = options.limit ?? 100;
+  const offset = options.offset ?? 0;
+  return apiRequest<PaginatedListResponse<Transaction>>(
+    `/transactions?limit=${limit}&offset=${offset}`,
+    token,
+  );
 }
 
 export function assignTransactionCategory(

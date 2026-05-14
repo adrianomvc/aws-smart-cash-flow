@@ -1,5 +1,5 @@
 import { FormEvent, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BarChart3,
   CheckCircle2,
@@ -34,10 +34,12 @@ import {
 } from "./lib/api";
 
 const LOCAL_TOKEN = "local";
+const TRANSACTION_PAGE_SIZE = 100;
 
 function App() {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
+  const [uploadFileCount, setUploadFileCount] = useState(0);
   const [categoryName, setCategoryName] = useState("");
   const [ruleForm, setRuleForm] = useState({
     name: "",
@@ -52,9 +54,18 @@ function App() {
     queryKey: ["imports"],
     queryFn: () => listImports(LOCAL_TOKEN),
   });
-  const transactionsQuery = useQuery({
+  const transactionsQuery = useInfiniteQuery({
     queryKey: ["transactions"],
-    queryFn: () => listTransactions(LOCAL_TOKEN),
+    queryFn: ({ pageParam = 0 }) =>
+      listTransactions(LOCAL_TOKEN, {
+        limit: TRANSACTION_PAGE_SIZE,
+        offset: pageParam,
+      }),
+    getNextPageParam: (lastPage) => {
+      const nextOffset = lastPage.offset + lastPage.items.length;
+      return nextOffset < lastPage.total ? nextOffset : undefined;
+    },
+    initialPageParam: 0,
   });
   const categoriesQuery = useQuery({
     queryKey: ["categories"],
@@ -70,15 +81,54 @@ function App() {
   };
 
   const uploadMutation = useMutation({
-    mutationFn: (file: File) => uploadImport(LOCAL_TOKEN, file),
-    onMutate: () => setMessage(null),
-    onSuccess: (result) => {
+    mutationFn: async (files: File[]) =>
+      Promise.all(files.map((file) => uploadImport(LOCAL_TOKEN, file))),
+    onMutate: (files) => {
+      setUploadFileCount(files.length);
       setMessage(
-        `Importacao ${result.status}: ${result.valid_rows} validas, ${result.error_rows} erros.`,
+        `Importacao em andamento: processando ${formatCount(
+          files.length,
+          "arquivo",
+          "arquivos",
+        )}. Aguarde a conclusao.`,
       );
+    },
+    onSuccess: (results) => {
+      const duplicateFiles = results.filter((result) => result.status === "duplicate_file").length;
+      const importedFiles = results.length - duplicateFiles;
+      const validRows = results.reduce((total, result) => total + result.valid_rows, 0);
+      const errorRows = results.reduce((total, result) => total + result.error_rows, 0);
+      const duplicateRows = results.reduce((total, result) => total + result.duplicate_rows, 0);
+      if (
+        duplicateFiles === results.length ||
+        (validRows === 0 && duplicateRows > 0 && errorRows === 0)
+      ) {
+        setMessage("Arquivo duplicado: nenhum dado novo foi importado.");
+      } else {
+        const fileSummary =
+          duplicateFiles > 0
+            ? `${formatCount(importedFiles, "arquivo importado", "arquivos importados")}, ${formatCount(
+                duplicateFiles,
+                "arquivo duplicado",
+                "arquivos duplicados",
+              )}`
+            : formatCount(importedFiles, "arquivo importado", "arquivos importados");
+        setMessage(
+          `${fileSummary}: ${formatCount(
+            validRows,
+            "transacao nova",
+            "transacoes novas",
+          )}, ${formatCount(
+            duplicateRows,
+            "transacao duplicada",
+            "transacoes duplicadas",
+          )}, ${formatCount(errorRows, "erro", "erros")}.`,
+        );
+      }
       refreshAll();
     },
-    onError: (error) => setMessage(error.message),
+    onError: (error) => setMessage(`Falha na importacao: ${error.message}`),
+    onSettled: () => setUploadFileCount(0),
   });
 
   const categoryMutation = useMutation({
@@ -127,14 +177,19 @@ function App() {
     mutationFn: () => applyRules(LOCAL_TOKEN),
     onMutate: () => setMessage(null),
     onSuccess: (result) => {
-      setMessage(`${result.applied_count} transacoes categorizadas por regras.`);
+      setMessage(
+        result.applied_count === 0
+          ? "Nenhuma nova transacao foi categorizada por regras."
+          : `${result.applied_count} transacoes categorizadas por regras.`,
+      );
       refreshAll();
     },
     onError: (error) => setMessage(error.message),
   });
 
   const categories = categoriesQuery.data?.items ?? [];
-  const transactions = transactionsQuery.data?.items ?? [];
+  const transactions = transactionsQuery.data?.pages.flatMap((page) => page.items) ?? [];
+  const transactionTotal = transactionsQuery.data?.pages[0]?.total ?? 0;
   const imports = importsQuery.data?.items ?? [];
   const rules = rulesQuery.data?.items ?? [];
   const categoryById = useMemo(
@@ -150,11 +205,17 @@ function App() {
     transactionsQuery.isLoading ||
     categoriesQuery.isLoading ||
     rulesQuery.isLoading;
+  const isRefreshing =
+    importsQuery.isFetching ||
+    transactionsQuery.isFetching ||
+    categoriesQuery.isFetching ||
+    rulesQuery.isFetching;
+  const isImporting = uploadMutation.isPending;
 
   const handleUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      uploadMutation.mutate(file);
+    const files = Array.from(event.target.files ?? []);
+    if (files.length > 0) {
+      uploadMutation.mutate(files);
       event.target.value = "";
     }
   };
@@ -184,29 +245,49 @@ function App() {
           <div className="flex items-center gap-2">
             <button
               className="inline-flex h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium"
+              disabled={isRefreshing}
               onClick={refreshAll}
               type="button"
             >
-              <RefreshCw size={16} />
-              Atualizar
+              <RefreshCw className={isRefreshing ? "animate-spin" : undefined} size={16} />
+              {isRefreshing ? "Atualizando" : "Atualizar"}
             </button>
-            <label className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-md bg-slate-950 px-3 text-sm font-medium text-white">
-              <FileUp size={16} />
-              Importar TXT/CSV
-              <input accept=".txt,.csv" className="hidden" type="file" onChange={handleUpload} />
+            <label
+              className={`inline-flex h-10 items-center gap-2 rounded-md bg-slate-950 px-3 text-sm font-medium text-white ${
+                isImporting ? "cursor-wait opacity-80" : "cursor-pointer"
+              }`}
+            >
+              {isImporting ? <Loader2 className="animate-spin" size={16} /> : <FileUp size={16} />}
+              {isImporting
+                ? `Importando ${formatCount(uploadFileCount, "arquivo", "arquivos")}`
+                : "Importar TXT/CSV"}
+              <input
+                accept=".txt,.csv"
+                className="hidden"
+                disabled={isImporting}
+                multiple
+                type="file"
+                onChange={handleUpload}
+              />
             </label>
           </div>
         </header>
 
         {message ? (
-          <div className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
-            <CheckCircle2 size={16} />
+          <div
+            className={`flex items-center gap-2 rounded-md border px-3 py-2 text-sm ${
+              isImporting
+                ? "border-blue-200 bg-blue-50 text-blue-900"
+                : "border-emerald-200 bg-emerald-50 text-emerald-900"
+            }`}
+          >
+            {isImporting ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
             {message}
           </div>
         ) : null}
 
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricCard icon={<WalletCards size={20} />} label="Transacoes" value={transactions.length} />
+          <MetricCard icon={<WalletCards size={20} />} label="Transacoes" value={transactionTotal} />
           <MetricCard icon={<FileUp size={20} />} label="Importacoes" value={imports.length} />
           <MetricCard icon={<Tags size={20} />} label="Categorias" value={categories.length} />
           <MetricCard icon={<BarChart3 size={20} />} label="Regras" value={rules.length} />
@@ -266,6 +347,23 @@ function App() {
                   </table>
                   {transactions.length === 0 ? <EmptyState text="Nenhuma transacao importada." /> : null}
                 </div>
+                {transactionTotal > 0 ? (
+                  <div className="mt-3 flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm text-slate-500">
+                    <span>
+                      {transactions.length} de {transactionTotal} transacoes carregadas
+                    </span>
+                    {transactionsQuery.hasNextPage ? (
+                      <button
+                        className="h-9 rounded-md border border-slate-300 bg-white px-3 font-medium text-slate-950"
+                        disabled={transactionsQuery.isFetchingNextPage}
+                        onClick={() => transactionsQuery.fetchNextPage()}
+                        type="button"
+                      >
+                        {transactionsQuery.isFetchingNextPage ? "Carregando" : "Carregar mais"}
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
               </Panel>
 
               <Panel title="Gastos por categoria">
@@ -293,7 +391,8 @@ function App() {
                         {item.source_file?.original_filename ?? item.source_file_id}
                       </span>
                       <span className="text-slate-500">
-                        {item.status} · {item.valid_rows}/{item.total_rows} validas
+                        {item.status} · {item.valid_rows}/{item.total_rows} novas
+                        {item.duplicate_rows > 0 ? ` · ${item.duplicate_rows} duplicadas` : ""}
                       </span>
                     </div>
                   ))}
@@ -391,10 +490,11 @@ function App() {
                 </form>
                 <button
                   className="mt-3 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-medium"
+                  disabled={applyMutation.isPending}
                   onClick={() => applyMutation.mutate()}
                   type="button"
                 >
-                  Aplicar regras
+                  {applyMutation.isPending ? "Aplicando" : "Aplicar regras"}
                 </button>
                 <div className="mt-3 grid gap-2">
                   {rules.map((rule) => (
@@ -453,6 +553,10 @@ function formatCurrency(amount: string) {
     style: "currency",
     currency: "BRL",
   }).format(Number(amount));
+}
+
+function formatCount(count: number, singular: string, plural: string) {
+  return `${count} ${count === 1 ? singular : plural}`;
 }
 
 function buildChartData(transactions: Transaction[], categoryById: Map<string, Category>) {
