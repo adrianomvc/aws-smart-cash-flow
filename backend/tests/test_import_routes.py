@@ -83,6 +83,43 @@ def test_list_imports_returns_jobs_for_current_workspace(
     assert payload["workspace_id"] == auth.workspace_id
     assert [item["id"] for item in payload["items"]] == [first.import_job_id]
     assert payload["items"][0]["source_file"]["original_filename"] == "extrato.txt"
+    assert payload["items"][0]["duplicate_rows"] == 0
+
+
+def test_get_import_derives_duplicate_rows_for_overlapping_file(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    service = ImportService(db_session)
+    service.import_bytes(
+        auth=auth,
+        filename="extrato-julho.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato-julho.txt",
+        content=b"01/07/2025;PIX MERCADO;-10,00\n",
+    )
+    overlap = service.import_bytes(
+        auth=auth,
+        filename="extrato-julho-agosto.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato-julho-agosto.txt",
+        content=(
+            b"01/07/2025;PIX MERCADO;-10,00\n"
+            b"01/08/2025;SALARIO;100,00\n"
+        ),
+    )
+
+    response = client.get(f"/v1/imports/{overlap.import_job_id}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_rows"] == 2
+    assert payload["valid_rows"] == 1
+    assert payload["error_rows"] == 0
+    assert payload["duplicate_rows"] == 1
 
 
 def test_get_import_returns_404_for_other_workspace(
