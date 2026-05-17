@@ -3,11 +3,15 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import {
   BarChart3,
   CheckCircle2,
+  Pencil,
   FileUp,
   Loader2,
   RefreshCw,
+  Save,
   Tags,
+  Trash2,
   WalletCards,
+  X,
 } from "lucide-react";
 import {
   Bar,
@@ -26,10 +30,12 @@ import {
   assignTransactionCategory,
   createCategory,
   createRule,
+  deleteCategory,
   listCategories,
   listImports,
   listRules,
   listTransactions,
+  updateCategory,
   uploadImport,
 } from "./lib/api";
 
@@ -41,6 +47,12 @@ function App() {
   const [message, setMessage] = useState<string | null>(null);
   const [uploadFileCount, setUploadFileCount] = useState(0);
   const [categoryName, setCategoryName] = useState("");
+  const [categoryParentId, setCategoryParentId] = useState("");
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [categoryEditForm, setCategoryEditForm] = useState({
+    name: "",
+    parent_category_id: "",
+  });
   const [ruleForm, setRuleForm] = useState({
     name: "",
     field: "description",
@@ -132,11 +144,41 @@ function App() {
   });
 
   const categoryMutation = useMutation({
-    mutationFn: (name: string) => createCategory(LOCAL_TOKEN, name),
+    mutationFn: (payload: { name: string; parentCategoryId: string | null }) =>
+      createCategory(LOCAL_TOKEN, payload.name, payload.parentCategoryId),
     onMutate: () => setMessage(null),
     onSuccess: () => {
       setCategoryName("");
+      setCategoryParentId("");
       setMessage("Categoria criada.");
+      refreshAll();
+    },
+    onError: (error) => setMessage(error.message),
+  });
+
+  const updateCategoryMutation = useMutation({
+    mutationFn: (payload: { categoryId: string; name: string; parentCategoryId: string | null }) =>
+      updateCategory(LOCAL_TOKEN, payload.categoryId, {
+        name: payload.name,
+        parent_category_id: payload.parentCategoryId,
+      }),
+    onMutate: () => setMessage(null),
+    onSuccess: () => {
+      setEditingCategoryId(null);
+      setCategoryEditForm({ name: "", parent_category_id: "" });
+      setMessage("Categoria atualizada.");
+      refreshAll();
+    },
+    onError: (error) => setMessage(error.message),
+  });
+
+  const deleteCategoryMutation = useMutation({
+    mutationFn: (categoryId: string) => deleteCategory(LOCAL_TOKEN, categoryId),
+    onMutate: () => setMessage(null),
+    onSuccess: () => {
+      setEditingCategoryId(null);
+      setCategoryEditForm({ name: "", parent_category_id: "" });
+      setMessage("Categoria excluida.");
       refreshAll();
     },
     onError: (error) => setMessage(error.message),
@@ -223,7 +265,40 @@ function App() {
   const handleCreateCategory = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (categoryName.trim()) {
-      categoryMutation.mutate(categoryName);
+      categoryMutation.mutate({
+        name: categoryName,
+        parentCategoryId: categoryParentId || null,
+      });
+    }
+  };
+
+  const startEditingCategory = (category: Category) => {
+    setEditingCategoryId(category.id);
+    setCategoryEditForm({
+      name: category.name,
+      parent_category_id: category.parent_category_id ?? "",
+    });
+  };
+
+  const cancelEditingCategory = () => {
+    setEditingCategoryId(null);
+    setCategoryEditForm({ name: "", parent_category_id: "" });
+  };
+
+  const handleUpdateCategory = (categoryId: string) => {
+    if (!categoryEditForm.name.trim()) {
+      return;
+    }
+    updateCategoryMutation.mutate({
+      categoryId,
+      name: categoryEditForm.name,
+      parentCategoryId: categoryEditForm.parent_category_id || null,
+    });
+  };
+
+  const handleDeleteCategory = (category: Category) => {
+    if (window.confirm(`Excluir a categoria "${category.name}"?`)) {
+      deleteCategoryMutation.mutate(category.id);
     }
   };
 
@@ -403,23 +478,126 @@ function App() {
 
             <aside className="flex flex-col gap-4">
               <Panel title="Categorias">
-                <form className="flex gap-2" onSubmit={handleCreateCategory}>
+                <form className="grid gap-2" onSubmit={handleCreateCategory}>
                   <input
-                    className="h-10 min-w-0 flex-1 rounded-md border border-slate-300 px-3 text-sm"
+                    className="h-10 min-w-0 rounded-md border border-slate-300 px-3 text-sm"
                     onChange={(event) => setCategoryName(event.target.value)}
                     placeholder="Nova categoria"
                     value={categoryName}
                   />
-                  <button className="h-10 rounded-md bg-slate-950 px-3 text-sm font-medium text-white">
-                    Criar
-                  </button>
+                  <div className="grid grid-cols-[1fr_auto] gap-2">
+                    <select
+                      className="h-10 min-w-0 rounded-md border border-slate-300 bg-white px-2 text-sm"
+                      onChange={(event) => setCategoryParentId(event.target.value)}
+                      value={categoryParentId}
+                    >
+                      <option value="">Categoria raiz</option>
+                      {categories.map((category) => (
+                        <option key={category.id} value={category.id}>
+                          {formatCategoryOption(category, categoryById)}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="inline-flex h-10 items-center gap-2 rounded-md bg-slate-950 px-3 text-sm font-medium text-white"
+                      disabled={categoryMutation.isPending}
+                    >
+                      {categoryMutation.isPending ? <Loader2 className="animate-spin" size={16} /> : null}
+                      Criar
+                    </button>
+                  </div>
                 </form>
                 <div className="mt-3 grid gap-2">
                   {categories.map((category) => (
                     <div key={category.id} className="rounded-md border border-slate-200 px-3 py-2 text-sm">
-                      {category.name}
+                      {editingCategoryId === category.id ? (
+                        <div className="grid gap-2">
+                          <input
+                            className="h-9 rounded-md border border-slate-300 px-2 text-sm"
+                            onChange={(event) =>
+                              setCategoryEditForm((value) => ({ ...value, name: event.target.value }))
+                            }
+                            value={categoryEditForm.name}
+                          />
+                          <div className="grid grid-cols-[1fr_auto_auto] gap-2">
+                            <select
+                              className="h-9 min-w-0 rounded-md border border-slate-300 bg-white px-2 text-sm"
+                              onChange={(event) =>
+                                setCategoryEditForm((value) => ({
+                                  ...value,
+                                  parent_category_id: event.target.value,
+                                }))
+                              }
+                              value={categoryEditForm.parent_category_id}
+                            >
+                              <option value="">Categoria raiz</option>
+                              {categories
+                                .filter((option) => option.id !== category.id)
+                                .map((option) => (
+                                  <option key={option.id} value={option.id}>
+                                    {formatCategoryOption(option, categoryById)}
+                                  </option>
+                                ))}
+                            </select>
+                            <button
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white"
+                              disabled={updateCategoryMutation.isPending}
+                              onClick={() => handleUpdateCategory(category.id)}
+                              title="Salvar categoria"
+                              type="button"
+                            >
+                              {updateCategoryMutation.isPending ? (
+                                <Loader2 className="animate-spin" size={16} />
+                              ) : (
+                                <Save size={16} />
+                              )}
+                            </button>
+                            <button
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white"
+                              onClick={cancelEditingCategory}
+                              title="Cancelar edicao"
+                              type="button"
+                            >
+                              <X size={16} />
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-[1fr_auto_auto] items-center gap-2">
+                          <div className="min-w-0">
+                            <div className="truncate font-medium">{category.name}</div>
+                            <div className="truncate text-xs text-slate-500">
+                              {category.parent_category_id
+                                ? `Subcategoria de ${categoryById.get(category.parent_category_id)?.name ?? "categoria"}`
+                                : "Categoria raiz"}
+                            </div>
+                          </div>
+                          <button
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white"
+                            onClick={() => startEditingCategory(category)}
+                            title="Editar categoria"
+                            type="button"
+                          >
+                            <Pencil size={16} />
+                          </button>
+                          <button
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-red-200 bg-white text-red-700"
+                            disabled={deleteCategoryMutation.isPending}
+                            onClick={() => handleDeleteCategory(category)}
+                            title="Excluir categoria"
+                            type="button"
+                          >
+                            {deleteCategoryMutation.isPending ? (
+                              <Loader2 className="animate-spin" size={16} />
+                            ) : (
+                              <Trash2 size={16} />
+                            )}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))}
+                  {categories.length === 0 ? <EmptyState text="Nenhuma categoria criada." /> : null}
                 </div>
               </Panel>
 
@@ -557,6 +735,24 @@ function formatCurrency(amount: string) {
 
 function formatCount(count: number, singular: string, plural: string) {
   return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function formatCategoryOption(category: Category, categoryById: Map<string, Category>) {
+  const names = [category.name];
+  let parentId = category.parent_category_id;
+  const visited = new Set([category.id]);
+
+  while (parentId && !visited.has(parentId)) {
+    const parent = categoryById.get(parentId);
+    if (!parent) {
+      break;
+    }
+    names.unshift(parent.name);
+    visited.add(parent.id);
+    parentId = parent.parent_category_id;
+  }
+
+  return names.join(" / ");
 }
 
 function buildChartData(transactions: Transaction[], categoryById: Map<string, Category>) {

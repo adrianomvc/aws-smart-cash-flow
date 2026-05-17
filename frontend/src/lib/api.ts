@@ -78,7 +78,7 @@ async function apiRequest<T>(
 
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(detail || `API request failed: ${response.status}`);
+    throw new Error(formatApiError(detail, response.status));
   }
 
   if (response.status === 204) {
@@ -139,13 +139,37 @@ export function listCategories(token: string) {
   return apiRequest<ListResponse<Category>>("/categories", token);
 }
 
-export function createCategory(token: string, name: string) {
+export function createCategory(
+  token: string,
+  name: string,
+  parentCategoryId: string | null = null,
+) {
   return apiRequest<Category>("/categories", token, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, parent_category_id: parentCategoryId }),
+  });
+}
+
+export function updateCategory(
+  token: string,
+  categoryId: string,
+  payload: { name?: string; parent_category_id?: string | null },
+) {
+  return apiRequest<Category>(`/categories/${categoryId}`, token, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteCategory(token: string, categoryId: string) {
+  return apiRequest<void>(`/categories/${categoryId}`, token, {
+    method: "DELETE",
   });
 }
 
@@ -178,4 +202,21 @@ export function applyRules(token: string) {
   return apiRequest<ApplyRulesResponse>("/categorization-rules/apply", token, {
     method: "POST",
   });
+}
+
+function formatApiError(detail: string, status: number) {
+  if (!detail) {
+    return `API request failed: ${status}`;
+  }
+
+  try {
+    const parsed = JSON.parse(detail) as { detail?: unknown };
+    if (typeof parsed.detail === "string") {
+      return parsed.detail;
+    }
+  } catch {
+    return detail;
+  }
+
+  return detail;
 }

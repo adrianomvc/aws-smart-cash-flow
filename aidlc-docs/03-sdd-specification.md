@@ -212,6 +212,9 @@ Transacao:
 ## Categorizacao
 
 - O MVP deve permitir categoria manual.
+- A tela operacional deve permitir criar, editar e excluir categorias.
+- Categoria pode ter `parent_category_id` para representar subcategoria.
+- Categoria em uso por transacoes, regras ou subcategorias nao deve ser excluida; a API deve retornar erro claro.
 - A estrategia oficial de categorizacao e: Regra -> Embedding -> LLM -> Revisao.
 - A implementacao deve ser faseada para controlar custo e complexidade.
 - Regra deterministica roda primeiro e deve ter prioridade quando houver alta confianca.

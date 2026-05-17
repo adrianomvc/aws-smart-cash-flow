@@ -273,6 +273,14 @@ Motivo:
 - Manter CORS em duas camadas pode remover headers esperados pelo navegador e causar `Failed to fetch`.
 - API Gateway permanece como roteador/proxy HTTP simples para reduzir comportamento implicito.
 
+DEC-022: Categorias e subcategorias serao gerenciadas na tela operacional do MVP.
+
+Motivo:
+
+- Classificacao manual fica incompleta se categorias precisarem ser corrigidas direto no banco.
+- O backend ja possui validacoes para parent, ciclos, duplicidade e bloqueio de exclusao quando a categoria esta em uso.
+- A UI deve expor essas operacoes sem remover historico de transacoes ou regras por acidente.
+
 ## Perguntas Abertas
 
 - Confirmar detalhes da conta/projeto Supabase e estrategia de ambientes.
