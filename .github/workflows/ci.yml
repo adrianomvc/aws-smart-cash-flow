@@ -272,7 +272,7 @@ jobs:
 
       - name: Create or update develop to main PR
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.PROMOTION_PR_TOKEN || github.token }}
         run: |
           set -euo pipefail
 
@@ -308,16 +308,44 @@ jobs:
           )"
 
           if [ -n "$existing_pr" ]; then
-            gh pr edit "$existing_pr" \
+            set +e
+            write_output="$(gh pr edit "$existing_pr" \
               --title "Promote develop to main" \
-              --body-file "$pr_body_file"
+              --body-file "$pr_body_file" 2>&1)"
+            write_status=$?
+            set -e
+
+            if [ "$write_status" -ne 0 ]; then
+              if echo "$write_output" | grep -q "GitHub Actions is not permitted"; then
+                echo "::warning::GitHub Actions cannot update pull requests with the current token. Enable 'Allow GitHub Actions to create and approve pull requests' in repository Actions settings, or add a PROMOTION_PR_TOKEN secret with pull request write permission."
+                exit 0
+              fi
+
+              echo "$write_output"
+              exit "$write_status"
+            fi
+
             echo "Updated existing promotion PR #$existing_pr."
           else
-            gh pr create \
+            set +e
+            write_output="$(gh pr create \
               --base main \
               --head develop \
               --title "Promote develop to main" \
               --body-file "$pr_body_file" \
-              --draft
+              --draft 2>&1)"
+            write_status=$?
+            set -e
+
+            if [ "$write_status" -ne 0 ]; then
+              if echo "$write_output" | grep -q "GitHub Actions is not permitted"; then
+                echo "::warning::GitHub Actions cannot create pull requests with the current token. Enable 'Allow GitHub Actions to create and approve pull requests' in repository Actions settings, or add a PROMOTION_PR_TOKEN secret with pull request write permission."
+                exit 0
+              fi
+
+              echo "$write_output"
+              exit "$write_status"
+            fi
+
             echo "Created draft promotion PR from develop to main."
           fi
