@@ -46,8 +46,9 @@ ImportJob:
 - `started_at`
 - `finished_at`
 - `total_rows`
-- `valid_rows`
+- `valid_rows`: linhas validas que geraram novas transacoes persistidas.
 - `error_rows`
+- `duplicate_rows`: linhas validas ignoradas por duplicidade transacional. Pode ser derivado de `total_rows - valid_rows - error_rows` enquanto nao houver coluna dedicada.
 
 ImportError:
 
@@ -169,10 +170,13 @@ PDFs ficam fora do MVP inicial. A arquitetura deve permitir adicionar parser de 
 Arquivo:
 
 - `content_hash` deve ser unico para evitar reimportacao identica.
+- Arquivo byte-a-byte identico no mesmo workspace deve retornar status `duplicate_file`.
 
 Transacao:
 
-- `dedupe_key` deve ser derivada de `source_file_id`, `source_line`, `transaction_date`, `raw_description` e `amount`.
+- `dedupe_key` deve permitir identificar a mesma transacao mesmo quando ela aparece em um arquivo diferente que cobre periodo sobreposto.
+- No MVP, a duplicidade transacional e avaliada no mesmo `workspace_id` por `source_type`, `transaction_date`, `raw_description`, `amount` e `direction`.
+- Se um arquivo novo contiver parte de um periodo ja importado, apenas as transacoes ainda inexistentes devem ser persistidas; as repetidas entram em `duplicate_rows`.
 - Se o mesmo arquivo for reprocessado, transacoes existentes devem ser reaproveitadas ou ignoradas, nao duplicadas.
 
 ## Fluxo de Importacao

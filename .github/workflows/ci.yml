@@ -13,12 +13,14 @@ on:
 permissions:
   contents: read
   id-token: write
+  pull-requests: write
 
 jobs:
   changes:
     name: Detect deploy changes
     runs-on: ubuntu-latest
     outputs:
+      backend: ${{ steps.changed.outputs.backend }}
       frontend: ${{ steps.changed.outputs.frontend }}
     steps:
       - name: Checkout
@@ -33,6 +35,7 @@ jobs:
           set -euo pipefail
 
           if [ "${{ github.event_name }}" != "push" ]; then
+            echo "backend=false" >> "$GITHUB_OUTPUT"
             echo "frontend=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -44,6 +47,12 @@ jobs:
             changed_files="$(git diff-tree --no-commit-id --name-only -r "$current")"
           else
             changed_files="$(git diff --name-only "$before" "$current")"
+          fi
+
+          if echo "$changed_files" | grep -Eq '^(backend/|infra/terraform/|\.github/workflows/ci\.yml)'; then
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "backend=false" >> "$GITHUB_OUTPUT"
           fi
 
           if echo "$changed_files" | grep -Eq '^frontend/'; then
@@ -154,14 +163,189 @@ jobs:
 
           echo "$start_output"
 
-  backend-deploy-placeholder:
-    name: Backend deploy gate
+  deploy-backend:
+    name: Deploy backend Lambda
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+      - backend
+    defaults:
+      run:
+        working-directory: backend
+    if: ${{ github.event_name == 'push' && (github.ref_name == 'develop' || github.ref_name == 'main') && needs.changes.outputs.backend == 'true' && vars.AWS_ROLE_TO_ASSUME != '' && vars.AWS_REGION != '' && vars.BACKEND_LAMBDA_FUNCTION_NAME != '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build Lambda package
+        run: |
+          set -euo pipefail
+
+          rm -rf build
+          mkdir -p build/lambda
+          python -m pip install --upgrade pip
+          python -m pip install --target build/lambda .
+
+          (
+            cd build/lambda
+            zip -qr ../backend-lambda.zip .
+          )
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy Lambda code and configuration
+        env:
+          BACKEND_CORS_ORIGINS: ${{ vars.BACKEND_CORS_ORIGINS }}
+          BACKEND_DATABASE_URL: ${{ secrets.BACKEND_DATABASE_URL }}
+          BACKEND_LAMBDA_FUNCTION_NAME: ${{ vars.BACKEND_LAMBDA_FUNCTION_NAME }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${BACKEND_DATABASE_URL}" ]; then
+            echo "Missing required GitHub secret BACKEND_DATABASE_URL."
+            exit 1
+          fi
+
+          if [ -z "${BACKEND_CORS_ORIGINS}" ]; then
+            echo "Missing required GitHub variable BACKEND_CORS_ORIGINS."
+            exit 1
+          fi
+
+          python - <<'PY'
+          import json
+          import os
+
+          payload = {
+              "Variables": {
+                  "APP_ENV": os.environ["GITHUB_REF_NAME"],
+                  "CORS_ORIGINS": os.environ["BACKEND_CORS_ORIGINS"],
+                  "DATABASE_MAX_OVERFLOW": "2",
+                  "DATABASE_POOL_RECYCLE_SECONDS": "300",
+                  "DATABASE_POOL_SIZE": "1",
+                  "DATABASE_URL": os.environ["BACKEND_DATABASE_URL"],
+                  "LOG_LEVEL": "INFO",
+                  "SUPABASE_JWT_SECRET": "",
+                  "SUPABASE_STORAGE_BUCKET": "financial-files",
+                  "SUPABASE_URL": "",
+              }
+          }
+
+          with open("build/lambda-env.json", "w", encoding="utf-8") as handle:
+              json.dump(payload, handle)
+          PY
+
+          aws lambda update-function-code \
+            --function-name "${BACKEND_LAMBDA_FUNCTION_NAME}" \
+            --zip-file fileb://build/backend-lambda.zip
+
+          aws lambda wait function-updated-v2 \
+            --function-name "${BACKEND_LAMBDA_FUNCTION_NAME}"
+
+          aws lambda update-function-configuration \
+            --function-name "${BACKEND_LAMBDA_FUNCTION_NAME}" \
+            --environment file://build/lambda-env.json
+
+          aws lambda wait function-updated-v2 \
+            --function-name "${BACKEND_LAMBDA_FUNCTION_NAME}"
+
+  promote-develop-to-main:
+    name: Open promotion PR
     runs-on: ubuntu-latest
     needs:
       - backend
-    if: ${{ github.event_name == 'push' && (github.ref_name == 'develop' || github.ref_name == 'main') }}
+      - frontend
+    if: ${{ github.event_name == 'push' && github.ref_name == 'develop' }}
     steps:
-      - name: Explain backend deploy status
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create or update develop to main PR
+        env:
+          GH_TOKEN: ${{ secrets.PROMOTION_PR_TOKEN || github.token }}
         run: |
-          echo "Backend deploy is intentionally disabled until infra/Lambda template is added."
-          echo "Frontend Amplify deploy runs after backend tests and frontend build pass."
+          set -euo pipefail
+
+          git fetch origin main develop
+
+          if git diff --quiet origin/main..origin/develop; then
+            echo "develop has no changes compared with main; no promotion PR needed."
+            exit 0
+          fi
+
+          pr_body_file="$(mktemp)"
+          cat > "$pr_body_file" <<'MD'
+          ## Summary
+
+          Promote the latest validated `develop` changes to `main`.
+
+          ## Validation
+
+          This PR was opened automatically after the CI backend and frontend jobs passed on `develop`.
+
+          ## Deploy Notes
+
+          Merging this PR pushes to `main`, which runs CI again and triggers the production deploy jobs configured for `main`.
+          MD
+
+          existing_pr="$(
+            gh pr list \
+              --base main \
+              --head develop \
+              --state open \
+              --json number \
+              --jq '.[0].number // empty'
+          )"
+
+          if [ -n "$existing_pr" ]; then
+            set +e
+            write_output="$(gh pr edit "$existing_pr" \
+              --title "Promote develop to main" \
+              --body-file "$pr_body_file" 2>&1)"
+            write_status=$?
+            set -e
+
+            if [ "$write_status" -ne 0 ]; then
+              if echo "$write_output" | grep -q "GitHub Actions is not permitted"; then
+                echo "::warning::GitHub Actions cannot update pull requests with the current token. Enable 'Allow GitHub Actions to create and approve pull requests' in repository Actions settings, or add a PROMOTION_PR_TOKEN secret with pull request write permission."
+                exit 0
+              fi
+
+              echo "$write_output"
+              exit "$write_status"
+            fi
+
+            echo "Updated existing promotion PR #$existing_pr."
+          else
+            set +e
+            write_output="$(gh pr create \
+              --base main \
+              --head develop \
+              --title "Promote develop to main" \
+              --body-file "$pr_body_file" \
+              --draft 2>&1)"
+            write_status=$?
+            set -e
+
+            if [ "$write_status" -ne 0 ]; then
+              if echo "$write_output" | grep -q "GitHub Actions is not permitted"; then
+                echo "::warning::GitHub Actions cannot create pull requests with the current token. Enable 'Allow GitHub Actions to create and approve pull requests' in repository Actions settings, or add a PROMOTION_PR_TOKEN secret with pull request write permission."
+                exit 0
+              fi
+
+              echo "$write_output"
+              exit "$write_status"
+            fi
+
+            echo "Created draft promotion PR from develop to main."
+          fi

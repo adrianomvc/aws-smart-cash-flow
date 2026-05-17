@@ -20,6 +20,7 @@ DEC-003: O sistema deve priorizar idempotencia desde o inicio.
 Motivo:
 
 - Importacoes financeiras frequentemente sao repetidas durante ajustes.
+- Extratos podem ser baixados com janelas sobrepostas; uma importacao de dois meses pode conter um mes ja processado.
 
 DEC-004: O backend sera desenvolvido em Python.
 
@@ -132,7 +133,9 @@ R-004: Dedupe pode descartar transacoes legitimamente repetidas.
 
 Mitigacao:
 
-- Incluir `source_file_id` e `source_line` na chave inicial.
+- Usar chave transacional por workspace, tipo de origem, data, descricao original, valor e direcao para cobrir arquivos com periodos sobrepostos.
+- Manter contagem de linhas duplicadas visivel na resposta de importacao.
+- Evoluir para incluir conta/cartao quando a inferencia dessa origem estiver disponivel, reduzindo risco de colisao entre fontes diferentes.
 
 R-005: Multiusuario implementado tarde pode exigir refatoracao profunda.
 
@@ -229,6 +232,31 @@ Mitigacao:
 - Manter embedding como fase posterior ao MVP de ingestao.
 - Nao executar embedding local na Lambda sincrona de upload/importacao.
 - Se necessario, usar Lambda separada com container image e processamento em lote.
+
+DEC-020: O backend inicial online usara Lambda sem VPC e API Gateway HTTP API, conectando ao Neon por URL pooled publica com TLS.
+
+Motivo:
+
+- Evita custo fixo de NAT Gateway, RDS ou VPC privada no MVP.
+- Mantem o backend serverless e sob demanda.
+- Neon pooled reduz risco de excesso de conexoes em ambiente Lambda.
+
+R-012: Lambda pode exceder limites de conexao do Neon em bursts ou cold starts paralelos.
+
+Mitigacao:
+
+- Usar connection string pooled do Neon.
+- Configurar pool SQLAlchemy pequeno no backend (`pool_size=1`, `max_overflow=2`, `pool_pre_ping`).
+- Manter throttling inicial baixo no API Gateway.
+- Reavaliar RDS Proxy, provider pooler ou arquitetura assíncrona se houver aumento de uso.
+
+R-013: Backend publicado antes da validacao Supabase JWT aceita token bearer scaffold.
+
+Mitigacao:
+
+- Tratar o deploy Lambda inicial como ambiente `develop` operacional controlado.
+- Implementar validacao real de JWT antes de promover uso de producao ou dados multiusuario.
+- Manter CORS restrito ao dominio Amplify esperado.
 
 ## Perguntas Abertas
 

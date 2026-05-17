@@ -11,10 +11,21 @@ def _database_url() -> str:
     return normalize_database_url(settings.database_url) or "sqlite:///./smart_cash_flow.db"
 
 
-engine = create_engine(
-    _database_url(),
-    connect_args={"check_same_thread": False} if _database_url().startswith("sqlite") else {},
-)
+database_url = _database_url()
+engine_options = {
+    "connect_args": {"check_same_thread": False} if database_url.startswith("sqlite") else {},
+    "pool_pre_ping": True,
+}
+if not database_url.startswith("sqlite"):
+    engine_options.update(
+        {
+            "pool_recycle": settings.database_pool_recycle_seconds,
+            "pool_size": settings.database_pool_size,
+            "max_overflow": settings.database_max_overflow,
+        }
+    )
+
+engine = create_engine(database_url, **engine_options)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
