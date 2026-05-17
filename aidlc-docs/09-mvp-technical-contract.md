@@ -323,6 +323,15 @@ Base path:
 /v1
 ```
 
+Backend online:
+
+- API Gateway HTTP API publica a Lambda FastAPI/Mangum.
+- Terraform output `backend_api_base_url` deve ser usado como `VITE_API_BASE_URL`
+  no Amplify.
+- `DATABASE_URL` deve ser configurado como secret no GitHub Actions e aplicado
+  na Lambda pelo deploy, nunca commitado no repositorio.
+- O MVP usa Neon pooled PostgreSQL para evitar RDS/NAT.
+
 ### Health
 
 `GET /health`

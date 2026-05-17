@@ -38,6 +38,8 @@ Initial scope:
 - GitHub Actions OIDC provider.
 - GitHub Actions deploy role scoped to `develop` and `main`.
 - Optional Amplify deploy permission when `amplify_app_arn` is set.
+- Backend Lambda, API Gateway HTTP API, CloudWatch log group, and least-privilege
+  deploy permission for updating Lambda code/configuration.
 
 ## AWS Cost Tags
 
@@ -102,31 +104,69 @@ Repository variables:
 - `AWS_REGION`: AWS region used by Amplify/Lambda.
 - `AMPLIFY_APP_ID`: AWS Amplify app id.
 - `AMPLIFY_APP_ARN`: AWS Amplify app ARN used by Terraform IAM policy.
+- `BACKEND_LAMBDA_FUNCTION_NAME`: Lambda function name from Terraform output
+  `backend_lambda_function_name`.
+- `BACKEND_CORS_ORIGINS`: comma-separated browser origins allowed to call the
+  backend, including the Amplify domain and any local URLs needed for testing.
 - `TERRAFORM_DEPLOY_ENABLED`: keep `false` until application Terraform state is
   separated from bootstrap IAM/OIDC state.
+
+Repository secrets:
+
+- `BACKEND_DATABASE_URL`: Neon pooled PostgreSQL URL used by the Lambda backend.
+  Do not commit it to the repo or store it in Terraform variables.
 
 ## AWS OIDC
 
 Use GitHub OIDC instead of long-lived AWS access keys. The IAM role should trust
 the repository and allow only the required actions.
 
-Minimum action for the current frontend deploy workflow:
+Minimum actions for the current deploy workflows:
 
 ```text
 amplify:StartJob
+lambda:UpdateFunctionCode
+lambda:UpdateFunctionConfiguration
 ```
 
-Scope the permission to the Amplify app used by this project.
+Scope Amplify permissions to the project app and Lambda permissions to the
+project backend function.
 
 ## Backend Deploy
 
-Backend deploy is intentionally gated until the Lambda/API Gateway infrastructure
-template is created. The target remains:
+Backend deploy uses Lambda plus API Gateway HTTP API:
 
 ```text
-API Gateway HTTP API -> AWS Lambda Python -> Supabase
+API Gateway HTTP API -> AWS Lambda Python -> Neon PostgreSQL
 ```
 
-The next infra artifact should define the Lambda package, API Gateway routes,
-environment variables, and log retention before automatic backend deploy is
-enabled.
+Cost guardrails:
+
+- No RDS.
+- No NAT Gateway.
+- No VPC attachment unless a future private networking requirement is approved.
+- Lambda connects to Neon over public TLS using the pooled connection string.
+- CloudWatch log retention defaults to 14 days.
+
+Initial Terraform apply:
+
+1. Build an initial Lambda package on Linux or a compatible environment:
+
+   ```bash
+   cd backend
+   python -m pip install --target build/lambda .
+   cd build/lambda
+   zip -r ../backend-lambda.zip .
+   ```
+
+2. Set `backend_cors_origins` in `infra/terraform/terraform.tfvars` with the
+   Amplify domain.
+3. Run `terraform apply`.
+4. Add Terraform output `backend_lambda_function_name` to GitHub variable
+   `BACKEND_LAMBDA_FUNCTION_NAME`.
+5. Add Terraform output `backend_api_base_url` to Amplify environment variable
+   `VITE_API_BASE_URL`.
+6. Add Neon pooled URL to GitHub secret `BACKEND_DATABASE_URL`.
+
+After these are configured, pushes to `develop` or `main` that change backend or
+infra files package the backend and update the Lambda automatically.

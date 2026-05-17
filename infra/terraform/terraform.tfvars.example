@@ -11,6 +11,22 @@ cost_center       = "personal"
 # amplify_app_arn = "arn:aws:amplify:us-east-1:123456789012:apps/APP_ID"
 amplify_app_arn = ""
 
+# Build before the first Terraform apply:
+#   cd backend
+#   python -m pip install --target build/lambda .
+#   cd build/lambda
+#   zip -r ../backend-lambda.zip .
+backend_lambda_package_path = "../../backend/build/backend-lambda.zip"
+backend_lambda_memory_size  = 512
+backend_lambda_timeout_seconds = 30
+backend_log_retention_days  = 14
+
+backend_cors_origins = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "https://your-amplify-domain.amplifyapp.com",
+]
+
 additional_tags = {
   Workload = "mvp"
 }
