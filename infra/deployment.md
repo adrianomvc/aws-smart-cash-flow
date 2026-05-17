@@ -142,6 +142,12 @@ Backend deploy uses Lambda plus API Gateway HTTP API:
 API Gateway HTTP API -> AWS Lambda Python -> Neon PostgreSQL
 ```
 
+CORS:
+
+- FastAPI owns CORS response headers through `CORS_ORIGINS`.
+- API Gateway HTTP API CORS remains disabled to avoid stripping or conflicting
+  with application-level CORS headers.
+
 Cost guardrails:
 
 - No RDS.

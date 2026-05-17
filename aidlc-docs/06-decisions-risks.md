@@ -265,6 +265,14 @@ Mitigacao:
 - Usar o deploy backend do GitHub Actions para montar o pacote em Linux com dependencias runtime.
 - Manter disparo manual do workflow `CI` em `main` para atualizar a Lambda quando variaveis/secrets forem configuradas apos o Terraform apply.
 
+DEC-021: CORS do backend publicado sera controlado pelo FastAPI, nao pelo API Gateway HTTP API.
+
+Motivo:
+
+- A aplicacao ja centraliza origens permitidas em `CORS_ORIGINS`.
+- Manter CORS em duas camadas pode remover headers esperados pelo navegador e causar `Failed to fetch`.
+- API Gateway permanece como roteador/proxy HTTP simples para reduzir comportamento implicito.
+
 ## Perguntas Abertas
 
 - Confirmar detalhes da conta/projeto Supabase e estrategia de ambientes.

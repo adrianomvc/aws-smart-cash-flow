@@ -20,5 +20,5 @@ output "backend_api_url" {
 
 output "backend_api_base_url" {
   description = "Frontend VITE_API_BASE_URL value for the backend HTTP API."
-  value       = "${aws_apigatewayv2_stage.backend_default.invoke_url}/v1"
+  value       = "${trimsuffix(aws_apigatewayv2_stage.backend_default.invoke_url, "/")}/v1"
 }
