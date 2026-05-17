@@ -13,6 +13,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  pull-requests: write
 
 jobs:
   changes:
@@ -255,3 +256,68 @@ jobs:
 
           aws lambda wait function-updated-v2 \
             --function-name "${BACKEND_LAMBDA_FUNCTION_NAME}"
+
+  promote-develop-to-main:
+    name: Open promotion PR
+    runs-on: ubuntu-latest
+    needs:
+      - backend
+      - frontend
+    if: ${{ github.event_name == 'push' && github.ref_name == 'develop' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create or update develop to main PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          git fetch origin main develop
+
+          if git diff --quiet origin/main..origin/develop; then
+            echo "develop has no changes compared with main; no promotion PR needed."
+            exit 0
+          fi
+
+          pr_body_file="$(mktemp)"
+          cat > "$pr_body_file" <<'MD'
+          ## Summary
+
+          Promote the latest validated `develop` changes to `main`.
+
+          ## Validation
+
+          This PR was opened automatically after the CI backend and frontend jobs passed on `develop`.
+
+          ## Deploy Notes
+
+          Merging this PR pushes to `main`, which runs CI again and triggers the production deploy jobs configured for `main`.
+          MD
+
+          existing_pr="$(
+            gh pr list \
+              --base main \
+              --head develop \
+              --state open \
+              --json number \
+              --jq '.[0].number // empty'
+          )"
+
+          if [ -n "$existing_pr" ]; then
+            gh pr edit "$existing_pr" \
+              --title "Promote develop to main" \
+              --body-file "$pr_body_file"
+            echo "Updated existing promotion PR #$existing_pr."
+          else
+            gh pr create \
+              --base main \
+              --head develop \
+              --title "Promote develop to main" \
+              --body-file "$pr_body_file" \
+              --draft
+            echo "Created draft promotion PR from develop to main."
+          fi
