@@ -3,23 +3,25 @@
 ## Branches
 
 - `feature/*`: development branches. Run CI on push and pull request.
-- `develop`: integration branch. Run CI and trigger the development deploy.
-- `main`: production branch. Run CI and trigger the production deploy.
+- `main`: single deploy branch. Run CI and trigger deploy after pull requests are merged.
+
+The MVP currently has one deployed environment. Use pull requests from
+`feature/*` directly to `main`; keep `develop` unused unless a real development
+environment is introduced later.
 
 ## GitHub Actions
 
 Workflows:
 
 - `.github/workflows/ci.yml`: runs backend lint/tests and frontend lint/build.
-  On push to `develop` or `main`, the frontend deploy is triggered only after
-  these checks pass.
+  On push to `main`, deploy jobs are triggered only after these checks pass.
 
 Cost rule:
 
 - Feature branches and pull requests run CI only.
 - Amplify deploy is not triggered for feature branches.
-- Amplify deploy is triggered for `develop` and `main` only after backend and
-  frontend checks pass.
+- Amplify deploy is triggered for `main` only after backend and frontend checks
+  pass.
 
 ## Terraform
 
@@ -36,7 +38,7 @@ Decision:
 Initial scope:
 
 - GitHub Actions OIDC provider.
-- GitHub Actions deploy role scoped to `develop` and `main`.
+- GitHub Actions deploy role scoped to `main`.
 - Optional Amplify deploy permission when `amplify_app_arn` is set.
 - Backend Lambda, API Gateway HTTP API, CloudWatch log group, and least-privilege
   deploy permission for updating Lambda code/configuration.
@@ -115,9 +117,6 @@ Repository secrets:
 
 - `BACKEND_DATABASE_URL`: Neon pooled PostgreSQL URL used by the Lambda backend.
   Do not commit it to the repo or store it in Terraform variables.
-- `PROMOTION_PR_TOKEN` (optional): token with pull request write permission used
-  to create or update the automatic `develop` -> `main` promotion PR when the
-  repository does not allow the default GitHub Actions token to create PRs.
 
 ## AWS OIDC
 
@@ -171,18 +170,5 @@ Initial Terraform apply:
    `VITE_API_BASE_URL`.
 6. Add Neon pooled URL to GitHub secret `BACKEND_DATABASE_URL`.
 
-After these are configured, pushes to `develop` or `main` that change backend or
-infra files package the backend and update the Lambda automatically.
-
-## Promotion PR
-
-Pushes to `develop` open or update a draft PR from `develop` to `main` after
-backend and frontend CI pass.
-
-GitHub repositories may block the default `GITHUB_TOKEN` from creating PRs. In
-that case, use one of these options:
-
-- Enable repository setting:
-  `Settings -> Actions -> General -> Workflow permissions -> Allow GitHub Actions to create and approve pull requests`.
-- Or add `PROMOTION_PR_TOKEN` as a GitHub Actions secret with permission to
-  create and update pull requests.
+After these are configured, pushes to `main` that change backend or infra files
+package the backend and update the Lambda automatically.

@@ -3,17 +3,14 @@ name: CI
 on:
   pull_request:
     branches:
-      - develop
       - main
   push:
     branches:
-      - develop
       - main
 
 permissions:
   contents: read
   id-token: write
-  pull-requests: write
 
 jobs:
   changes:
@@ -116,7 +113,7 @@ jobs:
       - changes
       - backend
       - frontend
-    if: ${{ github.event_name == 'push' && (github.ref_name == 'develop' || github.ref_name == 'main') && needs.changes.outputs.frontend == 'true' && vars.AWS_ROLE_TO_ASSUME != '' && vars.AWS_REGION != '' && vars.AMPLIFY_APP_ID != '' }}
+    if: ${{ github.event_name == 'push' && github.ref_name == 'main' && needs.changes.outputs.frontend == 'true' && vars.AWS_ROLE_TO_ASSUME != '' && vars.AWS_REGION != '' && vars.AMPLIFY_APP_ID != '' }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -172,7 +169,7 @@ jobs:
     defaults:
       run:
         working-directory: backend
-    if: ${{ github.event_name == 'push' && (github.ref_name == 'develop' || github.ref_name == 'main') && needs.changes.outputs.backend == 'true' && vars.AWS_ROLE_TO_ASSUME != '' && vars.AWS_REGION != '' && vars.BACKEND_LAMBDA_FUNCTION_NAME != '' }}
+    if: ${{ github.event_name == 'push' && github.ref_name == 'main' && needs.changes.outputs.backend == 'true' && vars.AWS_ROLE_TO_ASSUME != '' && vars.AWS_REGION != '' && vars.BACKEND_LAMBDA_FUNCTION_NAME != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -256,96 +253,3 @@ jobs:
 
           aws lambda wait function-updated-v2 \
             --function-name "${BACKEND_LAMBDA_FUNCTION_NAME}"
-
-  promote-develop-to-main:
-    name: Open promotion PR
-    runs-on: ubuntu-latest
-    needs:
-      - backend
-      - frontend
-    if: ${{ github.event_name == 'push' && github.ref_name == 'develop' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Create or update develop to main PR
-        env:
-          GH_TOKEN: ${{ secrets.PROMOTION_PR_TOKEN || github.token }}
-        run: |
-          set -euo pipefail
-
-          git fetch origin main develop
-
-          if git diff --quiet origin/main..origin/develop; then
-            echo "develop has no changes compared with main; no promotion PR needed."
-            exit 0
-          fi
-
-          pr_body_file="$(mktemp)"
-          cat > "$pr_body_file" <<'MD'
-          ## Summary
-
-          Promote the latest validated `develop` changes to `main`.
-
-          ## Validation
-
-          This PR was opened automatically after the CI backend and frontend jobs passed on `develop`.
-
-          ## Deploy Notes
-
-          Merging this PR pushes to `main`, which runs CI again and triggers the production deploy jobs configured for `main`.
-          MD
-
-          existing_pr="$(
-            gh pr list \
-              --base main \
-              --head develop \
-              --state open \
-              --json number \
-              --jq '.[0].number // empty'
-          )"
-
-          if [ -n "$existing_pr" ]; then
-            set +e
-            write_output="$(gh pr edit "$existing_pr" \
-              --title "Promote develop to main" \
-              --body-file "$pr_body_file" 2>&1)"
-            write_status=$?
-            set -e
-
-            if [ "$write_status" -ne 0 ]; then
-              if echo "$write_output" | grep -q "GitHub Actions is not permitted"; then
-                echo "::warning::GitHub Actions cannot update pull requests with the current token. Enable 'Allow GitHub Actions to create and approve pull requests' in repository Actions settings, or add a PROMOTION_PR_TOKEN secret with pull request write permission."
-                exit 0
-              fi
-
-              echo "$write_output"
-              exit "$write_status"
-            fi
-
-            echo "Updated existing promotion PR #$existing_pr."
-          else
-            set +e
-            write_output="$(gh pr create \
-              --base main \
-              --head develop \
-              --title "Promote develop to main" \
-              --body-file "$pr_body_file" \
-              --draft 2>&1)"
-            write_status=$?
-            set -e
-
-            if [ "$write_status" -ne 0 ]; then
-              if echo "$write_output" | grep -q "GitHub Actions is not permitted"; then
-                echo "::warning::GitHub Actions cannot create pull requests with the current token. Enable 'Allow GitHub Actions to create and approve pull requests' in repository Actions settings, or add a PROMOTION_PR_TOKEN secret with pull request write permission."
-                exit 0
-              fi
-
-              echo "$write_output"
-              exit "$write_status"
-            fi
-
-            echo "Created draft promotion PR from develop to main."
-          fi
