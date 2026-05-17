@@ -109,10 +109,15 @@ async def create_category(
     db: Session = DbDependency,
 ) -> CategoryRead:
     name = _normalize_name(payload.name)
-    _ensure_unique_category_name(db=db, workspace_id=auth.workspace_id, name=name)
     _ensure_parent_category(
         db=db,
         workspace_id=auth.workspace_id,
+        parent_category_id=payload.parent_category_id,
+    )
+    _ensure_unique_category_name(
+        db=db,
+        workspace_id=auth.workspace_id,
+        name=name,
         parent_category_id=payload.parent_category_id,
     )
 
@@ -142,6 +147,7 @@ async def update_category(
             db=db,
             workspace_id=auth.workspace_id,
             name=category.name,
+            parent_category_id=category.parent_category_id,
             exclude_category_id=category.id,
         )
     if "parent_category_id" in payload.model_fields_set:
@@ -160,6 +166,13 @@ async def update_category(
             workspace_id=auth.workspace_id,
             category_id=category.id,
             parent_category_id=payload.parent_category_id,
+        )
+        _ensure_unique_category_name(
+            db=db,
+            workspace_id=auth.workspace_id,
+            name=category.name,
+            parent_category_id=payload.parent_category_id,
+            exclude_category_id=category.id,
         )
         category.parent_category_id = payload.parent_category_id
 
@@ -437,9 +450,14 @@ def _ensure_unique_category_name(
     db: Session,
     workspace_id: str,
     name: str,
+    parent_category_id: str | None,
     exclude_category_id: str | None = None,
 ) -> None:
     query = select(Category).where(Category.workspace_id == workspace_id, Category.name == name)
+    if parent_category_id is None:
+        query = query.where(Category.parent_category_id.is_(None))
+    else:
+        query = query.where(Category.parent_category_id == parent_category_id)
     if exclude_category_id is not None:
         query = query.where(Category.id != exclude_category_id)
     if db.scalar(query) is not None:

@@ -76,7 +76,7 @@ def test_create_and_list_categories_for_current_workspace(
     assert [item["name"] for item in payload["items"]] == ["Transporte"]
 
 
-def test_create_category_rejects_duplicate_name_in_same_workspace(
+def test_create_category_rejects_duplicate_root_name_in_same_workspace(
     client: TestClient,
     db_session: Session,
     auth: AuthContext,
@@ -94,6 +94,30 @@ def test_create_category_rejects_duplicate_name_in_same_workspace(
 
     assert first.status_code == 201
     assert duplicate.status_code == 409
+
+
+def test_create_category_allows_same_child_name_under_different_parents(
+    client: TestClient,
+) -> None:
+    transport = client.post("/v1/categories", json={"name": "Transporte"}).json()
+    food = client.post("/v1/categories", json={"name": "Alimentacao"}).json()
+
+    transport_app = client.post(
+        "/v1/categories",
+        json={"name": "Aplicativo", "parent_category_id": transport["id"]},
+    )
+    food_app = client.post(
+        "/v1/categories",
+        json={"name": "Aplicativo", "parent_category_id": food["id"]},
+    )
+    duplicate_transport_app = client.post(
+        "/v1/categories",
+        json={"name": "Aplicativo", "parent_category_id": transport["id"]},
+    )
+
+    assert transport_app.status_code == 201
+    assert food_app.status_code == 201
+    assert duplicate_transport_app.status_code == 409
 
 
 def test_create_category_requires_parent_in_current_workspace(
@@ -135,6 +159,28 @@ def test_update_category_changes_name_clears_parent_and_rejects_cycles(
     payload = update_response.json()
     assert payload["name"] == "Supermercado"
     assert payload["parent_category_id"] is None
+
+
+def test_update_category_rejects_duplicate_name_in_target_parent(
+    client: TestClient,
+) -> None:
+    transport = client.post("/v1/categories", json={"name": "Transporte"}).json()
+    food = client.post("/v1/categories", json={"name": "Alimentacao"}).json()
+    transport_app = client.post(
+        "/v1/categories",
+        json={"name": "Aplicativo", "parent_category_id": transport["id"]},
+    ).json()
+    client.post(
+        "/v1/categories",
+        json={"name": "Aplicativo", "parent_category_id": food["id"]},
+    )
+
+    response = client.patch(
+        f"/v1/categories/{transport_app['id']}",
+        json={"parent_category_id": food["id"]},
+    )
+
+    assert response.status_code == 409
 
 
 def test_delete_category_returns_404_for_other_workspace_and_blocks_used_categories(
