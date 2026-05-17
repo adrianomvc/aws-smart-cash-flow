@@ -63,6 +63,16 @@ export type ApplyRulesResponse = {
   applied_count: number;
 };
 
+type RulePayload = {
+  name: string;
+  field: string;
+  match_type: string;
+  pattern: string;
+  category_id: string;
+  priority: number;
+  active: boolean;
+};
+
 async function apiRequest<T>(
   path: string,
   token: string,
@@ -179,15 +189,7 @@ export function listRules(token: string) {
 
 export function createRule(
   token: string,
-  payload: {
-    name: string;
-    field: string;
-    match_type: string;
-    pattern: string;
-    category_id: string;
-    priority: number;
-    active: boolean;
-  },
+  payload: RulePayload,
 ) {
   return apiRequest<CategorizationRule>("/categorization-rules", token, {
     method: "POST",
@@ -195,6 +197,26 @@ export function createRule(
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
+  });
+}
+
+export function updateRule(
+  token: string,
+  ruleId: string,
+  payload: Partial<RulePayload>,
+) {
+  return apiRequest<CategorizationRule>(`/categorization-rules/${ruleId}`, token, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteRule(token: string, ruleId: string) {
+  return apiRequest<void>(`/categorization-rules/${ruleId}`, token, {
+    method: "DELETE",
   });
 }
 

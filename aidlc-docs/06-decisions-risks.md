@@ -281,6 +281,22 @@ Motivo:
 - O backend ja possui validacoes para parent, ciclos, duplicidade e bloqueio de exclusao quando a categoria esta em uso.
 - A UI deve expor essas operacoes sem remover historico de transacoes ou regras por acidente.
 
+DEC-023: Regras deterministicas poderao ser editadas, desativadas e excluidas na tela operacional.
+
+Motivo:
+
+- Regras incorretas podem afetar classificacoes futuras e precisam de correcao sem acesso direto ao banco.
+- Desativar preserva o historico da regra enquanto permite interromper novas aplicacoes.
+- Excluir continua disponivel para regras criadas por engano ou obsoletas.
+
+DEC-024: Nome de categoria sera unico por nivel hierarquico, nao por workspace inteiro.
+
+Motivo:
+
+- Permite estruturas como `Transporte / Aplicativo` e `Alimentacao / Aplicativo`.
+- Mantem bloqueio de duplicidade dentro do mesmo pai para evitar ambiguidade operacional.
+- Categorias raiz continuam unicas por workspace e nome.
+
 ## Perguntas Abertas
 
 - Confirmar detalhes da conta/projeto Supabase e estrategia de ambientes.

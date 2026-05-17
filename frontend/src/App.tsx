@@ -25,22 +25,34 @@ import {
 
 import {
   Category,
+  CategorizationRule,
   Transaction,
   applyRules,
   assignTransactionCategory,
   createCategory,
   createRule,
   deleteCategory,
+  deleteRule,
   listCategories,
   listImports,
   listRules,
   listTransactions,
   updateCategory,
+  updateRule,
   uploadImport,
 } from "./lib/api";
 
 const LOCAL_TOKEN = "local";
 const TRANSACTION_PAGE_SIZE = 100;
+const EMPTY_RULE_FORM = {
+  name: "",
+  field: "description",
+  match_type: "contains",
+  pattern: "",
+  category_id: "",
+  priority: 100,
+  active: true,
+};
 
 function App() {
   const queryClient = useQueryClient();
@@ -53,14 +65,9 @@ function App() {
     name: "",
     parent_category_id: "",
   });
-  const [ruleForm, setRuleForm] = useState({
-    name: "",
-    field: "description",
-    match_type: "contains",
-    pattern: "",
-    category_id: "",
-    priority: 100,
-  });
+  const [ruleForm, setRuleForm] = useState(EMPTY_RULE_FORM);
+  const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
+  const [ruleEditForm, setRuleEditForm] = useState(EMPTY_RULE_FORM);
 
   const importsQuery = useQuery({
     queryKey: ["imports"],
@@ -197,19 +204,39 @@ function App() {
       createRule(LOCAL_TOKEN, {
         ...ruleForm,
         priority: Number(ruleForm.priority),
-        active: true,
       }),
     onMutate: () => setMessage(null),
     onSuccess: () => {
-      setRuleForm({
-        name: "",
-        field: "description",
-        match_type: "contains",
-        pattern: "",
-        category_id: "",
-        priority: 100,
-      });
+      setRuleForm(EMPTY_RULE_FORM);
       setMessage("Regra criada.");
+      refreshAll();
+    },
+    onError: (error) => setMessage(error.message),
+  });
+
+  const updateRuleMutation = useMutation({
+    mutationFn: (payload: { ruleId: string; form: typeof EMPTY_RULE_FORM }) =>
+      updateRule(LOCAL_TOKEN, payload.ruleId, {
+        ...payload.form,
+        priority: Number(payload.form.priority),
+      }),
+    onMutate: () => setMessage(null),
+    onSuccess: () => {
+      setEditingRuleId(null);
+      setRuleEditForm(EMPTY_RULE_FORM);
+      setMessage("Regra atualizada.");
+      refreshAll();
+    },
+    onError: (error) => setMessage(error.message),
+  });
+
+  const deleteRuleMutation = useMutation({
+    mutationFn: (ruleId: string) => deleteRule(LOCAL_TOKEN, ruleId),
+    onMutate: () => setMessage(null),
+    onSuccess: () => {
+      setEditingRuleId(null);
+      setRuleEditForm(EMPTY_RULE_FORM);
+      setMessage("Regra excluida.");
       refreshAll();
     },
     onError: (error) => setMessage(error.message),
@@ -304,8 +331,47 @@ function App() {
 
   const handleCreateRule = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (ruleForm.name.trim() && ruleForm.pattern.trim() && ruleForm.category_id) {
-      ruleMutation.mutate();
+    const validationMessage = validateRuleForm(ruleForm);
+    if (validationMessage) {
+      setMessage(validationMessage);
+      return;
+    }
+    ruleMutation.mutate();
+  };
+
+  const startEditingRule = (rule: CategorizationRule) => {
+    setEditingRuleId(rule.id);
+    setRuleEditForm({
+      name: rule.name,
+      field: rule.field,
+      match_type: rule.match_type,
+      pattern: rule.pattern,
+      category_id: rule.category_id,
+      priority: rule.priority,
+      active: rule.active,
+    });
+  };
+
+  const cancelEditingRule = () => {
+    setEditingRuleId(null);
+    setRuleEditForm(EMPTY_RULE_FORM);
+  };
+
+  const handleUpdateRule = (ruleId: string) => {
+    const validationMessage = validateRuleForm(ruleEditForm);
+    if (validationMessage) {
+      setMessage(validationMessage);
+      return;
+    }
+    updateRuleMutation.mutate({
+      ruleId,
+      form: ruleEditForm,
+    });
+  };
+
+  const handleDeleteRule = (rule: CategorizationRule) => {
+    if (window.confirm(`Excluir a regra "${rule.name}"?`)) {
+      deleteRuleMutation.mutate(rule.id);
     }
   };
 
@@ -411,7 +477,7 @@ function App() {
                               </option>
                               {categories.map((category) => (
                                 <option key={category.id} value={category.id}>
-                                  {category.name}
+                                  {formatCategoryOption(category, categoryById)}
                                 </option>
                               ))}
                             </select>
@@ -648,12 +714,13 @@ function App() {
                       <option value="">Categoria</option>
                       {categories.map((category) => (
                         <option key={category.id} value={category.id}>
-                          {category.name}
+                          {formatCategoryOption(category, categoryById)}
                         </option>
                       ))}
                     </select>
                     <input
                       className="h-10 rounded-md border border-slate-300 px-2 text-sm"
+                      aria-label="Prioridade da regra"
                       min={1}
                       onChange={(event) =>
                         setRuleForm((value) => ({ ...value, priority: Number(event.target.value) }))
@@ -662,7 +729,25 @@ function App() {
                       value={ruleForm.priority}
                     />
                   </div>
-                  <button className="h-10 rounded-md bg-slate-950 px-3 text-sm font-medium text-white">
+                  <p className="text-xs text-slate-500">
+                    Prioridade: menor numero vence em sobreposicoes. Use 10 para regras especificas e 100
+                    para regras gerais.
+                  </p>
+                  <label className="flex h-10 items-center gap-2 rounded-md border border-slate-200 px-3 text-sm">
+                    <input
+                      checked={ruleForm.active}
+                      onChange={(event) =>
+                        setRuleForm((value) => ({ ...value, active: event.target.checked }))
+                      }
+                      type="checkbox"
+                    />
+                    Ativa
+                  </label>
+                  <button
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-slate-950 px-3 text-sm font-medium text-white"
+                    disabled={ruleMutation.isPending}
+                  >
+                    {ruleMutation.isPending ? <Loader2 className="animate-spin" size={16} /> : null}
                     Criar regra
                   </button>
                 </form>
@@ -677,12 +762,172 @@ function App() {
                 <div className="mt-3 grid gap-2">
                   {rules.map((rule) => (
                     <div key={rule.id} className="rounded-md border border-slate-200 px-3 py-2 text-sm">
-                      <div className="font-medium">{rule.name}</div>
-                      <div className="text-xs text-slate-500">
-                        {rule.field} {rule.match_type} "{rule.pattern}"
-                      </div>
+                      {editingRuleId === rule.id ? (
+                        <div className="grid gap-2">
+                          <input
+                            className="h-9 rounded-md border border-slate-300 px-2 text-sm"
+                            onChange={(event) =>
+                              setRuleEditForm((value) => ({ ...value, name: event.target.value }))
+                            }
+                            value={ruleEditForm.name}
+                          />
+                          <div className="grid grid-cols-2 gap-2">
+                            <select
+                              className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm"
+                              onChange={(event) =>
+                                setRuleEditForm((value) => ({ ...value, field: event.target.value }))
+                              }
+                              value={ruleEditForm.field}
+                            >
+                              <option value="description">Descricao</option>
+                              <option value="raw_description">Descricao bruta</option>
+                              <option value="source_name">Origem</option>
+                            </select>
+                            <select
+                              className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm"
+                              onChange={(event) =>
+                                setRuleEditForm((value) => ({
+                                  ...value,
+                                  match_type: event.target.value,
+                                }))
+                              }
+                              value={ruleEditForm.match_type}
+                            >
+                              <option value="contains">Contem</option>
+                              <option value="starts_with">Comeca com</option>
+                              <option value="equals">Igual</option>
+                            </select>
+                          </div>
+                          <input
+                            className="h-9 rounded-md border border-slate-300 px-2 text-sm"
+                            onChange={(event) =>
+                              setRuleEditForm((value) => ({ ...value, pattern: event.target.value }))
+                            }
+                            value={ruleEditForm.pattern}
+                          />
+                          <div className="grid grid-cols-[1fr_76px] gap-2">
+                            <select
+                              className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm"
+                              onChange={(event) =>
+                                setRuleEditForm((value) => ({
+                                  ...value,
+                                  category_id: event.target.value,
+                                }))
+                              }
+                              value={ruleEditForm.category_id}
+                            >
+                              <option value="">Categoria</option>
+                              {categories.map((category) => (
+                                <option key={category.id} value={category.id}>
+                                  {formatCategoryOption(category, categoryById)}
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              className="h-9 rounded-md border border-slate-300 px-2 text-sm"
+                              aria-label="Prioridade da regra"
+                              min={1}
+                              onChange={(event) =>
+                                setRuleEditForm((value) => ({
+                                  ...value,
+                                  priority: Number(event.target.value),
+                                }))
+                              }
+                              type="number"
+                              value={ruleEditForm.priority}
+                            />
+                          </div>
+                          <p className="text-xs text-slate-500">
+                            Menor numero vence em sobreposicoes.
+                          </p>
+                          <div className="grid grid-cols-[1fr_auto_auto] gap-2">
+                            <label className="flex h-9 items-center gap-2 rounded-md border border-slate-200 px-2 text-sm">
+                              <input
+                                checked={ruleEditForm.active}
+                                onChange={(event) =>
+                                  setRuleEditForm((value) => ({
+                                    ...value,
+                                    active: event.target.checked,
+                                  }))
+                                }
+                                type="checkbox"
+                              />
+                              Ativa
+                            </label>
+                            <button
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white"
+                              disabled={updateRuleMutation.isPending}
+                              onClick={() => handleUpdateRule(rule.id)}
+                              title="Salvar regra"
+                              type="button"
+                            >
+                              {updateRuleMutation.isPending ? (
+                                <Loader2 className="animate-spin" size={16} />
+                              ) : (
+                                <Save size={16} />
+                              )}
+                            </button>
+                            <button
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white"
+                              onClick={cancelEditingRule}
+                              title="Cancelar edicao"
+                              type="button"
+                            >
+                              <X size={16} />
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-[1fr_auto_auto] items-center gap-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="truncate font-medium">{rule.name}</span>
+                              <span
+                                className={`rounded px-1.5 py-0.5 text-xs ${
+                                  rule.active
+                                    ? "bg-emerald-50 text-emerald-700"
+                                    : "bg-slate-100 text-slate-500"
+                                }`}
+                              >
+                                {rule.active ? "Ativa" : "Inativa"}
+                              </span>
+                            </div>
+                            <div className="truncate text-xs text-slate-500">
+                              {rule.field} {rule.match_type} "{rule.pattern}"
+                            </div>
+                            <div className="truncate text-xs text-slate-500">
+                              Categoria: {formatRuleCategory(rule, categoryById)}
+                            </div>
+                            <div className="truncate text-xs text-slate-500">
+                              Prioridade {rule.priority}
+                            </div>
+                          </div>
+                          <button
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white"
+                            onClick={() => startEditingRule(rule)}
+                            title="Editar regra"
+                            type="button"
+                          >
+                            <Pencil size={16} />
+                          </button>
+                          <button
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-red-200 bg-white text-red-700"
+                            disabled={deleteRuleMutation.isPending}
+                            onClick={() => handleDeleteRule(rule)}
+                            title="Excluir regra"
+                            type="button"
+                          >
+                            {deleteRuleMutation.isPending ? (
+                              <Loader2 className="animate-spin" size={16} />
+                            ) : (
+                              <Trash2 size={16} />
+                            )}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))}
+                  {rules.length === 0 ? <EmptyState text="Nenhuma regra criada." /> : null}
                 </div>
               </Panel>
             </aside>
@@ -737,6 +982,22 @@ function formatCount(count: number, singular: string, plural: string) {
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
+function validateRuleForm(form: typeof EMPTY_RULE_FORM) {
+  if (!form.name.trim()) {
+    return "Informe o nome da regra.";
+  }
+  if (!form.pattern.trim()) {
+    return "Informe o padrao da regra.";
+  }
+  if (!form.category_id) {
+    return "Selecione a categoria da regra.";
+  }
+  if (!Number.isFinite(Number(form.priority)) || Number(form.priority) < 1) {
+    return "Informe uma prioridade maior ou igual a 1.";
+  }
+  return null;
+}
+
 function formatCategoryOption(category: Category, categoryById: Map<string, Category>) {
   const names = [category.name];
   let parentId = category.parent_category_id;
@@ -755,6 +1016,18 @@ function formatCategoryOption(category: Category, categoryById: Map<string, Cate
   return names.join(" / ");
 }
 
+function formatRuleCategory(rule: CategorizationRule, categoryById: Map<string, Category>) {
+  return formatTransactionCategory(rule.category_id, categoryById);
+}
+
+function formatTransactionCategory(categoryId: string, categoryById: Map<string, Category>) {
+  const category = categoryById.get(categoryId);
+  if (!category) {
+    return "Categoria removida";
+  }
+  return formatCategoryOption(category, categoryById);
+}
+
 function buildChartData(transactions: Transaction[], categoryById: Map<string, Category>) {
   const totals = new Map<string, number>();
   transactions.forEach((transaction) => {
@@ -763,7 +1036,7 @@ function buildChartData(transactions: Transaction[], categoryById: Map<string, C
     }
     const amount = Math.abs(Number(transaction.amount));
     const category = transaction.category_id
-      ? categoryById.get(transaction.category_id)?.name ?? "Sem categoria"
+      ? formatTransactionCategory(transaction.category_id, categoryById)
       : "Sem categoria";
     totals.set(category, (totals.get(category) ?? 0) + amount);
   });
