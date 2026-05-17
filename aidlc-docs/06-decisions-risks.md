@@ -233,6 +233,31 @@ Mitigacao:
 - Nao executar embedding local na Lambda sincrona de upload/importacao.
 - Se necessario, usar Lambda separada com container image e processamento em lote.
 
+DEC-020: O backend inicial online usara Lambda sem VPC e API Gateway HTTP API, conectando ao Neon por URL pooled publica com TLS.
+
+Motivo:
+
+- Evita custo fixo de NAT Gateway, RDS ou VPC privada no MVP.
+- Mantem o backend serverless e sob demanda.
+- Neon pooled reduz risco de excesso de conexoes em ambiente Lambda.
+
+R-012: Lambda pode exceder limites de conexao do Neon em bursts ou cold starts paralelos.
+
+Mitigacao:
+
+- Usar connection string pooled do Neon.
+- Configurar pool SQLAlchemy pequeno no backend (`pool_size=1`, `max_overflow=2`, `pool_pre_ping`).
+- Manter throttling inicial baixo no API Gateway.
+- Reavaliar RDS Proxy, provider pooler ou arquitetura assíncrona se houver aumento de uso.
+
+R-013: Backend publicado antes da validacao Supabase JWT aceita token bearer scaffold.
+
+Mitigacao:
+
+- Tratar o deploy Lambda inicial como ambiente `develop` operacional controlado.
+- Implementar validacao real de JWT antes de promover uso de producao ou dados multiusuario.
+- Manter CORS restrito ao dominio Amplify esperado.
+
 ## Perguntas Abertas
 
 - Confirmar detalhes da conta/projeto Supabase e estrategia de ambientes.

@@ -88,3 +88,160 @@ resource "aws_iam_role_policy" "amplify_deploy" {
   role   = aws_iam_role.github_actions_deploy.id
   policy = data.aws_iam_policy_document.amplify_deploy[0].json
 }
+
+data "aws_iam_policy_document" "backend_lambda_assume_role" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["lambda.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "backend_lambda_execution" {
+  name               = "${local.name_prefix}-backend-lambda"
+  assume_role_policy = data.aws_iam_policy_document.backend_lambda_assume_role.json
+
+  tags = local.common_tags
+}
+
+resource "aws_cloudwatch_log_group" "backend_lambda" {
+  name              = "/aws/lambda/${local.name_prefix}-backend"
+  retention_in_days = var.backend_log_retention_days
+}
+
+data "aws_iam_policy_document" "backend_lambda_logs" {
+  statement {
+    effect = "Allow"
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+    ]
+    resources = ["${aws_cloudwatch_log_group.backend_lambda.arn}:*"]
+  }
+}
+
+resource "aws_iam_role_policy" "backend_lambda_logs" {
+  name   = "${local.name_prefix}-backend-logs"
+  role   = aws_iam_role.backend_lambda_execution.id
+  policy = data.aws_iam_policy_document.backend_lambda_logs.json
+}
+
+resource "aws_lambda_function" "backend" {
+  function_name = "${local.name_prefix}-backend"
+  description   = "FastAPI backend for aws-smart-cash-flow"
+  role          = aws_iam_role.backend_lambda_execution.arn
+  handler       = "app.main.handler"
+  runtime       = "python3.11"
+  architectures = ["x86_64"]
+  filename      = var.backend_lambda_package_path
+  memory_size   = var.backend_lambda_memory_size
+  timeout       = var.backend_lambda_timeout_seconds
+
+  environment {
+    variables = {
+      APP_ENV                       = var.environment
+      CORS_ORIGINS                  = join(",", var.backend_cors_origins)
+      DATABASE_MAX_OVERFLOW         = "2"
+      DATABASE_POOL_RECYCLE_SECONDS = "300"
+      DATABASE_POOL_SIZE            = "1"
+      DATABASE_URL                  = "configured-by-github-actions"
+      LOG_LEVEL                     = "INFO"
+      SUPABASE_JWT_SECRET           = ""
+      SUPABASE_STORAGE_BUCKET       = "financial-files"
+      SUPABASE_URL                  = ""
+    }
+  }
+
+  depends_on = [
+    aws_cloudwatch_log_group.backend_lambda,
+    aws_iam_role_policy.backend_lambda_logs,
+  ]
+
+  lifecycle {
+    ignore_changes = [
+      environment,
+      filename,
+      source_code_hash,
+    ]
+  }
+
+  tags = local.common_tags
+}
+
+resource "aws_apigatewayv2_api" "backend" {
+  name          = "${local.name_prefix}-backend"
+  protocol_type = "HTTP"
+
+  cors_configuration {
+    allow_credentials = false
+    allow_headers     = ["authorization", "content-type"]
+    allow_methods     = ["GET", "POST", "PATCH", "OPTIONS"]
+    allow_origins     = var.backend_cors_origins
+    max_age           = 300
+  }
+
+  tags = local.common_tags
+}
+
+resource "aws_apigatewayv2_integration" "backend" {
+  api_id                 = aws_apigatewayv2_api.backend.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.backend.invoke_arn
+  payload_format_version = "2.0"
+}
+
+resource "aws_apigatewayv2_route" "backend_root" {
+  api_id    = aws_apigatewayv2_api.backend.id
+  route_key = "ANY /"
+  target    = "integrations/${aws_apigatewayv2_integration.backend.id}"
+}
+
+resource "aws_apigatewayv2_route" "backend_proxy" {
+  api_id    = aws_apigatewayv2_api.backend.id
+  route_key = "ANY /{proxy+}"
+  target    = "integrations/${aws_apigatewayv2_integration.backend.id}"
+}
+
+resource "aws_apigatewayv2_stage" "backend_default" {
+  api_id      = aws_apigatewayv2_api.backend.id
+  name        = "$default"
+  auto_deploy = true
+
+  default_route_settings {
+    throttling_burst_limit = 10
+    throttling_rate_limit  = 5
+  }
+
+  tags = local.common_tags
+}
+
+resource "aws_lambda_permission" "backend_api_gateway" {
+  statement_id  = "AllowExecutionFromApiGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.backend.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.backend.execution_arn}/*/*"
+}
+
+data "aws_iam_policy_document" "backend_deploy" {
+  statement {
+    effect = "Allow"
+    actions = [
+      "lambda:GetFunction",
+      "lambda:GetFunctionConfiguration",
+      "lambda:UpdateFunctionCode",
+      "lambda:UpdateFunctionConfiguration",
+    ]
+    resources = [aws_lambda_function.backend.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "backend_deploy" {
+  name   = "${local.name_prefix}-backend-deploy"
+  role   = aws_iam_role.github_actions_deploy.id
+  policy = data.aws_iam_policy_document.backend_deploy.json
+}
