@@ -176,14 +176,6 @@ resource "aws_apigatewayv2_api" "backend" {
   name          = "${local.name_prefix}-backend"
   protocol_type = "HTTP"
 
-  cors_configuration {
-    allow_credentials = false
-    allow_headers     = ["authorization", "content-type"]
-    allow_methods     = ["GET", "POST", "PATCH", "OPTIONS"]
-    allow_origins     = var.backend_cors_origins
-    max_age           = 300
-  }
-
   tags = local.common_tags
 }
 
