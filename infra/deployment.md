@@ -172,3 +172,10 @@ Initial Terraform apply:
 
 After these are configured, pushes to `main` that change backend or infra files
 package the backend and update the Lambda automatically.
+
+Manual backend refresh:
+
+- If the Lambda was created from the initial Terraform package before GitHub
+  deploy variables/secrets were configured, run the `CI` workflow manually on
+  `main` with `deploy_backend=true`. This rebuilds the Lambda package on Linux
+  and updates the function code/configuration from GitHub Actions.

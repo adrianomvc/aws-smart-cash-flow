@@ -258,6 +258,13 @@ Mitigacao:
 - Implementar validacao real de JWT antes de promover uso de producao ou dados multiusuario.
 - Manter CORS restrito ao dominio Amplify esperado.
 
+R-014: Lambda criada pelo pacote inicial do Terraform pode ficar sem dependencias Python ate o primeiro deploy GitHub.
+
+Mitigacao:
+
+- Usar o deploy backend do GitHub Actions para montar o pacote em Linux com dependencias runtime.
+- Manter disparo manual do workflow `CI` em `main` para atualizar a Lambda quando variaveis/secrets forem configuradas apos o Terraform apply.
+
 ## Perguntas Abertas
 
 - Confirmar detalhes da conta/projeto Supabase e estrategia de ambientes.

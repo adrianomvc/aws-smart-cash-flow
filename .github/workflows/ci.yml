@@ -7,6 +7,18 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      deploy_backend:
+        description: "Build and deploy the backend Lambda"
+        required: false
+        type: boolean
+        default: true
+      deploy_frontend:
+        description: "Trigger the Amplify frontend deploy"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -25,11 +37,17 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Detect frontend changes
+      - name: Detect deploy changes
         id: changed
         shell: bash
         run: |
           set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "backend=${{ inputs.deploy_backend }}" >> "$GITHUB_OUTPUT"
+            echo "frontend=${{ inputs.deploy_frontend }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           if [ "${{ github.event_name }}" != "push" ]; then
             echo "backend=false" >> "$GITHUB_OUTPUT"
@@ -113,7 +131,7 @@ jobs:
       - changes
       - backend
       - frontend
-    if: ${{ github.event_name == 'push' && github.ref_name == 'main' && needs.changes.outputs.frontend == 'true' && vars.AWS_ROLE_TO_ASSUME != '' && vars.AWS_REGION != '' && vars.AMPLIFY_APP_ID != '' }}
+    if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_name == 'main' && needs.changes.outputs.frontend == 'true' && vars.AWS_ROLE_TO_ASSUME != '' && vars.AWS_REGION != '' && vars.AMPLIFY_APP_ID != '' }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -169,7 +187,7 @@ jobs:
     defaults:
       run:
         working-directory: backend
-    if: ${{ github.event_name == 'push' && github.ref_name == 'main' && needs.changes.outputs.backend == 'true' && vars.AWS_ROLE_TO_ASSUME != '' && vars.AWS_REGION != '' && vars.BACKEND_LAMBDA_FUNCTION_NAME != '' }}
+    if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_name == 'main' && needs.changes.outputs.backend == 'true' && vars.AWS_ROLE_TO_ASSUME != '' && vars.AWS_REGION != '' && vars.BACKEND_LAMBDA_FUNCTION_NAME != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
