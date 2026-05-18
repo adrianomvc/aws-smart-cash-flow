@@ -1,11 +1,10 @@
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
-from typing import Annotated
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import and_, asc, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import AuthContext, AuthDependency
@@ -18,6 +17,13 @@ DbDependency = Depends(get_db)
 
 class CategoryPatch(BaseModel):
     category_id: str
+
+
+class CategoryAssignmentRead(BaseModel):
+    category_id: str
+    source: str
+    confidence: Decimal | None
+    review_status: str
 
 
 class TransactionRead(BaseModel):
@@ -36,10 +42,10 @@ class TransactionRead(BaseModel):
     installment_current: int | None
     installment_total: int | None
     source_line: int | None
+    category: CategoryAssignmentRead | None = None
     category_id: str | None = None
     category_source: str | None = None
     category_review_status: str | None = None
-    created_at: datetime
 
 
 class TransactionListResponse(BaseModel):
@@ -54,52 +60,98 @@ class TransactionListResponse(BaseModel):
 async def list_transactions(
     auth: AuthContext = AuthDependency,
     db: Session = DbDependency,
-    date_from: Annotated[date | None, Query()] = None,
-    date_to: Annotated[date | None, Query()] = None,
-    category_id: Annotated[str | None, Query()] = None,
-    source_type: Annotated[str | None, Query()] = None,
-    q: Annotated[str | None, Query()] = None,
-    limit: Annotated[int, Query(ge=1, le=100)] = 50,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    category_id: str | None = None,
+    source_type: str | None = None,
+    direction: str | None = None,
+    q: str | None = None,
+    sort_by: str = Query(default="transaction_date"),
+    sort_dir: str = Query(default="desc"),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
 ) -> TransactionListResponse:
-    assignment_join = and_(
-        TransactionCategoryAssignment.transaction_id == Transaction.id,
-        TransactionCategoryAssignment.workspace_id == Transaction.workspace_id,
-    )
-    base_query = (
-        select(Transaction, TransactionCategoryAssignment)
-        .outerjoin(TransactionCategoryAssignment, assignment_join)
-        .where(Transaction.workspace_id == auth.workspace_id)
-    )
+    sort_columns = {
+        "transaction_date": Transaction.transaction_date,
+        "amount": Transaction.amount,
+        "description": Transaction.description,
+        "direction": Transaction.direction,
+        "source_type": Transaction.source_type,
+    }
+    sort_column = sort_columns.get(sort_by)
+    if sort_column is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Invalid sort_by. Use transaction_date, amount, description, "
+                "direction, or source_type."
+            ),
+        )
+    if sort_dir not in {"asc", "desc"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid sort_dir. Use asc or desc.",
+        )
+    sort_expression = asc(sort_column) if sort_dir == "asc" else desc(sort_column)
 
+    filters = [
+        Transaction.workspace_id == auth.workspace_id,
+        Transaction.natural_dedupe_key.is_not(None),
+    ]
     if date_from is not None:
-        base_query = base_query.where(Transaction.transaction_date >= date_from)
+        filters.append(Transaction.transaction_date >= date_from)
     if date_to is not None:
-        base_query = base_query.where(Transaction.transaction_date <= date_to)
-    if category_id is not None:
-        base_query = base_query.where(TransactionCategoryAssignment.category_id == category_id)
+        filters.append(Transaction.transaction_date <= date_to)
     if source_type is not None:
-        base_query = base_query.where(Transaction.source_type == source_type)
+        filters.append(Transaction.source_type == source_type)
+    if direction is not None:
+        filters.append(Transaction.direction == direction)
     if q:
-        normalized_q = f"%{q.strip().lower()}%"
-        base_query = base_query.where(
+        search = f"%{q.casefold()}%"
+        filters.append(
             or_(
-                func.lower(Transaction.description).like(normalized_q),
-                func.lower(Transaction.raw_description).like(normalized_q),
+                Transaction.description.ilike(search),
+                Transaction.raw_description.ilike(search),
+            )
+        )
+    if category_id is not None:
+        filters.append(
+            Transaction.id.in_(
+                select(TransactionCategoryAssignment.transaction_id).where(
+                    TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+                    TransactionCategoryAssignment.category_id == category_id,
+                )
             )
         )
 
-    total = db.scalar(select(func.count()).select_from(base_query.subquery())) or 0
-    query = base_query.order_by(desc(Transaction.transaction_date), desc(Transaction.id)).limit(
-        limit
-    ).offset(offset)
-    items = [
-        _transaction_read(transaction=transaction, assignment=assignment)
-        for transaction, assignment in db.execute(query).all()
-    ]
+    query = (
+        select(Transaction, TransactionCategoryAssignment)
+        .outerjoin(
+            TransactionCategoryAssignment,
+            and_(
+                TransactionCategoryAssignment.transaction_id == Transaction.id,
+                TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+            ),
+        )
+        .where(*filters)
+    )
+    total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
+    rows = db.execute(
+        query
+        .order_by(
+            sort_expression,
+            desc(Transaction.created_at),
+            desc(Transaction.id),
+        )
+        .limit(limit)
+        .offset(offset)
+    ).all()
     return TransactionListResponse(
         workspace_id=auth.workspace_id,
-        items=items,
+        items=[
+            _transaction_read(transaction=transaction, assignment=assignment)
+            for transaction, assignment in rows
+        ],
         total=total,
         limit=limit,
         offset=offset,
@@ -113,20 +165,28 @@ async def update_transaction_category(
     auth: AuthContext = AuthDependency,
     db: Session = DbDependency,
 ) -> TransactionRead:
-    transaction = _get_transaction(
-        db=db,
-        workspace_id=auth.workspace_id,
-        transaction_id=transaction_id,
+    transaction = db.scalar(
+        select(Transaction).where(
+            Transaction.id == transaction_id,
+            Transaction.workspace_id == auth.workspace_id,
+        )
     )
-    _get_category(
-        db=db,
-        workspace_id=auth.workspace_id,
-        category_id=payload.category_id,
+    if transaction is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
+
+    category = db.scalar(
+        select(Category).where(
+            Category.id == payload.category_id,
+            Category.workspace_id == auth.workspace_id,
+        )
     )
+    if category is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+
     assignment = db.scalar(
         select(TransactionCategoryAssignment).where(
-            TransactionCategoryAssignment.workspace_id == auth.workspace_id,
             TransactionCategoryAssignment.transaction_id == transaction.id,
+            TransactionCategoryAssignment.workspace_id == auth.workspace_id,
         )
     )
     if assignment is None:
@@ -134,18 +194,18 @@ async def update_transaction_category(
             id=str(uuid4()),
             workspace_id=auth.workspace_id,
             transaction_id=transaction.id,
-            category_id=payload.category_id,
+            category_id=category.id,
             source="manual",
-            confidence=Decimal("1.0000"),
-            reason=None,
+            confidence=Decimal("1.0"),
+            reason="Manual assignment",
             review_status="accepted",
         )
         db.add(assignment)
     else:
-        assignment.category_id = payload.category_id
+        assignment.category_id = category.id
         assignment.source = "manual"
-        assignment.confidence = Decimal("1.0000")
-        assignment.reason = None
+        assignment.confidence = Decimal("1.0")
+        assignment.reason = "Manual assignment"
         assignment.review_status = "accepted"
 
     db.commit()
@@ -174,32 +234,15 @@ def _transaction_read(
         installment_current=transaction.installment_current,
         installment_total=transaction.installment_total,
         source_line=transaction.source_line,
+        category=CategoryAssignmentRead(
+            category_id=assignment.category_id,
+            source=assignment.source,
+            confidence=assignment.confidence,
+            review_status=assignment.review_status,
+        )
+        if assignment is not None
+        else None,
         category_id=assignment.category_id if assignment is not None else None,
         category_source=assignment.source if assignment is not None else None,
         category_review_status=assignment.review_status if assignment is not None else None,
-        created_at=transaction.created_at,
     )
-
-
-def _get_transaction(db: Session, workspace_id: str, transaction_id: str) -> Transaction:
-    transaction = db.scalar(
-        select(Transaction).where(
-            Transaction.id == transaction_id,
-            Transaction.workspace_id == workspace_id,
-        )
-    )
-    if transaction is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
-    return transaction
-
-
-def _get_category(db: Session, workspace_id: str, category_id: str) -> Category:
-    category = db.scalar(
-        select(Category).where(
-            Category.id == category_id,
-            Category.workspace_id == workspace_id,
-        )
-    )
-    if category is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
-    return category

@@ -1,43 +1,92 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/v1";
 
-export type ImportJob = {
+export type SessionMode = "local" | "supabase";
+
+export type ApiSession = {
+  token: string;
+  mode: SessionMode;
+};
+
+export type WorkspaceCurrent = {
+  user_id: string;
+  workspace_id: string;
+  workspace_name: string;
+  role: string;
+  created_at: string;
+};
+
+export type SourceFileRead = {
+  id: string;
+  original_filename: string;
+  source_kind: string;
+  mime_type: string;
+  size_bytes: number;
+  storage_bucket: string;
+  storage_path: string;
+  received_at: string;
+};
+
+export type ImportJobRead = {
   id: string;
   source_file_id: string;
   status: string;
+  started_at: string | null;
+  finished_at: string | null;
   total_rows: number;
   valid_rows: number;
   error_rows: number;
   duplicate_rows: number;
   created_at: string;
-  source_file?: {
-    original_filename: string;
-    source_kind: string;
-    size_bytes: number;
-  } | null;
+  source_file: SourceFileRead | null;
 };
 
-export type Transaction = {
+export type ImportErrorRead = {
   id: string;
+  import_job_id: string;
+  source_line: number | null;
+  field_name: string | null;
+  raw_value: string | null;
+  error_code: string;
+  message: string;
+  created_at: string;
+};
+
+export type CategoryRead = {
+  id: string;
+  name: string;
+  parent_category_id: string | null;
+  created_at: string;
+};
+
+export type CategoryAssignmentRead = {
+  category_id: string;
+  source: string;
+  confidence: string | null;
+  review_status: string;
+};
+
+export type TransactionRead = {
+  id: string;
+  source_file_id: string;
+  import_job_id: string;
+  source_type: string;
+  source_name: string | null;
+  account_or_card: string | null;
   transaction_date: string;
   description: string;
   raw_description: string;
   amount: string;
   currency: string;
   direction: string;
-  source_type: string;
-  category_id: string | null;
-  category_source: string | null;
-  category_review_status: string | null;
+  installment_current: number | null;
+  installment_total: number | null;
+  source_line: number | null;
+  category: CategoryAssignmentRead | null;
 };
 
-export type Category = {
+export type CategorizationRuleRead = {
   id: string;
-  name: string;
-  parent_category_id: string | null;
-};
-
-export type CategorizationRule = {
-  id: string;
+  workspace_id?: string;
   name: string;
   field: string;
   match_type: string;
@@ -45,50 +94,82 @@ export type CategorizationRule = {
   category_id: string;
   priority: number;
   active: boolean;
+  created_at: string;
+};
+
+export type DashboardSummary = {
+  workspace_id: string;
+  date_from: string | null;
+  date_to: string | null;
+  income: string;
+  expenses: string;
+  payments: string;
+  balance: string;
+  savings_rate: string | null;
+  transaction_count: number;
+};
+
+export type MonthlyCashflowItem = {
+  month: string;
+  income: string;
+  expenses: string;
+  payments: string;
+  balance: string;
+  transaction_count: number;
+};
+
+export type CategoryRankingItem = {
+  category_id: string | null;
+  category_name: string;
+  amount: string;
+  count: number;
+};
+
+export type DataQuality = {
+  workspace_id: string;
+  transaction_count: number;
+  categorized_count: number;
+  uncategorized_count: number;
+  categorized_ratio: string | null;
+  imports_with_errors: number;
+  duplicate_imports: number;
 };
 
 export type ListResponse<T> = {
   workspace_id: string;
   items: T[];
+  total?: number;
+  limit?: number;
+  offset?: number;
 };
 
-export type PaginatedListResponse<T> = ListResponse<T> & {
-  total: number;
-  limit: number;
-  offset: number;
+type ApiOptions = {
+  method?: string;
+  body?: BodyInit | object;
+  headers?: HeadersInit;
 };
 
-export type ApplyRulesResponse = {
-  workspace_id: string;
-  applied_count: number;
-};
+async function apiRequest<T>(path: string, session: ApiSession, options: ApiOptions = {}): Promise<T> {
+  const headers = new Headers(options.headers);
+  headers.set("Authorization", `Bearer ${session.token}`);
 
-type RulePayload = {
-  name: string;
-  field: string;
-  match_type: string;
-  pattern: string;
-  category_id: string;
-  priority: number;
-  active: boolean;
-};
-
-async function apiRequest<T>(
-  path: string,
-  token: string,
-  init: RequestInit = {},
-): Promise<T> {
-  const headers = new Headers(init.headers);
-  headers.set("Authorization", `Bearer ${token}`);
+  let body: BodyInit | undefined;
+  if (options.body instanceof FormData) {
+    body = options.body;
+  } else if (options.body !== undefined) {
+    headers.set("Content-Type", "application/json");
+    body = JSON.stringify(options.body);
+  }
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
+    method: options.method ?? "GET",
     headers,
+    body,
   });
 
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(formatApiError(detail, response.status));
+    throw new Error(detail || `API request failed: ${response.status}`);
   }
 
   if (response.status === 204) {
@@ -98,13 +179,37 @@ async function apiRequest<T>(
   return response.json() as Promise<T>;
 }
 
-export function listImports(token: string) {
-  return apiRequest<ListResponse<ImportJob>>("/imports?limit=20", token);
+export function getCurrentWorkspace(session: ApiSession) {
+  return apiRequest<WorkspaceCurrent>("/workspaces/current", session);
 }
 
-export function uploadImport(token: string, file: File) {
-  const form = new FormData();
-  form.append("file", file);
+export function getDashboardSummary(session: ApiSession, query: string) {
+  return apiRequest<DashboardSummary>(`/dashboard/summary${query}`, session);
+}
+
+export function getMonthlyCashflow(session: ApiSession, query: string) {
+  return apiRequest<ListResponse<MonthlyCashflowItem>>(`/dashboard/monthly-cashflow${query}`, session);
+}
+
+export function getCategoryRanking(session: ApiSession, query: string) {
+  return apiRequest<ListResponse<CategoryRankingItem>>(`/dashboard/category-ranking${query}`, session);
+}
+
+export function getDataQuality(session: ApiSession, query: string) {
+  return apiRequest<DataQuality>(`/dashboard/data-quality${query}`, session);
+}
+
+export function getImports(session: ApiSession) {
+  return apiRequest<ListResponse<ImportJobRead>>("/imports?limit=20", session);
+}
+
+export function getImportErrors(session: ApiSession, importId: string) {
+  return apiRequest<ListResponse<ImportErrorRead>>(`/imports/${importId}/errors`, session);
+}
+
+export function uploadImport(session: ApiSession, file: File) {
+  const data = new FormData();
+  data.append("file", file);
   return apiRequest<{
     import_job_id: string;
     source_file_id: string;
@@ -113,132 +218,97 @@ export function uploadImport(token: string, file: File) {
     valid_rows: number;
     error_rows: number;
     duplicate_rows: number;
-  }>("/imports", token, {
-    method: "POST",
-    body: form,
-  });
+  }>("/imports", session, { method: "POST", body: data });
 }
 
-export function listTransactions(
-  token: string,
-  options: { limit?: number; offset?: number } = {},
-) {
-  const limit = options.limit ?? 100;
-  const offset = options.offset ?? 0;
-  return apiRequest<PaginatedListResponse<Transaction>>(
-    `/transactions?limit=${limit}&offset=${offset}`,
-    token,
-  );
+export function getTransactions(session: ApiSession, query: string) {
+  return apiRequest<ListResponse<TransactionRead>>(`/transactions${query}`, session);
 }
 
-export function assignTransactionCategory(
-  token: string,
+export function updateTransactionCategory(
+  session: ApiSession,
   transactionId: string,
   categoryId: string,
 ) {
-  return apiRequest<Transaction>(`/transactions/${transactionId}/category`, token, {
+  return apiRequest<TransactionRead>(`/transactions/${transactionId}/category`, session, {
     method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ category_id: categoryId }),
+    body: { category_id: categoryId },
   });
 }
 
-export function listCategories(token: string) {
-  return apiRequest<ListResponse<Category>>("/categories", token);
+export function getCategories(session: ApiSession) {
+  return apiRequest<ListResponse<CategoryRead>>("/categories", session);
 }
 
-export function createCategory(
-  token: string,
-  name: string,
-  parentCategoryId: string | null = null,
-) {
-  return apiRequest<Category>("/categories", token, {
+export function createCategory(session: ApiSession, name: string, parentCategoryId: string | null) {
+  return apiRequest<CategoryRead>("/categories", session, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ name, parent_category_id: parentCategoryId }),
+    body: { name, parent_category_id: parentCategoryId },
   });
 }
 
 export function updateCategory(
-  token: string,
+  session: ApiSession,
   categoryId: string,
-  payload: { name?: string; parent_category_id?: string | null },
+  payload: { name: string; parent_category_id: string | null },
 ) {
-  return apiRequest<Category>(`/categories/${categoryId}`, token, {
+  return apiRequest<CategoryRead>(`/categories/${categoryId}`, session, {
     method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
+    body: payload,
   });
 }
 
-export function deleteCategory(token: string, categoryId: string) {
-  return apiRequest<void>(`/categories/${categoryId}`, token, {
-    method: "DELETE",
-  });
+export function deleteCategory(session: ApiSession, categoryId: string) {
+  return apiRequest<void>(`/categories/${categoryId}`, session, { method: "DELETE" });
 }
 
-export function listRules(token: string) {
-  return apiRequest<ListResponse<CategorizationRule>>("/categorization-rules", token);
+export function getRules(session: ApiSession) {
+  return apiRequest<ListResponse<CategorizationRuleRead>>("/categorization-rules", session);
 }
 
 export function createRule(
-  token: string,
-  payload: RulePayload,
+  session: ApiSession,
+  payload: {
+    name: string;
+    field: string;
+    match_type: string;
+    pattern: string;
+    category_id: string;
+    priority: number;
+    active: boolean;
+  },
 ) {
-  return apiRequest<CategorizationRule>("/categorization-rules", token, {
+  return apiRequest<CategorizationRuleRead>("/categorization-rules", session, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
+    body: payload,
   });
 }
 
 export function updateRule(
-  token: string,
+  session: ApiSession,
   ruleId: string,
-  payload: Partial<RulePayload>,
+  payload: Partial<{
+    name: string;
+    field: string;
+    match_type: string;
+    pattern: string;
+    category_id: string;
+    priority: number;
+    active: boolean;
+  }>,
 ) {
-  return apiRequest<CategorizationRule>(`/categorization-rules/${ruleId}`, token, {
+  return apiRequest<CategorizationRuleRead>(`/categorization-rules/${ruleId}`, session, {
     method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
+    body: payload,
   });
 }
 
-export function deleteRule(token: string, ruleId: string) {
-  return apiRequest<void>(`/categorization-rules/${ruleId}`, token, {
-    method: "DELETE",
-  });
+export function deleteRule(session: ApiSession, ruleId: string) {
+  return apiRequest<void>(`/categorization-rules/${ruleId}`, session, { method: "DELETE" });
 }
 
-export function applyRules(token: string) {
-  return apiRequest<ApplyRulesResponse>("/categorization-rules/apply", token, {
+export function applyRules(session: ApiSession) {
+  return apiRequest<{ workspace_id: string; applied_count: number }>("/categorization-rules/apply", session, {
     method: "POST",
   });
-}
-
-function formatApiError(detail: string, status: number) {
-  if (!detail) {
-    return `API request failed: ${status}`;
-  }
-
-  try {
-    const parsed = JSON.parse(detail) as { detail?: unknown };
-    if (typeof parsed.detail === "string") {
-      return parsed.detail;
-    }
-  } catch {
-    return detail;
-  }
-
-  return detail;
 }

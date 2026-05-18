@@ -125,6 +125,9 @@ class ImportJob(Base):
     total_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     valid_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     error_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    duplicate_rows: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -164,6 +167,9 @@ class Transaction(Base):
     __tablename__ = "transactions"
     __table_args__ = (
         UniqueConstraint("workspace_id", "dedupe_key", name="uq_transaction_dedupe"),
+        UniqueConstraint(
+            "workspace_id", "natural_dedupe_key", name="uq_transaction_natural_dedupe"
+        ),
         CheckConstraint(
             "source_type in ('bank_statement', 'credit_card_statement', 'unknown')",
             name="ck_transaction_source_type",
@@ -202,6 +208,7 @@ class Transaction(Base):
     installment_total: Mapped[int | None] = mapped_column(Integer)
     source_line: Mapped[int | None] = mapped_column(Integer)
     dedupe_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    natural_dedupe_key: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

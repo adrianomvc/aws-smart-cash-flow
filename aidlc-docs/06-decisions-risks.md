@@ -20,7 +20,6 @@ DEC-003: O sistema deve priorizar idempotencia desde o inicio.
 Motivo:
 
 - Importacoes financeiras frequentemente sao repetidas durante ajustes.
-- Extratos podem ser baixados com janelas sobrepostas; uma importacao de dois meses pode conter um mes ja processado.
 
 DEC-004: O backend sera desenvolvido em Python.
 
@@ -133,9 +132,12 @@ R-004: Dedupe pode descartar transacoes legitimamente repetidas.
 
 Mitigacao:
 
-- Usar chave transacional por workspace, tipo de origem, data, descricao original, valor e direcao para cobrir arquivos com periodos sobrepostos.
-- Manter contagem de linhas duplicadas visivel na resposta de importacao.
-- Evoluir para incluir conta/cartao quando a inferencia dessa origem estiver disponivel, reduzindo risco de colisao entre fontes diferentes.
+- Incluir `source_file_id` e `source_line` na chave inicial.
+- Para arquivos quase iguais, usar assinatura natural como possivel duplicidade,
+  com resumo/auditoria, antes de descartar automaticamente transacoes repetidas.
+- Teste observado em 2026-05-18: reimportar arquivo identico gera
+  `duplicate_file`, mas alterar uma linha faz o arquivo inteiro ser aceito como
+  novo. Esse comportamento deve ser tratado para nao inflar indicadores.
 
 R-005: Multiusuario implementado tarde pode exigir refatoracao profunda.
 
@@ -192,6 +194,25 @@ Motivo:
 - Mantem rastreabilidade operacional sem incluir dados financeiros sensiveis em
   nomes de recursos, logs ou tags.
 
+DEC-020: Mudancas de frontend devem ser agrupadas por fluxo antes da subida.
+
+Motivo:
+
+- Reduz retrabalho de deploy e validacao visual em telas interdependentes.
+- Evita publicar experiencia parcial quando upload, importacoes, transacoes,
+  categorias e regras dependem umas das outras para fazer sentido ao usuario.
+- Mantem uma subida unica e coesa para o pacote operacional do MVP frontend.
+
+DEC-021: Changelogs devem ser baseados em Git tags anotadas.
+
+Motivo:
+
+- Mantem historico de releases alinhado ao estado real do repositorio.
+- Permite gerar notas de versao por intervalo entre tags.
+- Evita manter changelog manual desconectado de commits e deploys.
+- Tags e release notes nao devem conter dados financeiros sensiveis, nomes reais
+  de arquivos financeiros ou valores de producao.
+
 R-007: Banco gratuito pode impor limites de armazenamento, conexoes ou pausa por inatividade.
 
 Mitigacao:
@@ -232,70 +253,6 @@ Mitigacao:
 - Manter embedding como fase posterior ao MVP de ingestao.
 - Nao executar embedding local na Lambda sincrona de upload/importacao.
 - Se necessario, usar Lambda separada com container image e processamento em lote.
-
-DEC-020: O backend inicial online usara Lambda sem VPC e API Gateway HTTP API, conectando ao Neon por URL pooled publica com TLS.
-
-Motivo:
-
-- Evita custo fixo de NAT Gateway, RDS ou VPC privada no MVP.
-- Mantem o backend serverless e sob demanda.
-- Neon pooled reduz risco de excesso de conexoes em ambiente Lambda.
-
-R-012: Lambda pode exceder limites de conexao do Neon em bursts ou cold starts paralelos.
-
-Mitigacao:
-
-- Usar connection string pooled do Neon.
-- Configurar pool SQLAlchemy pequeno no backend (`pool_size=1`, `max_overflow=2`, `pool_pre_ping`).
-- Manter throttling inicial baixo no API Gateway.
-- Reavaliar RDS Proxy, provider pooler ou arquitetura assíncrona se houver aumento de uso.
-
-R-013: Backend publicado antes da validacao Supabase JWT aceita token bearer scaffold.
-
-Mitigacao:
-
-- Tratar o deploy Lambda inicial como ambiente `develop` operacional controlado.
-- Implementar validacao real de JWT antes de promover uso de producao ou dados multiusuario.
-- Manter CORS restrito ao dominio Amplify esperado.
-
-R-014: Lambda criada pelo pacote inicial do Terraform pode ficar sem dependencias Python ate o primeiro deploy GitHub.
-
-Mitigacao:
-
-- Usar o deploy backend do GitHub Actions para montar o pacote em Linux com dependencias runtime.
-- Manter disparo manual do workflow `CI` em `main` para atualizar a Lambda quando variaveis/secrets forem configuradas apos o Terraform apply.
-
-DEC-021: CORS do backend publicado sera controlado pelo FastAPI, nao pelo API Gateway HTTP API.
-
-Motivo:
-
-- A aplicacao ja centraliza origens permitidas em `CORS_ORIGINS`.
-- Manter CORS em duas camadas pode remover headers esperados pelo navegador e causar `Failed to fetch`.
-- API Gateway permanece como roteador/proxy HTTP simples para reduzir comportamento implicito.
-
-DEC-022: Categorias e subcategorias serao gerenciadas na tela operacional do MVP.
-
-Motivo:
-
-- Classificacao manual fica incompleta se categorias precisarem ser corrigidas direto no banco.
-- O backend ja possui validacoes para parent, ciclos, duplicidade e bloqueio de exclusao quando a categoria esta em uso.
-- A UI deve expor essas operacoes sem remover historico de transacoes ou regras por acidente.
-
-DEC-023: Regras deterministicas poderao ser editadas, desativadas e excluidas na tela operacional.
-
-Motivo:
-
-- Regras incorretas podem afetar classificacoes futuras e precisam de correcao sem acesso direto ao banco.
-- Desativar preserva o historico da regra enquanto permite interromper novas aplicacoes.
-- Excluir continua disponivel para regras criadas por engano ou obsoletas.
-
-DEC-024: Nome de categoria sera unico por nivel hierarquico, nao por workspace inteiro.
-
-Motivo:
-
-- Permite estruturas como `Transporte / Aplicativo` e `Alimentacao / Aplicativo`.
-- Mantem bloqueio de duplicidade dentro do mesmo pai para evitar ambiguidade operacional.
-- Categorias raiz continuam unicas por workspace e nome.
 
 ## Perguntas Abertas
 

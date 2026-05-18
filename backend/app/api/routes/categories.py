@@ -98,7 +98,7 @@ async def list_categories(
     ).all()
     return CategoryListResponse(
         workspace_id=auth.workspace_id,
-        items=[_category_read(category) for category in categories],
+        items=[_category_read(category) for category in _order_category_tree(list(categories))],
     )
 
 
@@ -378,6 +378,20 @@ def _category_read(category: Category) -> CategoryRead:
         parent_category_id=category.parent_category_id,
         created_at=category.created_at,
     )
+
+
+def _order_category_tree(categories: list[Category]) -> list[Category]:
+    by_parent: dict[str | None, list[Category]] = {}
+    for category in categories:
+        by_parent.setdefault(category.parent_category_id, []).append(category)
+    for items in by_parent.values():
+        items.sort(key=lambda category: (category.name.casefold(), category.id))
+
+    ordered: list[Category] = []
+    for root in by_parent.get(None, []):
+        ordered.append(root)
+        ordered.extend(by_parent.get(root.id, []))
+    return ordered
 
 
 def _rule_read(rule: CategorizationRule) -> CategorizationRuleRead:

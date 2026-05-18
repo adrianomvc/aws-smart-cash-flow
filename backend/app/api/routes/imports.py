@@ -184,10 +184,7 @@ def _import_job_read(import_job: ImportJob, source_file: SourceFile | None) -> I
         total_rows=import_job.total_rows,
         valid_rows=import_job.valid_rows,
         error_rows=import_job.error_rows,
-        duplicate_rows=max(
-            import_job.total_rows - import_job.valid_rows - import_job.error_rows,
-            0,
-        ),
+        duplicate_rows=import_job.duplicate_rows,
         created_at=import_job.created_at,
         source_file=_source_file_read(source_file) if source_file is not None else None,
     )

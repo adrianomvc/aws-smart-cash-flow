@@ -22,6 +22,7 @@ Incluido:
 - CRUD basico de categorias.
 - CRUD basico de regras deterministicas.
 - Aplicacao de regras apos importacao.
+- Indicadores basicos de dashboard para resumo mensal, serie mensal, categorias e qualidade dos dados.
 
 Fora do MVP 1:
 
@@ -29,7 +30,7 @@ Fora do MVP 1:
 - Embedding.
 - LLM.
 - Conciliacao automatica.
-- Dashboard avancado.
+- Dashboard avancado com orcamento, recorrencias, alertas e drill-down completo.
 - App mobile nativo.
 
 ## Deploy
@@ -77,6 +78,14 @@ Regras:
 - Upload permitido no MVP 1: `.txt`, `.csv`.
 - PDF deve ser rejeitado no MVP 1 com mensagem de recurso futuro.
 - O backend deve registrar `storage_bucket` e `storage_path`.
+- O backend deve enviar arquivo original ao storage antes de persistir `SourceFile`.
+- Arquivo duplicado no mesmo workspace nao deve ser enviado ao storage novamente.
+
+Configuracao:
+
+- `SUPABASE_STORAGE_BUCKET`: bucket para arquivos financeiros.
+- `SUPABASE_SERVICE_ROLE_KEY`: chave server-side usada apenas pelo backend para gravar no storage.
+- A chave service role nao deve ser exposta ao frontend.
 
 ## Banco de Dados
 
@@ -137,9 +146,9 @@ Constraints:
 - `started_at` timestamptz null
 - `finished_at` timestamptz null
 - `total_rows` integer not null default 0
-- `valid_rows` integer not null default 0; conta linhas validas que geraram novas transacoes persistidas
+- `valid_rows` integer not null default 0
 - `error_rows` integer not null default 0
-- `duplicate_rows` nao possui coluna dedicada no MVP; e derivado nas respostas como `total_rows - valid_rows - error_rows`
+- `duplicate_rows` integer not null default 0
 - `created_at` timestamptz not null
 
 Status:
@@ -187,11 +196,13 @@ Constraints:
 - `installment_total` integer null
 - `source_line` integer null
 - `dedupe_key` text not null
+- `natural_dedupe_key` text null
 - `created_at` timestamptz not null
 
 Constraints:
 
 - unique (`workspace_id`, `dedupe_key`)
+- unique (`workspace_id`, `natural_dedupe_key`)
 - `source_type` in `bank_statement`, `credit_card_statement`, `unknown`
 - `direction` in `debit`, `credit`, `payment`
 
@@ -217,7 +228,7 @@ Constraints:
 
 Constraints:
 
-- unique (`workspace_id`, `name`)
+- unique (`workspace_id`, `parent_category_id`, `name`)
 
 ### transaction_category_assignments
 
@@ -278,6 +289,7 @@ Regras:
 - Valor em formato brasileiro.
 - Valor negativo: `debit`.
 - Valor positivo: `credit`.
+- Valor negativo com descricao de pagamento de fatura: `payment`.
 
 ### CSV Fatura
 
@@ -294,6 +306,10 @@ Regras:
 - Valor decimal com ponto.
 - Valor negativo com descricao `PAGAMENTO EFETUADO`: `payment`.
 - Valor positivo: `debit`.
+- Valor negativo que nao seja pagamento: `credit` para devolucao, estorno ou
+  credito do cartao.
+- `amount` preserva o sinal original do arquivo; os indicadores usam `direction`
+  para separar despesa, receita/credito e pagamento.
 
 ## Dedupe
 
@@ -306,14 +322,21 @@ sha256(file_bytes)
 Transacao:
 
 ```text
-sha256(workspace_id | source_type | transaction_date | raw_description | amount | direction)
+sha256(workspace_id | source_file_id | source_line | transaction_date | raw_description | amount)
+```
+
+Transacao entre arquivos diferentes ou quase iguais:
+
+```text
+sha256(workspace_id | source_type | transaction_date | normalized_raw_description | amount | direction)
 ```
 
 Regra:
 
 - Mesmo arquivo no mesmo workspace deve gerar `duplicate_file`.
-- Mesma transacao no mesmo workspace nao deve ser duplicada, mesmo quando aparece em arquivo diferente com periodo sobreposto.
-- No MVP, duplicidade transacional e avaliada por `workspace_id`, `source_type`, `transaction_date`, `raw_description`, `amount` e `direction`.
+- Mesma transacao no mesmo workspace nao deve ser duplicada.
+- Arquivo quase igual ao ja importado deve importar apenas transacoes novas e
+  contabilizar transacoes ja existentes em `duplicate_rows`.
 
 ## Endpoints
 
@@ -322,15 +345,6 @@ Base path:
 ```text
 /v1
 ```
-
-Backend online:
-
-- API Gateway HTTP API publica a Lambda FastAPI/Mangum.
-- Terraform output `backend_api_base_url` deve ser usado como `VITE_API_BASE_URL`
-  no Amplify.
-- `DATABASE_URL` deve ser configurado como secret no GitHub Actions e aplicado
-  na Lambda pelo deploy, nunca commitado no repositorio.
-- O MVP usa Neon pooled PostgreSQL para evitar RDS/NAT.
 
 ### Health
 
@@ -350,6 +364,13 @@ Resposta:
 
 Retorna workspace ativo do usuario.
 
+Comportamento:
+
+- Valida token antes de resolver workspace.
+- Cria usuario espelhado no banco da aplicacao quando nao existir.
+- Cria workspace inicial e membership `owner` quando o usuario ainda nao tiver workspace.
+- Em ambiente local sem `SUPABASE_JWT_SECRET`, aceita token de desenvolvimento apenas para scaffold local.
+
 ### Imports
 
 `POST /v1/imports`
@@ -367,8 +388,7 @@ Resposta:
   "status": "completed",
   "total_rows": 10,
   "valid_rows": 9,
-  "error_rows": 1,
-  "duplicate_rows": 0
+  "error_rows": 1
 }
 ```
 
@@ -394,7 +414,10 @@ Query params:
 - `date_to`
 - `category_id`
 - `source_type`
+- `direction`
 - `q`
+- `sort_by`: `transaction_date`, `amount`, `description`, `direction` ou `source_type`; padrao `transaction_date`
+- `sort_dir`: `asc` ou `desc`; padrao `desc`
 - `limit`
 - `offset`
 
@@ -454,6 +477,45 @@ Payload:
 `POST /v1/categorization-rules/apply`
 
 Aplica regras ativas nas transacoes sem categoria manual.
+
+### Dashboard
+
+`GET /v1/dashboard/summary`
+
+Query params:
+
+- `date_from`
+- `date_to`
+
+Resposta:
+
+```json
+{
+  "workspace_id": "uuid",
+  "date_from": "2026-05-01",
+  "date_to": "2026-05-31",
+  "income": "1000.00",
+  "expenses": "650.00",
+  "payments": "200.00",
+  "balance": "350.00",
+  "savings_rate": "0.3500",
+  "transaction_count": 20
+}
+```
+
+`GET /v1/dashboard/monthly-cashflow`
+
+Retorna receitas, despesas, pagamentos e saldo por mes.
+
+`GET /v1/dashboard/category-ranking`
+
+Retorna ranking de despesas por categoria, agrupando transacoes sem categoria como `Sem categoria`.
+Quando houver subcategoria, o ranking principal agrupa pelo pai da categoria.
+Transacoes com `direction = payment` nao entram no ranking de despesas.
+
+`GET /v1/dashboard/data-quality`
+
+Retorna contadores de qualidade da base: transacoes categorizadas, sem categoria, importacoes com erro e importacoes duplicadas.
 
 ## Regras de Categorizacao no MVP 1
 
@@ -533,6 +595,9 @@ Backend:
 - Dedupe de transacao.
 - Aplicacao de regra `contains`.
 - Categoria manual prevalece sobre regra.
+- Resumo mensal de dashboard.
+- Ranking de categorias.
+- Qualidade dos dados.
 
 Frontend:
 

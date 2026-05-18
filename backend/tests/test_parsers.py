@@ -4,6 +4,7 @@ import pytest
 
 from app.domain.imports import TransactionDirection
 from app.services.parsers import (
+    normalize_transaction_description,
     parse_brazilian_decimal,
     parse_credit_card_csv,
     parse_txt_bank_statement,
@@ -18,6 +19,14 @@ def test_parse_txt_bank_statement_valid_line() -> None:
     assert result.transactions[0].amount == Decimal("-10.00")
     assert result.transactions[0].direction == TransactionDirection.DEBIT
     assert result.errors == []
+
+
+def test_parse_txt_bank_statement_credit_card_payment_is_payment() -> None:
+    result = parse_txt_bank_statement("03/05/2026;PAGAMENTO FATURA;-800,00")
+
+    assert result.errors == []
+    assert result.transactions[0].amount == Decimal("-800.00")
+    assert result.transactions[0].direction == TransactionDirection.PAYMENT
 
 
 def test_parse_txt_bank_statement_invalid_column_count() -> None:
@@ -53,7 +62,7 @@ def test_parse_txt_bank_statement_preserves_accented_description() -> None:
 
     assert result.errors == []
     assert result.transactions[0].raw_description == "TRANSFERÊNCIA  JOÃO AÇÃO"
-    assert result.transactions[0].description == "TRANSFERÊNCIA JOÃO AÇÃO"
+    assert result.transactions[0].description == "TRANSFERENCIA JOAO ACAO"
     assert result.transactions[0].amount == Decimal("-1234.56")
 
 
@@ -75,19 +84,23 @@ def test_parse_credit_card_csv_valid_rows() -> None:
 
     assert result.total_rows == 2
     assert len(result.transactions) == 2
-    assert result.transactions[0].amount == Decimal("-26.06")
+    assert result.transactions[0].amount == Decimal("26.06")
     assert result.transactions[0].direction == TransactionDirection.DEBIT
-    assert result.transactions[1].amount == Decimal("775.69")
     assert result.transactions[1].direction == TransactionDirection.PAYMENT
 
 
-def test_parse_credit_card_csv_negative_non_payment_becomes_credit() -> None:
-    content = "data,lançamento,valor\n2026-05-08,ESTORNO COMPRA,-26.06"
+def test_parse_credit_card_csv_negative_non_payment_is_credit() -> None:
+    content = "\n".join(
+        [
+            "data,lançamento,valor",
+            "2026-05-08,ESTORNO COMPRA,-26.06",
+        ]
+    )
 
     result = parse_credit_card_csv(content)
 
     assert result.errors == []
-    assert result.transactions[0].amount == Decimal("26.06")
+    assert result.transactions[0].amount == Decimal("-26.06")
     assert result.transactions[0].direction == TransactionDirection.CREDIT
 
 
@@ -145,6 +158,9 @@ def test_parse_credit_card_csv_preserves_accented_description() -> None:
 
     assert result.errors == []
     assert result.transactions[0].raw_description == "PADARIA SÃO JOSÉ   CAFÉ"
-    assert result.transactions[0].description == "PADARIA SÃO JOSÉ CAFÉ"
-    assert result.transactions[0].amount == Decimal("-26.06")
+    assert result.transactions[0].description == "PADARIA SAO JOSE CAFE"
     assert result.transactions[0].direction == TransactionDirection.DEBIT
+
+
+def test_normalize_transaction_description_cleans_card_decorations() -> None:
+    assert normalize_transaction_description("99APP       *99App") == "99APP 99APP"

@@ -1,22 +1,41 @@
-import { FormEvent, useMemo, useState } from "react";
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { FormEvent, ReactNode } from "react";
+import { useMemo, useState } from "react";
+import { createClient } from "@supabase/supabase-js";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertCircle,
+  ArrowDownCircle,
+  ArrowUpCircle,
   BarChart3,
   CheckCircle2,
-  Pencil,
+  ChevronRight,
+  Database,
+  FileWarning,
   FileUp,
+  Filter,
+  LayoutDashboard,
   Loader2,
+  LogOut,
+  Menu,
+  Pencil,
+  Plus,
   RefreshCw,
-  Save,
+  Search,
+  Settings,
+  ShieldCheck,
   Tags,
   Trash2,
-  WalletCards,
+  UploadCloud,
+  Wand2,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import {
   Bar,
   BarChart,
   CartesianGrid,
+  Line,
+  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -24,1023 +43,1488 @@ import {
 } from "recharts";
 
 import {
-  Category,
-  CategorizationRule,
-  Transaction,
+  type ApiSession,
+  type CategoryRead,
+  type CategorizationRuleRead,
+  type TransactionRead,
   applyRules,
-  assignTransactionCategory,
   createCategory,
   createRule,
   deleteCategory,
   deleteRule,
-  listCategories,
-  listImports,
-  listRules,
-  listTransactions,
+  getCategories,
+  getCategoryRanking,
+  getCurrentWorkspace,
+  getDashboardSummary,
+  getDataQuality,
+  getImportErrors,
+  getImports,
+  getMonthlyCashflow,
+  getRules,
+  getTransactions,
   updateCategory,
-  updateRule,
+  updateTransactionCategory,
   uploadImport,
 } from "./lib/api";
 
-const LOCAL_TOKEN = "local";
-const TRANSACTION_PAGE_SIZE = 100;
-const EMPTY_RULE_FORM = {
-  name: "",
-  field: "description",
-  match_type: "contains",
-  pattern: "",
-  category_id: "",
-  priority: 100,
-  active: true,
-};
+type Page = "dashboard" | "imports" | "transactions" | "categories" | "rules" | "review" | "settings";
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+const supabase =
+  supabaseUrl && supabaseAnonKey && !supabaseAnonKey.includes("replace-me")
+    ? createClient(supabaseUrl, supabaseAnonKey)
+    : null;
+
+const navItems: Array<{ id: Page; label: string; icon: LucideIcon }> = [
+  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "imports", label: "Importações", icon: FileUp },
+  { id: "transactions", label: "Transações", icon: Database },
+  { id: "categories", label: "Categorias", icon: Tags },
+  { id: "rules", label: "Regras", icon: Wand2 },
+  { id: "review", label: "Revisão", icon: ShieldCheck },
+  { id: "settings", label: "Configurações", icon: Settings },
+];
 
 function App() {
-  const queryClient = useQueryClient();
-  const [message, setMessage] = useState<string | null>(null);
-  const [uploadFileCount, setUploadFileCount] = useState(0);
-  const [categoryName, setCategoryName] = useState("");
-  const [categoryParentId, setCategoryParentId] = useState("");
-  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
-  const [categoryEditForm, setCategoryEditForm] = useState({
-    name: "",
-    parent_category_id: "",
+  const [session, setSession] = useState<ApiSession | null>(() => {
+    const token = localStorage.getItem("scf_token");
+    const mode = localStorage.getItem("scf_mode") as ApiSession["mode"] | null;
+    return token ? { token, mode: mode ?? "local" } : null;
   });
-  const [ruleForm, setRuleForm] = useState(EMPTY_RULE_FORM);
-  const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
-  const [ruleEditForm, setRuleEditForm] = useState(EMPTY_RULE_FORM);
+  const [page, setPage] = useState<Page>("dashboard");
+  const [mobileOpen, setMobileOpen] = useState(false);
 
-  const importsQuery = useQuery({
-    queryKey: ["imports"],
-    queryFn: () => listImports(LOCAL_TOKEN),
-  });
-  const transactionsQuery = useInfiniteQuery({
-    queryKey: ["transactions"],
-    queryFn: ({ pageParam = 0 }) =>
-      listTransactions(LOCAL_TOKEN, {
-        limit: TRANSACTION_PAGE_SIZE,
-        offset: pageParam,
-      }),
-    getNextPageParam: (lastPage) => {
-      const nextOffset = lastPage.offset + lastPage.items.length;
-      return nextOffset < lastPage.total ? nextOffset : undefined;
-    },
-    initialPageParam: 0,
-  });
-  const categoriesQuery = useQuery({
-    queryKey: ["categories"],
-    queryFn: () => listCategories(LOCAL_TOKEN),
-  });
-  const rulesQuery = useQuery({
-    queryKey: ["rules"],
-    queryFn: () => listRules(LOCAL_TOKEN),
-  });
-
-  const refreshAll = () => {
-    queryClient.invalidateQueries();
-  };
-
-  const uploadMutation = useMutation({
-    mutationFn: async (files: File[]) =>
-      Promise.all(files.map((file) => uploadImport(LOCAL_TOKEN, file))),
-    onMutate: (files) => {
-      setUploadFileCount(files.length);
-      setMessage(
-        `Importacao em andamento: processando ${formatCount(
-          files.length,
-          "arquivo",
-          "arquivos",
-        )}. Aguarde a conclusao.`,
-      );
-    },
-    onSuccess: (results) => {
-      const duplicateFiles = results.filter((result) => result.status === "duplicate_file").length;
-      const importedFiles = results.length - duplicateFiles;
-      const validRows = results.reduce((total, result) => total + result.valid_rows, 0);
-      const errorRows = results.reduce((total, result) => total + result.error_rows, 0);
-      const duplicateRows = results.reduce((total, result) => total + result.duplicate_rows, 0);
-      if (
-        duplicateFiles === results.length ||
-        (validRows === 0 && duplicateRows > 0 && errorRows === 0)
-      ) {
-        setMessage("Arquivo duplicado: nenhum dado novo foi importado.");
-      } else {
-        const fileSummary =
-          duplicateFiles > 0
-            ? `${formatCount(importedFiles, "arquivo importado", "arquivos importados")}, ${formatCount(
-                duplicateFiles,
-                "arquivo duplicado",
-                "arquivos duplicados",
-              )}`
-            : formatCount(importedFiles, "arquivo importado", "arquivos importados");
-        setMessage(
-          `${fileSummary}: ${formatCount(
-            validRows,
-            "transacao nova",
-            "transacoes novas",
-          )}, ${formatCount(
-            duplicateRows,
-            "transacao duplicada",
-            "transacoes duplicadas",
-          )}, ${formatCount(errorRows, "erro", "erros")}.`,
-        );
-      }
-      refreshAll();
-    },
-    onError: (error) => setMessage(`Falha na importacao: ${error.message}`),
-    onSettled: () => setUploadFileCount(0),
-  });
-
-  const categoryMutation = useMutation({
-    mutationFn: (payload: { name: string; parentCategoryId: string | null }) =>
-      createCategory(LOCAL_TOKEN, payload.name, payload.parentCategoryId),
-    onMutate: () => setMessage(null),
-    onSuccess: () => {
-      setCategoryName("");
-      setCategoryParentId("");
-      setMessage("Categoria criada.");
-      refreshAll();
-    },
-    onError: (error) => setMessage(error.message),
-  });
-
-  const updateCategoryMutation = useMutation({
-    mutationFn: (payload: { categoryId: string; name: string; parentCategoryId: string | null }) =>
-      updateCategory(LOCAL_TOKEN, payload.categoryId, {
-        name: payload.name,
-        parent_category_id: payload.parentCategoryId,
-      }),
-    onMutate: () => setMessage(null),
-    onSuccess: () => {
-      setEditingCategoryId(null);
-      setCategoryEditForm({ name: "", parent_category_id: "" });
-      setMessage("Categoria atualizada.");
-      refreshAll();
-    },
-    onError: (error) => setMessage(error.message),
-  });
-
-  const deleteCategoryMutation = useMutation({
-    mutationFn: (categoryId: string) => deleteCategory(LOCAL_TOKEN, categoryId),
-    onMutate: () => setMessage(null),
-    onSuccess: () => {
-      setEditingCategoryId(null);
-      setCategoryEditForm({ name: "", parent_category_id: "" });
-      setMessage("Categoria excluida.");
-      refreshAll();
-    },
-    onError: (error) => setMessage(error.message),
-  });
-
-  const assignMutation = useMutation({
-    mutationFn: ({ transactionId, categoryId }: { transactionId: string; categoryId: string }) =>
-      assignTransactionCategory(LOCAL_TOKEN, transactionId, categoryId),
-    onMutate: () => setMessage(null),
-    onSuccess: () => refreshAll(),
-    onError: (error) => setMessage(error.message),
-  });
-
-  const ruleMutation = useMutation({
-    mutationFn: () =>
-      createRule(LOCAL_TOKEN, {
-        ...ruleForm,
-        priority: Number(ruleForm.priority),
-      }),
-    onMutate: () => setMessage(null),
-    onSuccess: () => {
-      setRuleForm(EMPTY_RULE_FORM);
-      setMessage("Regra criada.");
-      refreshAll();
-    },
-    onError: (error) => setMessage(error.message),
-  });
-
-  const updateRuleMutation = useMutation({
-    mutationFn: (payload: { ruleId: string; form: typeof EMPTY_RULE_FORM }) =>
-      updateRule(LOCAL_TOKEN, payload.ruleId, {
-        ...payload.form,
-        priority: Number(payload.form.priority),
-      }),
-    onMutate: () => setMessage(null),
-    onSuccess: () => {
-      setEditingRuleId(null);
-      setRuleEditForm(EMPTY_RULE_FORM);
-      setMessage("Regra atualizada.");
-      refreshAll();
-    },
-    onError: (error) => setMessage(error.message),
-  });
-
-  const deleteRuleMutation = useMutation({
-    mutationFn: (ruleId: string) => deleteRule(LOCAL_TOKEN, ruleId),
-    onMutate: () => setMessage(null),
-    onSuccess: () => {
-      setEditingRuleId(null);
-      setRuleEditForm(EMPTY_RULE_FORM);
-      setMessage("Regra excluida.");
-      refreshAll();
-    },
-    onError: (error) => setMessage(error.message),
-  });
-
-  const applyMutation = useMutation({
-    mutationFn: () => applyRules(LOCAL_TOKEN),
-    onMutate: () => setMessage(null),
-    onSuccess: (result) => {
-      setMessage(
-        result.applied_count === 0
-          ? "Nenhuma nova transacao foi categorizada por regras."
-          : `${result.applied_count} transacoes categorizadas por regras.`,
-      );
-      refreshAll();
-    },
-    onError: (error) => setMessage(error.message),
-  });
-
-  const categories = categoriesQuery.data?.items ?? [];
-  const transactions = transactionsQuery.data?.pages.flatMap((page) => page.items) ?? [];
-  const transactionTotal = transactionsQuery.data?.pages[0]?.total ?? 0;
-  const imports = importsQuery.data?.items ?? [];
-  const rules = rulesQuery.data?.items ?? [];
-  const categoryById = useMemo(
-    () => new Map(categories.map((category) => [category.id, category])),
-    [categories],
-  );
-  const chartData = useMemo(() => buildChartData(transactions, categoryById), [
-    transactions,
-    categoryById,
-  ]);
-  const isLoading =
-    importsQuery.isLoading ||
-    transactionsQuery.isLoading ||
-    categoriesQuery.isLoading ||
-    rulesQuery.isLoading;
-  const isRefreshing =
-    importsQuery.isFetching ||
-    transactionsQuery.isFetching ||
-    categoriesQuery.isFetching ||
-    rulesQuery.isFetching;
-  const isImporting = uploadMutation.isPending;
-
-  const handleUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []);
-    if (files.length > 0) {
-      uploadMutation.mutate(files);
-      event.target.value = "";
+  function handleSession(nextSession: ApiSession | null) {
+    setSession(nextSession);
+    if (nextSession) {
+      localStorage.setItem("scf_token", nextSession.token);
+      localStorage.setItem("scf_mode", nextSession.mode);
+    } else {
+      localStorage.removeItem("scf_token");
+      localStorage.removeItem("scf_mode");
     }
-  };
+  }
 
-  const handleCreateCategory = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (categoryName.trim()) {
-      categoryMutation.mutate({
-        name: categoryName,
-        parentCategoryId: categoryParentId || null,
-      });
-    }
-  };
-
-  const startEditingCategory = (category: Category) => {
-    setEditingCategoryId(category.id);
-    setCategoryEditForm({
-      name: category.name,
-      parent_category_id: category.parent_category_id ?? "",
-    });
-  };
-
-  const cancelEditingCategory = () => {
-    setEditingCategoryId(null);
-    setCategoryEditForm({ name: "", parent_category_id: "" });
-  };
-
-  const handleUpdateCategory = (categoryId: string) => {
-    if (!categoryEditForm.name.trim()) {
-      return;
-    }
-    updateCategoryMutation.mutate({
-      categoryId,
-      name: categoryEditForm.name,
-      parentCategoryId: categoryEditForm.parent_category_id || null,
-    });
-  };
-
-  const handleDeleteCategory = (category: Category) => {
-    if (window.confirm(`Excluir a categoria "${category.name}"?`)) {
-      deleteCategoryMutation.mutate(category.id);
-    }
-  };
-
-  const handleCreateRule = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const validationMessage = validateRuleForm(ruleForm);
-    if (validationMessage) {
-      setMessage(validationMessage);
-      return;
-    }
-    ruleMutation.mutate();
-  };
-
-  const startEditingRule = (rule: CategorizationRule) => {
-    setEditingRuleId(rule.id);
-    setRuleEditForm({
-      name: rule.name,
-      field: rule.field,
-      match_type: rule.match_type,
-      pattern: rule.pattern,
-      category_id: rule.category_id,
-      priority: rule.priority,
-      active: rule.active,
-    });
-  };
-
-  const cancelEditingRule = () => {
-    setEditingRuleId(null);
-    setRuleEditForm(EMPTY_RULE_FORM);
-  };
-
-  const handleUpdateRule = (ruleId: string) => {
-    const validationMessage = validateRuleForm(ruleEditForm);
-    if (validationMessage) {
-      setMessage(validationMessage);
-      return;
-    }
-    updateRuleMutation.mutate({
-      ruleId,
-      form: ruleEditForm,
-    });
-  };
-
-  const handleDeleteRule = (rule: CategorizationRule) => {
-    if (window.confirm(`Excluir a regra "${rule.name}"?`)) {
-      deleteRuleMutation.mutate(rule.id);
-    }
-  };
+  if (!session) {
+    return <LoginScreen onLogin={handleSession} />;
+  }
 
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-950">
-      <section className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-5 md:px-6">
-        <header className="flex flex-col gap-3 border-b border-slate-200 pb-4 md:flex-row md:items-end md:justify-between">
-          <div>
-            <p className="text-sm font-medium text-slate-500">aws-smart-cash-flow</p>
-            <h1 className="text-2xl font-semibold tracking-normal">Operacao financeira</h1>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              className="inline-flex h-10 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium"
-              disabled={isRefreshing}
-              onClick={refreshAll}
-              type="button"
-            >
-              <RefreshCw className={isRefreshing ? "animate-spin" : undefined} size={16} />
-              {isRefreshing ? "Atualizando" : "Atualizar"}
-            </button>
-            <label
-              className={`inline-flex h-10 items-center gap-2 rounded-md bg-slate-950 px-3 text-sm font-medium text-white ${
-                isImporting ? "cursor-wait opacity-80" : "cursor-pointer"
-              }`}
-            >
-              {isImporting ? <Loader2 className="animate-spin" size={16} /> : <FileUp size={16} />}
-              {isImporting
-                ? `Importando ${formatCount(uploadFileCount, "arquivo", "arquivos")}`
-                : "Importar TXT/CSV"}
-              <input
-                accept=".txt,.csv"
-                className="hidden"
-                disabled={isImporting}
-                multiple
-                type="file"
-                onChange={handleUpload}
-              />
-            </label>
-          </div>
-        </header>
+    <AppShell
+      page={page}
+      setPage={(nextPage) => {
+        setPage(nextPage);
+        setMobileOpen(false);
+      }}
+      mobileOpen={mobileOpen}
+      setMobileOpen={setMobileOpen}
+      onLogout={() => handleSession(null)}
+    >
+      <ProtectedApp page={page} session={session} />
+    </AppShell>
+  );
+}
 
-        {message ? (
-          <div
-            className={`flex items-center gap-2 rounded-md border px-3 py-2 text-sm ${
-              isImporting
-                ? "border-blue-200 bg-blue-50 text-blue-900"
-                : "border-emerald-200 bg-emerald-50 text-emerald-900"
-            }`}
-          >
-            {isImporting ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
-            {message}
-          </div>
-        ) : null}
+function LoginScreen({ onLogin }: { onLogin: (session: ApiSession) => void }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-        <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricCard icon={<WalletCards size={20} />} label="Transacoes" value={transactionTotal} />
-          <MetricCard icon={<FileUp size={20} />} label="Importacoes" value={imports.length} />
-          <MetricCard icon={<Tags size={20} />} label="Categorias" value={categories.length} />
-          <MetricCard icon={<BarChart3 size={20} />} label="Regras" value={rules.length} />
-        </section>
+  async function handleSupabaseLogin(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    if (!supabase) {
+      setError("Supabase não está configurado neste ambiente. Use o acesso local.");
+      return;
+    }
+    setLoading(true);
+    const { data, error: signInError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    setLoading(false);
+    if (signInError || !data.session?.access_token) {
+      setError(signInError?.message ?? "Não foi possível entrar.");
+      return;
+    }
+    onLogin({ token: data.session.access_token, mode: "supabase" });
+  }
 
-        {isLoading ? (
-          <div className="flex h-32 items-center justify-center gap-2 text-sm text-slate-500">
-            <Loader2 className="animate-spin" size={18} />
-            Carregando dados locais
-          </div>
-        ) : (
-          <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
-            <div className="flex flex-col gap-4">
-              <Panel title="Transacoes">
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[760px] border-collapse text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-200 text-left text-xs uppercase text-slate-500">
-                        <th className="py-2 pr-3 font-medium">Data</th>
-                        <th className="py-2 pr-3 font-medium">Descricao</th>
-                        <th className="py-2 pr-3 text-right font-medium">Valor</th>
-                        <th className="py-2 pl-3 font-medium">Categoria</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {transactions.map((transaction) => (
-                        <tr key={transaction.id} className="border-b border-slate-100">
-                          <td className="py-2 pr-3 text-slate-500">{transaction.transaction_date}</td>
-                          <td className="py-2 pr-3">{transaction.description}</td>
-                          <td className="py-2 pr-3 text-right tabular-nums">
-                            {formatCurrency(transaction.amount)}
-                          </td>
-                          <td className="py-2 pl-3">
-                            <select
-                              className="h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm"
-                              value={transaction.category_id ?? ""}
-                              onChange={(event) =>
-                                assignMutation.mutate({
-                                  transactionId: transaction.id,
-                                  categoryId: event.target.value,
-                                })
-                              }
-                            >
-                              <option value="" disabled>
-                                Sem categoria
-                              </option>
-                              {categories.map((category) => (
-                                <option key={category.id} value={category.id}>
-                                  {formatCategoryOption(category, categoryById)}
-                                </option>
-                              ))}
-                            </select>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {transactions.length === 0 ? <EmptyState text="Nenhuma transacao importada." /> : null}
-                </div>
-                {transactionTotal > 0 ? (
-                  <div className="mt-3 flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-sm text-slate-500">
-                    <span>
-                      {transactions.length} de {transactionTotal} transacoes carregadas
-                    </span>
-                    {transactionsQuery.hasNextPage ? (
-                      <button
-                        className="h-9 rounded-md border border-slate-300 bg-white px-3 font-medium text-slate-950"
-                        disabled={transactionsQuery.isFetchingNextPage}
-                        onClick={() => transactionsQuery.fetchNextPage()}
-                        type="button"
-                      >
-                        {transactionsQuery.isFetchingNextPage ? "Carregando" : "Carregar mais"}
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
-              </Panel>
+  return (
+    <main className="login-shell">
+      <section className="login-panel">
+        <div className="brand-mark">SCF</div>
+        <p className="eyebrow">SmartCashFlow</p>
+        <h1>Controle financeiro auditável.</h1>
+        <p className="muted">
+          Importe extratos, revise classificações e acompanhe sua saúde financeira com rastreabilidade.
+        </p>
 
-              <Panel title="Gastos por categoria">
-                <div className="h-72">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={chartData}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="category" />
-                      <YAxis />
-                      <Tooltip formatter={(value) => formatCurrency(String(value))} />
-                      <Bar dataKey="amount" fill="#2563eb" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </Panel>
+        <form className="login-form" onSubmit={handleSupabaseLogin}>
+          <label>
+            Email
+            <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" />
+          </label>
+          <label>
+            Senha
+            <input
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              type="password"
+            />
+          </label>
+          {error ? <div className="inline-error">{error}</div> : null}
+          <button className="primary-button" disabled={loading} type="submit">
+            {loading ? <Loader2 className="spin" size={16} /> : null}
+            Entrar
+          </button>
+        </form>
 
-              <Panel title="Importacoes recentes">
-                <div className="grid gap-2">
-                  {imports.map((item) => (
-                    <div
-                      key={item.id}
-                      className="grid gap-1 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm md:grid-cols-[1fr_auto]"
-                    >
-                      <span className="font-medium">
-                        {item.source_file?.original_filename ?? item.source_file_id}
-                      </span>
-                      <span className="text-slate-500">
-                        {item.status} · {item.valid_rows}/{item.total_rows} novas
-                        {item.duplicate_rows > 0 ? ` · ${item.duplicate_rows} duplicadas` : ""}
-                      </span>
-                    </div>
-                  ))}
-                  {imports.length === 0 ? <EmptyState text="Nenhuma importacao realizada." /> : null}
-                </div>
-              </Panel>
-            </div>
-
-            <aside className="flex flex-col gap-4">
-              <Panel title="Categorias">
-                <form className="grid gap-2" onSubmit={handleCreateCategory}>
-                  <input
-                    className="h-10 min-w-0 rounded-md border border-slate-300 px-3 text-sm"
-                    onChange={(event) => setCategoryName(event.target.value)}
-                    placeholder="Nova categoria"
-                    value={categoryName}
-                  />
-                  <div className="grid grid-cols-[1fr_auto] gap-2">
-                    <select
-                      className="h-10 min-w-0 rounded-md border border-slate-300 bg-white px-2 text-sm"
-                      onChange={(event) => setCategoryParentId(event.target.value)}
-                      value={categoryParentId}
-                    >
-                      <option value="">Categoria raiz</option>
-                      {categories.map((category) => (
-                        <option key={category.id} value={category.id}>
-                          {formatCategoryOption(category, categoryById)}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      className="inline-flex h-10 items-center gap-2 rounded-md bg-slate-950 px-3 text-sm font-medium text-white"
-                      disabled={categoryMutation.isPending}
-                    >
-                      {categoryMutation.isPending ? <Loader2 className="animate-spin" size={16} /> : null}
-                      Criar
-                    </button>
-                  </div>
-                </form>
-                <div className="mt-3 grid gap-2">
-                  {categories.map((category) => (
-                    <div key={category.id} className="rounded-md border border-slate-200 px-3 py-2 text-sm">
-                      {editingCategoryId === category.id ? (
-                        <div className="grid gap-2">
-                          <input
-                            className="h-9 rounded-md border border-slate-300 px-2 text-sm"
-                            onChange={(event) =>
-                              setCategoryEditForm((value) => ({ ...value, name: event.target.value }))
-                            }
-                            value={categoryEditForm.name}
-                          />
-                          <div className="grid grid-cols-[1fr_auto_auto] gap-2">
-                            <select
-                              className="h-9 min-w-0 rounded-md border border-slate-300 bg-white px-2 text-sm"
-                              onChange={(event) =>
-                                setCategoryEditForm((value) => ({
-                                  ...value,
-                                  parent_category_id: event.target.value,
-                                }))
-                              }
-                              value={categoryEditForm.parent_category_id}
-                            >
-                              <option value="">Categoria raiz</option>
-                              {categories
-                                .filter((option) => option.id !== category.id)
-                                .map((option) => (
-                                  <option key={option.id} value={option.id}>
-                                    {formatCategoryOption(option, categoryById)}
-                                  </option>
-                                ))}
-                            </select>
-                            <button
-                              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white"
-                              disabled={updateCategoryMutation.isPending}
-                              onClick={() => handleUpdateCategory(category.id)}
-                              title="Salvar categoria"
-                              type="button"
-                            >
-                              {updateCategoryMutation.isPending ? (
-                                <Loader2 className="animate-spin" size={16} />
-                              ) : (
-                                <Save size={16} />
-                              )}
-                            </button>
-                            <button
-                              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white"
-                              onClick={cancelEditingCategory}
-                              title="Cancelar edicao"
-                              type="button"
-                            >
-                              <X size={16} />
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-[1fr_auto_auto] items-center gap-2">
-                          <div className="min-w-0">
-                            <div className="truncate font-medium">{category.name}</div>
-                            <div className="truncate text-xs text-slate-500">
-                              {category.parent_category_id
-                                ? `Subcategoria de ${categoryById.get(category.parent_category_id)?.name ?? "categoria"}`
-                                : "Categoria raiz"}
-                            </div>
-                          </div>
-                          <button
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white"
-                            onClick={() => startEditingCategory(category)}
-                            title="Editar categoria"
-                            type="button"
-                          >
-                            <Pencil size={16} />
-                          </button>
-                          <button
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-red-200 bg-white text-red-700"
-                            disabled={deleteCategoryMutation.isPending}
-                            onClick={() => handleDeleteCategory(category)}
-                            title="Excluir categoria"
-                            type="button"
-                          >
-                            {deleteCategoryMutation.isPending ? (
-                              <Loader2 className="animate-spin" size={16} />
-                            ) : (
-                              <Trash2 size={16} />
-                            )}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {categories.length === 0 ? <EmptyState text="Nenhuma categoria criada." /> : null}
-                </div>
-              </Panel>
-
-              <Panel title="Regra deterministica">
-                <form className="grid gap-2" onSubmit={handleCreateRule}>
-                  <input
-                    className="h-10 rounded-md border border-slate-300 px-3 text-sm"
-                    onChange={(event) => setRuleForm((value) => ({ ...value, name: event.target.value }))}
-                    placeholder="Nome da regra"
-                    value={ruleForm.name}
-                  />
-                  <div className="grid grid-cols-2 gap-2">
-                    <select
-                      className="h-10 rounded-md border border-slate-300 bg-white px-2 text-sm"
-                      onChange={(event) => setRuleForm((value) => ({ ...value, field: event.target.value }))}
-                      value={ruleForm.field}
-                    >
-                      <option value="description">Descricao</option>
-                      <option value="raw_description">Descricao bruta</option>
-                      <option value="source_name">Origem</option>
-                    </select>
-                    <select
-                      className="h-10 rounded-md border border-slate-300 bg-white px-2 text-sm"
-                      onChange={(event) =>
-                        setRuleForm((value) => ({ ...value, match_type: event.target.value }))
-                      }
-                      value={ruleForm.match_type}
-                    >
-                      <option value="contains">Contem</option>
-                      <option value="starts_with">Comeca com</option>
-                      <option value="equals">Igual</option>
-                    </select>
-                  </div>
-                  <input
-                    className="h-10 rounded-md border border-slate-300 px-3 text-sm"
-                    onChange={(event) => setRuleForm((value) => ({ ...value, pattern: event.target.value }))}
-                    placeholder="Padrao"
-                    value={ruleForm.pattern}
-                  />
-                  <div className="grid grid-cols-[1fr_88px] gap-2">
-                    <select
-                      className="h-10 rounded-md border border-slate-300 bg-white px-2 text-sm"
-                      onChange={(event) =>
-                        setRuleForm((value) => ({ ...value, category_id: event.target.value }))
-                      }
-                      value={ruleForm.category_id}
-                    >
-                      <option value="">Categoria</option>
-                      {categories.map((category) => (
-                        <option key={category.id} value={category.id}>
-                          {formatCategoryOption(category, categoryById)}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      className="h-10 rounded-md border border-slate-300 px-2 text-sm"
-                      aria-label="Prioridade da regra"
-                      min={1}
-                      onChange={(event) =>
-                        setRuleForm((value) => ({ ...value, priority: Number(event.target.value) }))
-                      }
-                      type="number"
-                      value={ruleForm.priority}
-                    />
-                  </div>
-                  <p className="text-xs text-slate-500">
-                    Prioridade: menor numero vence em sobreposicoes. Use 10 para regras especificas e 100
-                    para regras gerais.
-                  </p>
-                  <label className="flex h-10 items-center gap-2 rounded-md border border-slate-200 px-3 text-sm">
-                    <input
-                      checked={ruleForm.active}
-                      onChange={(event) =>
-                        setRuleForm((value) => ({ ...value, active: event.target.checked }))
-                      }
-                      type="checkbox"
-                    />
-                    Ativa
-                  </label>
-                  <button
-                    className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-slate-950 px-3 text-sm font-medium text-white"
-                    disabled={ruleMutation.isPending}
-                  >
-                    {ruleMutation.isPending ? <Loader2 className="animate-spin" size={16} /> : null}
-                    Criar regra
-                  </button>
-                </form>
-                <button
-                  className="mt-3 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-medium"
-                  disabled={applyMutation.isPending}
-                  onClick={() => applyMutation.mutate()}
-                  type="button"
-                >
-                  {applyMutation.isPending ? "Aplicando" : "Aplicar regras"}
-                </button>
-                <div className="mt-3 grid gap-2">
-                  {rules.map((rule) => (
-                    <div key={rule.id} className="rounded-md border border-slate-200 px-3 py-2 text-sm">
-                      {editingRuleId === rule.id ? (
-                        <div className="grid gap-2">
-                          <input
-                            className="h-9 rounded-md border border-slate-300 px-2 text-sm"
-                            onChange={(event) =>
-                              setRuleEditForm((value) => ({ ...value, name: event.target.value }))
-                            }
-                            value={ruleEditForm.name}
-                          />
-                          <div className="grid grid-cols-2 gap-2">
-                            <select
-                              className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm"
-                              onChange={(event) =>
-                                setRuleEditForm((value) => ({ ...value, field: event.target.value }))
-                              }
-                              value={ruleEditForm.field}
-                            >
-                              <option value="description">Descricao</option>
-                              <option value="raw_description">Descricao bruta</option>
-                              <option value="source_name">Origem</option>
-                            </select>
-                            <select
-                              className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm"
-                              onChange={(event) =>
-                                setRuleEditForm((value) => ({
-                                  ...value,
-                                  match_type: event.target.value,
-                                }))
-                              }
-                              value={ruleEditForm.match_type}
-                            >
-                              <option value="contains">Contem</option>
-                              <option value="starts_with">Comeca com</option>
-                              <option value="equals">Igual</option>
-                            </select>
-                          </div>
-                          <input
-                            className="h-9 rounded-md border border-slate-300 px-2 text-sm"
-                            onChange={(event) =>
-                              setRuleEditForm((value) => ({ ...value, pattern: event.target.value }))
-                            }
-                            value={ruleEditForm.pattern}
-                          />
-                          <div className="grid grid-cols-[1fr_76px] gap-2">
-                            <select
-                              className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm"
-                              onChange={(event) =>
-                                setRuleEditForm((value) => ({
-                                  ...value,
-                                  category_id: event.target.value,
-                                }))
-                              }
-                              value={ruleEditForm.category_id}
-                            >
-                              <option value="">Categoria</option>
-                              {categories.map((category) => (
-                                <option key={category.id} value={category.id}>
-                                  {formatCategoryOption(category, categoryById)}
-                                </option>
-                              ))}
-                            </select>
-                            <input
-                              className="h-9 rounded-md border border-slate-300 px-2 text-sm"
-                              aria-label="Prioridade da regra"
-                              min={1}
-                              onChange={(event) =>
-                                setRuleEditForm((value) => ({
-                                  ...value,
-                                  priority: Number(event.target.value),
-                                }))
-                              }
-                              type="number"
-                              value={ruleEditForm.priority}
-                            />
-                          </div>
-                          <p className="text-xs text-slate-500">
-                            Menor numero vence em sobreposicoes.
-                          </p>
-                          <div className="grid grid-cols-[1fr_auto_auto] gap-2">
-                            <label className="flex h-9 items-center gap-2 rounded-md border border-slate-200 px-2 text-sm">
-                              <input
-                                checked={ruleEditForm.active}
-                                onChange={(event) =>
-                                  setRuleEditForm((value) => ({
-                                    ...value,
-                                    active: event.target.checked,
-                                  }))
-                                }
-                                type="checkbox"
-                              />
-                              Ativa
-                            </label>
-                            <button
-                              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white"
-                              disabled={updateRuleMutation.isPending}
-                              onClick={() => handleUpdateRule(rule.id)}
-                              title="Salvar regra"
-                              type="button"
-                            >
-                              {updateRuleMutation.isPending ? (
-                                <Loader2 className="animate-spin" size={16} />
-                              ) : (
-                                <Save size={16} />
-                              )}
-                            </button>
-                            <button
-                              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white"
-                              onClick={cancelEditingRule}
-                              title="Cancelar edicao"
-                              type="button"
-                            >
-                              <X size={16} />
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-[1fr_auto_auto] items-center gap-2">
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="truncate font-medium">{rule.name}</span>
-                              <span
-                                className={`rounded px-1.5 py-0.5 text-xs ${
-                                  rule.active
-                                    ? "bg-emerald-50 text-emerald-700"
-                                    : "bg-slate-100 text-slate-500"
-                                }`}
-                              >
-                                {rule.active ? "Ativa" : "Inativa"}
-                              </span>
-                            </div>
-                            <div className="truncate text-xs text-slate-500">
-                              {rule.field} {rule.match_type} "{rule.pattern}"
-                            </div>
-                            <div className="truncate text-xs text-slate-500">
-                              Categoria: {formatRuleCategory(rule, categoryById)}
-                            </div>
-                            <div className="truncate text-xs text-slate-500">
-                              Prioridade {rule.priority}
-                            </div>
-                          </div>
-                          <button
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 bg-white"
-                            onClick={() => startEditingRule(rule)}
-                            title="Editar regra"
-                            type="button"
-                          >
-                            <Pencil size={16} />
-                          </button>
-                          <button
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-red-200 bg-white text-red-700"
-                            disabled={deleteRuleMutation.isPending}
-                            onClick={() => handleDeleteRule(rule)}
-                            title="Excluir regra"
-                            type="button"
-                          >
-                            {deleteRuleMutation.isPending ? (
-                              <Loader2 className="animate-spin" size={16} />
-                            ) : (
-                              <Trash2 size={16} />
-                            )}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {rules.length === 0 ? <EmptyState text="Nenhuma regra criada." /> : null}
-                </div>
-              </Panel>
-            </aside>
-          </section>
-        )}
+        <button className="ghost-button full" onClick={() => onLogin({ token: "local-dev", mode: "local" })}>
+          Acessar ambiente local
+        </button>
       </section>
     </main>
   );
 }
 
-function MetricCard({
-  icon,
-  label,
-  value,
+function AppShell({
+  children,
+  page,
+  setPage,
+  mobileOpen,
+  setMobileOpen,
+  onLogout,
 }: {
-  icon: React.ReactNode;
-  label: string;
-  value: number;
+  children: ReactNode;
+  page: Page;
+  setPage: (page: Page) => void;
+  mobileOpen: boolean;
+  setMobileOpen: (open: boolean) => void;
+  onLogout: () => void;
 }) {
   return (
-    <div className="rounded-md border border-slate-200 bg-white p-4">
-      <div className="flex items-center justify-between text-slate-500">
-        <span className="text-sm font-medium">{label}</span>
-        {icon}
+    <main className="app-shell">
+      <aside className={`sidebar ${mobileOpen ? "open" : ""}`}>
+        <div className="sidebar-brand">
+          <div className="brand-mark small">SCF</div>
+          <div>
+            <strong>SmartCashFlow</strong>
+            <span>Mapa financeiro</span>
+          </div>
+        </div>
+        <nav className="sidebar-nav">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button
+                className={item.id === page ? "active" : ""}
+                key={item.id}
+                onClick={() => setPage(item.id)}
+              >
+                <Icon size={18} />
+                {item.label}
+              </button>
+            );
+          })}
+        </nav>
+        <button className="sidebar-logout" onClick={onLogout}>
+          <LogOut size={18} />
+          Sair
+        </button>
+      </aside>
+      {mobileOpen ? <button className="overlay" onClick={() => setMobileOpen(false)} aria-label="Fechar menu" /> : null}
+      <section className="content-shell">
+        <button className="mobile-menu" onClick={() => setMobileOpen(true)}>
+          <Menu size={20} />
+        </button>
+        {children}
+      </section>
+    </main>
+  );
+}
+
+function ProtectedApp({ page, session }: { page: Page; session: ApiSession }) {
+  const workspaceQuery = useQuery({
+    queryKey: ["workspace", session.token],
+    queryFn: () => getCurrentWorkspace(session),
+  });
+
+  if (workspaceQuery.isLoading) {
+    return <PageState icon={Loader2} title="Carregando workspace" description="Preparando seu ambiente." spin />;
+  }
+
+  if (workspaceQuery.isError) {
+    return (
+      <PageState
+        icon={AlertCircle}
+        title="Não foi possível carregar o workspace"
+        description="Confira se a API local está rodando e tente novamente."
+      />
+    );
+  }
+
+  const workspace = workspaceQuery.data;
+
+  if (!workspace) {
+    return (
+      <PageState
+        icon={AlertCircle}
+        title="Workspace indisponível"
+        description="A API não retornou um workspace ativo."
+      />
+    );
+  }
+
+  return (
+    <>
+      <Topbar workspaceName={workspace.workspace_name} />
+      {page === "dashboard" ? <DashboardPage session={session} /> : null}
+      {page === "imports" ? <ImportsPage session={session} /> : null}
+      {page === "transactions" ? <TransactionsPage session={session} /> : null}
+      {page === "categories" ? <CategoriesPage session={session} /> : null}
+      {page === "rules" ? <RulesPage session={session} /> : null}
+      {page === "review" ? <ReviewPage session={session} /> : null}
+      {page === "settings" ? <SettingsPage workspaceName={workspace.workspace_name} session={session} /> : null}
+    </>
+  );
+}
+
+function Topbar({ workspaceName }: { workspaceName: string }) {
+  return (
+    <header className="topbar">
+      <div>
+        <p className="eyebrow">Workspace</p>
+        <h1>{workspaceName}</h1>
       </div>
-      <p className="mt-3 text-2xl font-semibold">{value}</p>
+      <div className="topbar-pill">
+        <ShieldCheck size={16} />
+        Dados isolados por workspace
+      </div>
+    </header>
+  );
+}
+
+function DashboardPage({ session }: { session: ApiSession }) {
+  const period = usePeriod();
+  const summary = useQuery({
+    queryKey: ["dashboard-summary", session.token, period.query],
+    queryFn: () => getDashboardSummary(session, period.query),
+  });
+  const cashflow = useQuery({
+    queryKey: ["monthly-cashflow", session.token, period.query],
+    queryFn: () => getMonthlyCashflow(session, period.query),
+  });
+  const ranking = useQuery({
+    queryKey: ["category-ranking", session.token, period.query],
+    queryFn: () => getCategoryRanking(session, `${period.query}&limit=8`),
+  });
+  const quality = useQuery({
+    queryKey: ["data-quality", session.token, period.query],
+    queryFn: () => getDataQuality(session, period.query),
+  });
+
+  return (
+    <section className="page-stack">
+      <PageHeader
+        title="Dashboard"
+        description="Resumo executivo, qualidade dos dados e principais gastos do período."
+        action={<PeriodFilter period={period} />}
+      />
+      <section className="metric-grid">
+        <MetricCard
+          icon={ArrowUpCircle}
+          label="Receitas"
+          value={money(summary.data?.income)}
+          tone="positive"
+        />
+        <MetricCard
+          icon={ArrowDownCircle}
+          label="Despesas"
+          value={money(summary.data?.expenses)}
+          tone="negative"
+        />
+        <MetricCard icon={BarChart3} label="Saldo" value={money(summary.data?.balance)} />
+        <MetricCard
+          icon={ShieldCheck}
+          label="Qualidade"
+          value={percent(quality.data?.categorized_ratio)}
+          helper={`${quality.data?.uncategorized_count ?? 0} sem categoria`}
+        />
+      </section>
+
+      <section className="dashboard-grid">
+        <Panel title="Fluxo mensal" description="Receitas, despesas e saldo por mês.">
+          <ChartBox loading={cashflow.isLoading} empty={!cashflow.data?.items.length}>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={cashflow.data?.items ?? []}>
+                <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" />
+                <XAxis dataKey="month" tickLine={false} axisLine={false} />
+                <YAxis tickLine={false} axisLine={false} />
+                <Tooltip formatter={(value) => money(String(value))} />
+                <Line type="monotone" dataKey="income" stroke="#0f9f6e" strokeWidth={2} />
+                <Line type="monotone" dataKey="expenses" stroke="#dc2626" strokeWidth={2} />
+                <Line type="monotone" dataKey="balance" stroke="#6d5dfc" strokeWidth={2} />
+              </LineChart>
+            </ResponsiveContainer>
+          </ChartBox>
+        </Panel>
+
+        <Panel title="Gastos por categoria" description="Ranking de despesas classificadas e pendentes.">
+          <ChartBox loading={ranking.isLoading} empty={!ranking.data?.items.length}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={ranking.data?.items ?? []}>
+                <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" />
+                <XAxis dataKey="category_name" tickLine={false} axisLine={false} />
+                <YAxis tickLine={false} axisLine={false} />
+                <Tooltip formatter={(value) => money(String(value))} />
+                <Bar dataKey="amount" fill="#6d5dfc" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartBox>
+        </Panel>
+      </section>
+
+      <section className="dashboard-grid compact">
+        <Panel title="Saúde dos dados" description="Indicadores de confiabilidade para os gráficos.">
+          <div className="quality-list">
+            <QualityRow label="Transações" value={quality.data?.transaction_count ?? 0} />
+            <QualityRow label="Categorizadas" value={quality.data?.categorized_count ?? 0} />
+            <QualityRow label="Sem categoria" value={quality.data?.uncategorized_count ?? 0} warn />
+            <QualityRow label="Importações com erro" value={quality.data?.imports_with_errors ?? 0} warn />
+            <QualityRow label="Duplicados ignorados" value={quality.data?.duplicate_imports ?? 0} />
+          </div>
+        </Panel>
+        <RecentTransactions session={session} />
+      </section>
+    </section>
+  );
+}
+
+function ImportsPage({ session }: { session: ApiSession }) {
+  const queryClient = useQueryClient();
+  const [selectedImport, setSelectedImport] = useState<string | null>(null);
+  const imports = useQuery({
+    queryKey: ["imports", session.token],
+    queryFn: () => getImports(session),
+  });
+  const errors = useQuery({
+    queryKey: ["import-errors", session.token, selectedImport],
+    queryFn: () => getImportErrors(session, selectedImport ?? ""),
+    enabled: Boolean(selectedImport),
+  });
+  const upload = useMutation({
+    mutationFn: (file: File) => uploadImport(session, file),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["imports"] });
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+    },
+  });
+
+  return (
+    <section className="page-stack">
+      <PageHeader title="Importações" description="Envie TXT/CSV, acompanhe status e revise erros por linha." />
+      <Panel title="Upload" description="MVP aceita arquivos TXT e CSV. PDF fica para fase posterior.">
+        <label className="upload-zone">
+          <UploadCloud size={28} />
+          <strong>{upload.isPending ? "Importando..." : "Selecionar arquivo"}</strong>
+          <span>O arquivo original é preservado com rastreabilidade.</span>
+          <input
+            accept=".txt,.csv,text/plain,text/csv"
+            disabled={upload.isPending}
+            type="file"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) upload.mutate(file);
+              event.currentTarget.value = "";
+            }}
+          />
+        </label>
+        {upload.isError ? <InlineError message="Falha ao importar arquivo." /> : null}
+        {upload.isSuccess ? (
+          <InlineSuccess
+            message={`Arquivo importado: ${upload.data.valid_rows} novas, ${upload.data.duplicate_rows} duplicadas, ${upload.data.error_rows} erros.`}
+          />
+        ) : null}
+      </Panel>
+
+      <Panel title="Histórico" description="Status operacional de cada arquivo processado.">
+        <ResponsiveTable
+          empty={!imports.data?.items.length}
+          loading={imports.isLoading}
+          emptyMessage="Nenhuma importação encontrada."
+        >
+          <thead>
+            <tr>
+              <th>Arquivo</th>
+              <th>Status</th>
+              <th>Novas</th>
+              <th>Duplicadas</th>
+              <th>Erros</th>
+              <th>Data</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {(imports.data?.items ?? []).map((item) => (
+              <tr key={item.id}>
+                <td>{item.source_file?.original_filename ?? "Arquivo"}</td>
+                <td><StatusBadge status={item.status} /></td>
+                <td>{item.valid_rows}/{item.total_rows}</td>
+                <td>{item.duplicate_rows}</td>
+                <td>{item.error_rows}</td>
+                <td>{dateLabel(item.created_at)}</td>
+                <td>
+                  <button className="icon-button" onClick={() => setSelectedImport(item.id)}>
+                    <ChevronRight size={16} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </ResponsiveTable>
+      </Panel>
+
+      {selectedImport ? (
+        <Drawer title="Erros da importação" onClose={() => setSelectedImport(null)}>
+          <ResponsiveTable
+            empty={!errors.data?.items.length}
+            loading={errors.isLoading}
+            emptyMessage="Esta importação não possui erros."
+          >
+            <thead>
+              <tr>
+                <th>Linha</th>
+                <th>Campo</th>
+                <th>Código</th>
+                <th>Mensagem</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(errors.data?.items ?? []).map((error) => (
+                <tr key={error.id}>
+                  <td>{error.source_line ?? "-"}</td>
+                  <td>{error.field_name ?? "-"}</td>
+                  <td>{error.error_code}</td>
+                  <td>{error.message}</td>
+                </tr>
+              ))}
+            </tbody>
+          </ResponsiveTable>
+        </Drawer>
+      ) : null}
+    </section>
+  );
+}
+
+function TransactionsPage({ session }: { session: ApiSession }) {
+  const [selected, setSelected] = useState<TransactionRead | null>(null);
+  return (
+    <TransactionExplorer
+      session={session}
+      title="Transações"
+      description="Filtre, audite origem e corrija categorias manualmente."
+      onSelect={setSelected}
+      selected={selected}
+    />
+  );
+}
+
+function CategoriesPage({ session }: { session: ApiSession }) {
+  const queryClient = useQueryClient();
+  const [name, setName] = useState("");
+  const [parentCategoryId, setParentCategoryId] = useState("");
+  const [editing, setEditing] = useState<CategoryRead | null>(null);
+  const categories = useCategories(session);
+  const parentOptions = (categories.data?.items ?? []).filter((category) => category.id !== editing?.id);
+  const categoryNames = new Map((categories.data?.items ?? []).map((category) => [category.id, category.name]));
+  const orderedCategories = orderedCategoryTree(categories.data?.items ?? []);
+  const create = useMutation({
+    mutationFn: (payload: { categoryName: string; parentId: string | null }) =>
+      createCategory(session, payload.categoryName, payload.parentId),
+    onSuccess: () => {
+      setName("");
+      setParentCategoryId("");
+      void queryClient.invalidateQueries({ queryKey: ["categories"] });
+    },
+  });
+  const update = useMutation({
+    mutationFn: (payload: { id: string; name: string; parentId: string | null }) =>
+      updateCategory(session, payload.id, { name: payload.name, parent_category_id: payload.parentId }),
+    onSuccess: () => {
+      setEditing(null);
+      setName("");
+      setParentCategoryId("");
+      void queryClient.invalidateQueries({ queryKey: ["categories"] });
+    },
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => deleteCategory(session, id),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["categories"] }),
+  });
+
+  return (
+    <section className="page-stack">
+      <PageHeader title="Categorias" description="Base manual para organizar e auditar seus lançamentos." />
+      <Panel title={editing ? "Editar categoria" : "Nova categoria"}>
+        <form
+          className="inline-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const parentId = parentCategoryId || null;
+            if (editing) {
+              update.mutate({ id: editing.id, name, parentId });
+            } else if (name.trim()) {
+              create.mutate({ categoryName: name.trim(), parentId });
+            }
+          }}
+        >
+          <input
+            placeholder="Nome da categoria"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+          <select
+            value={parentCategoryId}
+            onChange={(event) => setParentCategoryId(event.target.value)}
+          >
+            <option value="">Categoria principal</option>
+            {parentOptions.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.parent_category_id ? `${categoryNames.get(category.parent_category_id) ?? "Pai"} / ${category.name}` : category.name}
+              </option>
+            ))}
+          </select>
+          <button className="primary-button" type="submit">
+            {editing ? "Salvar" : "Criar"}
+          </button>
+          {editing ? (
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => {
+                setEditing(null);
+                setName("");
+                setParentCategoryId("");
+              }}
+            >
+              Cancelar
+            </button>
+          ) : null}
+        </form>
+      </Panel>
+      <Panel title="Categorias cadastradas">
+        <ResponsiveTable
+          loading={categories.isLoading}
+          empty={!categories.data?.items.length}
+          emptyMessage="Crie sua primeira categoria."
+        >
+          <thead>
+            <tr>
+              <th>Nome</th>
+              <th>Tipo</th>
+              <th>Categoria pai</th>
+              <th>Criada em</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {orderedCategories.map((category) => (
+              <tr key={category.id}>
+                <td>{category.parent_category_id ? `↳ ${category.name}` : category.name}</td>
+                <td>{category.parent_category_id ? "Subcategoria" : "Principal"}</td>
+                <td>{category.parent_category_id ? categoryNames.get(category.parent_category_id) ?? "-" : "-"}</td>
+                <td>{dateLabel(category.created_at)}</td>
+                <td className="row-actions">
+                  <button
+                    className="icon-button"
+                    onClick={() => {
+                      setEditing(category);
+                      setName(category.name);
+                      setParentCategoryId(category.parent_category_id ?? "");
+                    }}
+                  >
+                    <Pencil size={16} />
+                  </button>
+                  <button className="icon-button danger" onClick={() => remove.mutate(category.id)}>
+                    <Trash2 size={16} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </ResponsiveTable>
+      </Panel>
+    </section>
+  );
+}
+
+function RulesPage({ session }: { session: ApiSession }) {
+  const queryClient = useQueryClient();
+  const categories = useCategories(session);
+  const categoryOptions = orderedCategoryOptions(categories.data?.items ?? []);
+  const rules = useQuery({
+    queryKey: ["rules", session.token],
+    queryFn: () => getRules(session),
+  });
+  const [form, setForm] = useState({
+    name: "",
+    field: "description",
+    match_type: "contains",
+    pattern: "",
+    category_id: "",
+    priority: 100,
+    active: true,
+  });
+  const [ruleFormError, setRuleFormError] = useState("");
+  const create = useMutation({
+    mutationFn: () => createRule(session, form),
+    onSuccess: () => {
+      setForm({ ...form, name: "", pattern: "" });
+      setRuleFormError("");
+      void queryClient.invalidateQueries({ queryKey: ["rules"] });
+    },
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => deleteRule(session, id),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["rules"] }),
+  });
+  const apply = useMutation({
+    mutationFn: () => applyRules(session),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+    },
+  });
+
+  return (
+    <section className="page-stack">
+      <PageHeader
+        title="Regras"
+        description="Automatize classificações previsíveis. Categorias manuais sempre prevalecem."
+        action={
+          <button className="secondary-button" onClick={() => apply.mutate()} disabled={apply.isPending}>
+            <RefreshCw className={apply.isPending ? "spin" : ""} size={16} />
+            {apply.isPending ? "Aplicando..." : "Aplicar regras"}
+          </button>
+        }
+      />
+      <Panel title="Nova regra">
+        <form
+          className="rule-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const missingFields = [
+              !form.name.trim() ? "nome" : "",
+              !form.pattern.trim() ? "padrão" : "",
+              !form.category_id ? "categoria" : "",
+              !form.priority || form.priority < 1 ? "prioridade" : "",
+            ].filter(Boolean);
+            if (missingFields.length) {
+              setRuleFormError(`Preencha: ${missingFields.join(", ")}.`);
+              return;
+            }
+            setRuleFormError("");
+            create.mutate();
+          }}
+        >
+          <label>
+            Nome
+            <input placeholder="Ex: Delivery" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
+          </label>
+          <label>
+            Campo
+            <select value={form.field} onChange={(event) => setForm({ ...form, field: event.target.value })}>
+              <option value="description">Descrição normalizada</option>
+              <option value="raw_description">Descrição original</option>
+              <option value="source_name">Origem</option>
+            </select>
+          </label>
+          <label>
+            Comparação
+            <select value={form.match_type} onChange={(event) => setForm({ ...form, match_type: event.target.value })}>
+              <option value="contains">Contém</option>
+              <option value="starts_with">Começa com</option>
+              <option value="equals">Igual</option>
+            </select>
+          </label>
+          <label className="rule-pattern">
+            Padrão
+            <input
+              placeholder="Ex: IFOOD"
+              value={form.pattern}
+              onChange={(event) => setForm({ ...form, pattern: event.target.value })}
+            />
+          </label>
+          <label className="rule-category">
+            Categoria
+            <select value={form.category_id} onChange={(event) => setForm({ ...form, category_id: event.target.value })}>
+              <option value="">Escolha categoria/subcategoria</option>
+              {categoryOptions.map((category) => (
+                <option key={category.id} value={category.id}>{category.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="rule-priority">
+            Prioridade
+            <input
+              min={1}
+              type="number"
+              value={form.priority}
+              onChange={(event) => setForm({ ...form, priority: Number(event.target.value) })}
+            />
+          </label>
+          <button className="primary-button rule-submit" type="submit"><Plus size={16} /> Criar</button>
+        </form>
+        {ruleFormError ? <InlineError message={ruleFormError} /> : null}
+        {create.isError ? <InlineError message={apiErrorMessage(create.error, "Falha ao criar regra.")} /> : null}
+      </Panel>
+      {apply.data ? <InlineSuccess message={`${apply.data.applied_count} transações categorizadas.`} /> : null}
+      <Panel title="Regras cadastradas">
+        <ResponsiveTable loading={rules.isLoading} empty={!rules.data?.items.length} emptyMessage="Nenhuma regra criada.">
+          <thead>
+            <tr>
+              <th>Prior.</th>
+              <th>Nome</th>
+              <th>Condição</th>
+              <th>Categoria</th>
+              <th>Status</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {(rules.data?.items ?? []).map((rule) => (
+              <RuleRow
+                categories={categories.data?.items ?? []}
+                key={rule.id}
+                onDelete={() => remove.mutate(rule.id)}
+                rule={rule}
+              />
+            ))}
+          </tbody>
+        </ResponsiveTable>
+      </Panel>
+    </section>
+  );
+}
+
+function ReviewPage({ session }: { session: ApiSession }) {
+  const [selected, setSelected] = useState<TransactionRead | null>(null);
+  return (
+    <TransactionExplorer
+      session={session}
+      title="Revisão"
+      description="Fila simples de transações sem categoria para melhorar a confiabilidade dos indicadores."
+      fixedQuery="category_id=__uncategorized__"
+      onSelect={setSelected}
+      selected={selected}
+      reviewMode
+    />
+  );
+}
+
+function SettingsPage({ workspaceName, session }: { workspaceName: string; session: ApiSession }) {
+  return (
+    <section className="page-stack">
+      <PageHeader title="Configurações" description="Informações operacionais do ambiente atual." />
+      <Panel title="Workspace">
+        <div className="settings-list">
+          <QualityRow label="Nome" value={workspaceName} />
+          <QualityRow label="Modo de sessão" value={session.mode === "local" ? "Local" : "Supabase"} />
+          <QualityRow label="API" value="Conectada" />
+        </div>
+      </Panel>
+    </section>
+  );
+}
+
+function TransactionExplorer({
+  session,
+  title,
+  description,
+  onSelect,
+  selected,
+  fixedQuery,
+  reviewMode = false,
+}: {
+  session: ApiSession;
+  title: string;
+  description: string;
+  onSelect: (transaction: TransactionRead | null) => void;
+  selected: TransactionRead | null;
+  fixedQuery?: string;
+  reviewMode?: boolean;
+}) {
+  const [search, setSearch] = useState("");
+  const [sourceType, setSourceType] = useState("");
+  const [direction, setDirection] = useState("");
+  const [sortBy, setSortBy] = useState("transaction_date");
+  const [sortDir, setSortDir] = useState("desc");
+  const [page, setPage] = useState(0);
+  const [actionMessage, setActionMessage] = useState("");
+  const pageSize = 50;
+  const categories = useCategories(session);
+  const query = useMemo(() => {
+    const params = new URLSearchParams();
+    if (search) params.set("q", search);
+    if (sourceType) params.set("source_type", sourceType);
+    if (direction) params.set("direction", direction);
+    params.set("sort_by", sortBy);
+    params.set("sort_dir", sortDir);
+    if (fixedQuery && fixedQuery !== "category_id=__uncategorized__") {
+      const [key, value] = fixedQuery.split("=");
+      params.set(key, value);
+    }
+    params.set("limit", String(pageSize));
+    params.set("offset", String(page * pageSize));
+    return `?${params.toString()}`;
+  }, [direction, fixedQuery, page, search, sortBy, sortDir, sourceType]);
+  const transactions = useQuery({
+    queryKey: ["transactions", session.token, query],
+    queryFn: () => getTransactions(session, query),
+  });
+  const visibleTransactions =
+    fixedQuery === "category_id=__uncategorized__"
+      ? (transactions.data?.items ?? []).filter((transaction) => !transaction.category)
+      : transactions.data?.items ?? [];
+  function toggleSort(nextSortBy: string) {
+    setPage(0);
+    if (sortBy === nextSortBy) {
+      setSortDir((current) => (current === "asc" ? "desc" : "asc"));
+      return;
+    }
+    setSortBy(nextSortBy);
+    setSortDir(nextSortBy === "transaction_date" ? "desc" : "asc");
+  }
+
+  return (
+    <section className="page-stack">
+      <PageHeader title={title} description={description} />
+      <Panel title="Filtros">
+        <div className="filters">
+          <label>
+            <Search size={16} />
+            <input
+              placeholder="Buscar descrição"
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setPage(0);
+              }}
+            />
+          </label>
+          <label>
+            <Filter size={16} />
+            <select
+              value={sourceType}
+              onChange={(event) => {
+                setSourceType(event.target.value);
+                setPage(0);
+              }}
+            >
+              <option value="">Todas as origens</option>
+              <option value="bank_statement">Conta corrente</option>
+              <option value="credit_card_statement">Cartão</option>
+            </select>
+          </label>
+          <label>
+            <BarChart3 size={16} />
+            <select
+              value={direction}
+              onChange={(event) => {
+                setDirection(event.target.value);
+                setPage(0);
+              }}
+            >
+              <option value="">Todos os tipos</option>
+              <option value="debit">Despesa</option>
+              <option value="credit">Receita/Crédito</option>
+              <option value="payment">Pagamento de fatura</option>
+            </select>
+          </label>
+        </div>
+      </Panel>
+      {actionMessage ? <InlineSuccess message={actionMessage} /> : null}
+      <Panel title={reviewMode ? "Pendências" : "Lançamentos"}>
+        <ResponsiveTable
+          loading={transactions.isLoading}
+          empty={!visibleTransactions.length}
+          emptyMessage={reviewMode ? "Nenhuma transação pendente de categoria." : "Nenhuma transação encontrada."}
+        >
+          <thead>
+            <tr>
+              <th><SortHeader active={sortBy === "transaction_date"} direction={sortDir} label="Data" onClick={() => toggleSort("transaction_date")} /></th>
+              <th><SortHeader active={sortBy === "description"} direction={sortDir} label="Descrição" onClick={() => toggleSort("description")} /></th>
+              <th><SortHeader active={sortBy === "direction"} direction={sortDir} label="Tipo" onClick={() => toggleSort("direction")} /></th>
+              <th><SortHeader active={sortBy === "amount"} direction={sortDir} label="Valor" onClick={() => toggleSort("amount")} /></th>
+              <th>Categoria</th>
+              <th><SortHeader active={sortBy === "source_type"} direction={sortDir} label="Fonte" onClick={() => toggleSort("source_type")} /></th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {visibleTransactions.map((transaction) => (
+              <TransactionRow
+                categories={categories.data?.items ?? []}
+                key={transaction.id}
+                onSelect={() => onSelect(transaction)}
+                onCategorized={() => {
+                  if (reviewMode) {
+                    setActionMessage("Categoria aplicada. A transação saiu da revisão porque não está mais pendente.");
+                  }
+                }}
+                session={session}
+                transaction={transaction}
+              />
+            ))}
+          </tbody>
+        </ResponsiveTable>
+        <div className="pagination-bar">
+          <button className="ghost-button" disabled={page === 0 || transactions.isLoading} onClick={() => setPage((current) => Math.max(current - 1, 0))}>
+            Anterior
+          </button>
+          <span>
+            Página {page + 1} · {visibleTransactions.length} lançamentos
+          </span>
+          <button
+            className="ghost-button"
+            disabled={transactions.isLoading || visibleTransactions.length < pageSize}
+            onClick={() => setPage((current) => current + 1)}
+          >
+            Próxima
+          </button>
+        </div>
+      </Panel>
+      {selected ? (
+        <Drawer title="Detalhe da transação" onClose={() => onSelect(null)}>
+          <TransactionDetail
+            categories={categories.data?.items ?? []}
+            session={session}
+            transaction={selected}
+          />
+        </Drawer>
+      ) : null}
+    </section>
+  );
+}
+
+function SortHeader({
+  active,
+  direction,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  direction: string;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button className={`sort-header ${active ? "active" : ""}`} onClick={onClick} type="button">
+      {label}
+      <span>{active ? (direction === "asc" ? "↑" : "↓") : "↕"}</span>
+    </button>
+  );
+}
+
+function TransactionRow({
+  transaction,
+  categories,
+  session,
+  onSelect,
+  onCategorized,
+}: {
+  transaction: TransactionRead;
+  categories: CategoryRead[];
+  session: ApiSession;
+  onSelect: () => void;
+  onCategorized?: () => void;
+}) {
+  const category = categories.find((item) => item.id === transaction.category?.category_id);
+  const categoryLabel = category ? categoryPath(category, categories) : undefined;
+  return (
+    <tr>
+      <td>{dateLabel(transaction.transaction_date)}</td>
+      <td>
+        <span className="description-cell">{transaction.description}</span>
+        {transaction.description !== transaction.raw_description ? (
+          <small>{transaction.raw_description}</small>
+        ) : null}
+      </td>
+      <td><DirectionBadge direction={transaction.direction} /></td>
+      <td className={amountClass(transaction)}>{money(transaction.amount)}</td>
+      <td><CategoryPicker categories={categories} onCategorized={onCategorized} session={session} transaction={transaction} /></td>
+      <td><SourceBadge source={transaction.category?.source} label={categoryLabel} /></td>
+      <td>
+        <button className="icon-button" onClick={onSelect}><ChevronRight size={16} /></button>
+      </td>
+    </tr>
+  );
+}
+
+function CategoryPicker({
+  transaction,
+  categories,
+  session,
+  onCategorized,
+}: {
+  transaction: TransactionRead;
+  categories: CategoryRead[];
+  session: ApiSession;
+  onCategorized?: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const categoryOptions = orderedCategoryOptions(categories);
+  const mutation = useMutation({
+    mutationFn: (categoryId: string) => updateTransactionCategory(session, transaction.id, categoryId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      void queryClient.invalidateQueries({ queryKey: ["data-quality"] });
+      onCategorized?.();
+    },
+  });
+  return (
+    <select
+      className="table-select"
+      value={transaction.category?.category_id ?? ""}
+      onChange={(event) => event.target.value && mutation.mutate(event.target.value)}
+    >
+      <option value="">Sem categoria</option>
+      {categoryOptions.map((category) => (
+        <option key={category.id} value={category.id}>{category.label}</option>
+      ))}
+    </select>
+  );
+}
+
+function TransactionDetail({
+  transaction,
+  categories,
+  session,
+}: {
+  transaction: TransactionRead;
+  categories: CategoryRead[];
+  session: ApiSession;
+}) {
+  const category = categories.find((item) => item.id === transaction.category?.category_id);
+  const normalizedChanged = transaction.description !== transaction.raw_description;
+  return (
+    <div className="detail-stack">
+      <QualityRow
+        label="Descrição normalizada"
+        value={
+          <span className={normalizedChanged ? "normalized-value" : ""}>
+            {transaction.description}
+          </span>
+        }
+      />
+      <QualityRow label="Descrição original" value={transaction.raw_description} />
+      <QualityRow label="Tipo" value={directionLabel(transaction.direction)} />
+      <QualityRow label="Valor" value={money(transaction.amount)} />
+      <QualityRow label="Data" value={dateLabel(transaction.transaction_date)} />
+      <QualityRow label="Origem" value={sourceTypeLabel(transaction.source_type)} />
+      <QualityRow label="Arquivo" value={transaction.source_file_id} />
+      <QualityRow label="Importação" value={transaction.import_job_id} />
+      <QualityRow label="Linha" value={transaction.source_line ?? "-"} />
+      <QualityRow label="Categoria atual" value={category ? categoryPath(category, categories) : "Sem categoria"} />
+      <QualityRow label="Fonte" value={transaction.category?.source ?? "Pendente"} />
+      <div>
+        <p className="field-label">Alterar categoria</p>
+        <CategoryPicker categories={categories} session={session} transaction={transaction} />
+      </div>
     </div>
   );
 }
 
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+function RecentTransactions({ session }: { session: ApiSession }) {
+  const transactions = useQuery({
+    queryKey: ["transactions", session.token, "recent"],
+    queryFn: () => getTransactions(session, "?limit=5"),
+  });
   return (
-    <section className="rounded-md border border-slate-200 bg-white p-4">
-      <h2 className="mb-3 text-base font-semibold">{title}</h2>
+    <Panel title="Transações recentes" description="Últimos lançamentos importados.">
+      <div className="mini-list">
+        {(transactions.data?.items ?? []).map((transaction) => (
+          <div className="mini-row" key={transaction.id}>
+            <span>
+              {transaction.description}
+              <small>{dateLabel(transaction.transaction_date)} · {directionLabel(transaction.direction)}</small>
+            </span>
+            <strong className={amountClass(transaction)}>{money(transaction.amount)}</strong>
+          </div>
+        ))}
+        {!transactions.isLoading && !transactions.data?.items.length ? (
+          <EmptyInline message="Importe seu primeiro arquivo para ver lançamentos." />
+        ) : null}
+      </div>
+    </Panel>
+  );
+}
+
+function RuleRow({
+  rule,
+  categories,
+  onDelete,
+}: {
+  rule: CategorizationRuleRead;
+  categories: CategoryRead[];
+  onDelete: () => void;
+}) {
+  const category = categories.find((item) => item.id === rule.category_id);
+  return (
+    <tr>
+      <td>{rule.priority}</td>
+      <td><strong className="rule-name">{rule.name}</strong></td>
+      <td>
+        <div className="rule-condition">
+          <span>{ruleFieldLabel(rule.field)}</span>
+          <strong>{ruleMatchLabel(rule.match_type)}</strong>
+          <code>{rule.pattern}</code>
+        </div>
+      </td>
+      <td><span className="category-path">{category ? categoryPath(category, categories) : "Categoria removida"}</span></td>
+      <td>{rule.active ? <StatusBadge status="active" /> : <StatusBadge status="inactive" />}</td>
+      <td><button className="icon-button danger" onClick={onDelete}><Trash2 size={16} /></button></td>
+    </tr>
+  );
+}
+
+function PageHeader({
+  title,
+  description,
+  action,
+}: {
+  title: string;
+  description: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="page-header">
+      <div>
+        <h2>{title}</h2>
+        <p>{description}</p>
+      </div>
+      {action}
+    </div>
+  );
+}
+
+function Panel({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <h3>{title}</h3>
+        {description ? <p>{description}</p> : null}
+      </div>
       {children}
     </section>
   );
 }
 
-function EmptyState({ text }: { text: string }) {
-  return <div className="rounded-md border border-dashed border-slate-300 p-4 text-sm text-slate-500">{text}</div>;
+function MetricCard({
+  icon: Icon,
+  label,
+  value,
+  helper,
+  tone,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: string;
+  helper?: string;
+  tone?: "positive" | "negative";
+}) {
+  return (
+    <div className="metric-card">
+      <div className="metric-top">
+        <span>{label}</span>
+        <Icon size={20} />
+      </div>
+      <strong className={tone}>{value}</strong>
+      {helper ? <small>{helper}</small> : null}
+    </div>
+  );
 }
 
-function formatCurrency(amount: string) {
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(Number(amount));
+function ResponsiveTable({
+  children,
+  loading,
+  empty,
+  emptyMessage,
+}: {
+  children: ReactNode;
+  loading: boolean;
+  empty: boolean;
+  emptyMessage: string;
+}) {
+  if (loading) return <PageState icon={Loader2} title="Carregando dados" description="Aguarde um momento." spin compact />;
+  if (empty) return <EmptyInline message={emptyMessage} />;
+  return <div className="table-wrap"><table>{children}</table></div>;
 }
 
-function formatCount(count: number, singular: string, plural: string) {
-  return `${count} ${count === 1 ? singular : plural}`;
+function Drawer({
+  title,
+  children,
+  onClose,
+}: {
+  title: string;
+  children: ReactNode;
+  onClose: () => void;
+}) {
+  return (
+    <aside className="drawer">
+      <div className="drawer-header">
+        <h3>{title}</h3>
+        <button className="icon-button" onClick={onClose}><X size={18} /></button>
+      </div>
+      {children}
+    </aside>
+  );
 }
 
-function validateRuleForm(form: typeof EMPTY_RULE_FORM) {
-  if (!form.name.trim()) {
-    return "Informe o nome da regra.";
-  }
-  if (!form.pattern.trim()) {
-    return "Informe o padrao da regra.";
-  }
-  if (!form.category_id) {
-    return "Selecione a categoria da regra.";
-  }
-  if (!Number.isFinite(Number(form.priority)) || Number(form.priority) < 1) {
-    return "Informe uma prioridade maior ou igual a 1.";
-  }
-  return null;
+function ChartBox({
+  children,
+  loading,
+  empty,
+}: {
+  children: ReactNode;
+  loading: boolean;
+  empty: boolean;
+}) {
+  if (loading) return <div className="chart-box loading"><Loader2 className="spin" /></div>;
+  if (empty) return <div className="chart-box"><EmptyInline message="Sem dados para o período." /></div>;
+  return <div className="chart-box">{children}</div>;
 }
 
-function formatCategoryOption(category: Category, categoryById: Map<string, Category>) {
-  const names = [category.name];
-  let parentId = category.parent_category_id;
-  const visited = new Set([category.id]);
-
-  while (parentId && !visited.has(parentId)) {
-    const parent = categoryById.get(parentId);
-    if (!parent) {
-      break;
-    }
-    names.unshift(parent.name);
-    visited.add(parent.id);
-    parentId = parent.parent_category_id;
-  }
-
-  return names.join(" / ");
+function PageState({
+  icon: Icon,
+  title,
+  description,
+  spin = false,
+  compact = false,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  spin?: boolean;
+  compact?: boolean;
+}) {
+  return (
+    <div className={compact ? "page-state compact" : "page-state"}>
+      <Icon className={spin ? "spin" : ""} size={28} />
+      <strong>{title}</strong>
+      <p>{description}</p>
+    </div>
+  );
 }
 
-function formatRuleCategory(rule: CategorizationRule, categoryById: Map<string, Category>) {
-  return formatTransactionCategory(rule.category_id, categoryById);
+function EmptyInline({ message }: { message: string }) {
+  return <div className="empty-inline"><FileWarning size={18} /> {message}</div>;
 }
 
-function formatTransactionCategory(categoryId: string, categoryById: Map<string, Category>) {
-  const category = categoryById.get(categoryId);
-  if (!category) {
-    return "Categoria removida";
-  }
-  return formatCategoryOption(category, categoryById);
+function InlineError({ message }: { message: string }) {
+  return <div className="inline-error"><AlertCircle size={16} /> {message}</div>;
 }
 
-function buildChartData(transactions: Transaction[], categoryById: Map<string, Category>) {
-  const totals = new Map<string, number>();
-  transactions.forEach((transaction) => {
-    if (transaction.direction !== "debit") {
-      return;
-    }
-    const amount = Math.abs(Number(transaction.amount));
-    const category = transaction.category_id
-      ? formatTransactionCategory(transaction.category_id, categoryById)
-      : "Sem categoria";
-    totals.set(category, (totals.get(category) ?? 0) + amount);
+function InlineSuccess({ message }: { message: string }) {
+  return <div className="inline-success"><CheckCircle2 size={16} /> {message}</div>;
+}
+
+function QualityRow({
+  label,
+  value,
+  warn,
+}: {
+  label: string;
+  value: ReactNode;
+  warn?: boolean;
+}) {
+  return (
+    <div className="quality-row">
+      <span>{label}</span>
+      <strong className={warn ? "warning" : ""}>{value}</strong>
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const normalized = status.toLowerCase();
+  return <span className={`status-badge ${normalized}`}>{statusLabel(status)}</span>;
+}
+
+function SourceBadge({ source, label }: { source?: string; label?: string }) {
+  const value = source ?? "pending";
+  return <span className={`status-badge ${value}`}>{label ? `${label} · ${sourceLabel(value)}` : sourceLabel(value)}</span>;
+}
+
+function DirectionBadge({ direction }: { direction: string }) {
+  return <span className={`direction-badge ${direction}`}>{directionLabel(direction)}</span>;
+}
+
+function PeriodFilter({ period }: { period: ReturnType<typeof usePeriod> }) {
+  return (
+    <div className="period-filter">
+      <input type="date" value={period.dateFrom} onChange={(event) => period.setDateFrom(event.target.value)} />
+      <input type="date" value={period.dateTo} onChange={(event) => period.setDateTo(event.target.value)} />
+    </div>
+  );
+}
+
+function usePeriod() {
+  const now = new Date();
+  const firstDay = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+  const today = now.toISOString().slice(0, 10);
+  const [dateFrom, setDateFrom] = useState(firstDay);
+  const [dateTo, setDateTo] = useState(today);
+  const query = `?date_from=${dateFrom}&date_to=${dateTo}`;
+  return { dateFrom, dateTo, setDateFrom, setDateTo, query };
+}
+
+function useCategories(session: ApiSession) {
+  return useQuery({
+    queryKey: ["categories", session.token],
+    queryFn: () => getCategories(session),
   });
-  return Array.from(totals.entries()).map(([category, amount]) => ({ category, amount }));
+}
+
+function money(value?: string | number | null) {
+  const numeric = Number(value ?? 0);
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(numeric);
+}
+
+function percent(value?: string | null) {
+  if (!value) return "0%";
+  return `${(Number(value) * 100).toFixed(0)}%`;
+}
+
+function apiErrorMessage(error: unknown, fallback: string) {
+  if (!(error instanceof Error) || !error.message) return fallback;
+  try {
+    const payload = JSON.parse(error.message) as { detail?: string };
+    return payload.detail || fallback;
+  } catch {
+    return error.message || fallback;
+  }
+}
+
+function dateLabel(value: string) {
+  return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit" }).format(
+    new Date(value),
+  );
+}
+
+function amountClass(transaction: TransactionRead) {
+  if (transaction.direction === "credit") return "positive";
+  if (transaction.direction === "payment") return "muted-strong";
+  return "negative";
+}
+
+function categoryPath(category: CategoryRead, categories: CategoryRead[]) {
+  if (!category.parent_category_id) return category.name;
+  const parent = categories.find((item) => item.id === category.parent_category_id);
+  return parent ? `${parent.name} / ${category.name}` : category.name;
+}
+
+function orderedCategoryOptions(categories: CategoryRead[]) {
+  return orderedCategoryTree(categories)
+    .map((category) => ({
+      id: category.id,
+      label: categoryPath(category, categories),
+    }));
+}
+
+function orderedCategoryTree(categories: CategoryRead[]) {
+  const byParent = new Map<string, CategoryRead[]>();
+  for (const category of categories) {
+    const parentKey = category.parent_category_id ?? "root";
+    byParent.set(parentKey, [...(byParent.get(parentKey) ?? []), category]);
+  }
+  for (const [parentKey, items] of byParent) {
+    byParent.set(parentKey, sortCategoriesByName(items));
+  }
+
+  const ordered: CategoryRead[] = [];
+  for (const root of byParent.get("root") ?? []) {
+    ordered.push(root);
+    ordered.push(...(byParent.get(root.id) ?? []));
+  }
+  return ordered;
+}
+
+function sortCategoriesByName(categories: CategoryRead[]) {
+  return [...categories].sort((left, right) =>
+    left.name.localeCompare(right.name, "pt-BR", { sensitivity: "base" }),
+  );
+}
+
+function statusLabel(status: string) {
+  const labels: Record<string, string> = {
+    completed: "Completo",
+    completed_with_errors: "Com erros",
+    duplicate_file: "Duplicado",
+    active: "Ativa",
+    inactive: "Inativa",
+  };
+  return labels[status] ?? status;
+}
+
+function directionLabel(direction: string) {
+  const labels: Record<string, string> = {
+    debit: "Despesa",
+    credit: "Receita/Crédito",
+    payment: "Pagamento de fatura",
+  };
+  return labels[direction] ?? direction;
+}
+
+function ruleFieldLabel(field: string) {
+  const labels: Record<string, string> = {
+    description: "Descrição normalizada",
+    raw_description: "Descrição original",
+    source_name: "Origem",
+  };
+  return labels[field] ?? field;
+}
+
+function ruleMatchLabel(matchType: string) {
+  const labels: Record<string, string> = {
+    contains: "contém",
+    starts_with: "começa com",
+    equals: "igual a",
+  };
+  return labels[matchType] ?? matchType;
+}
+
+function sourceLabel(source: string) {
+  const labels: Record<string, string> = {
+    manual: "Manual",
+    rule: "Regra",
+    embedding: "Embedding",
+    llm: "LLM",
+    pending: "Pendente",
+  };
+  return labels[source] ?? source;
+}
+
+function sourceTypeLabel(sourceType: string) {
+  const labels: Record<string, string> = {
+    bank_statement: "Conta corrente",
+    credit_card_statement: "Cartão de crédito",
+    unknown: "Desconhecida",
+  };
+  return labels[sourceType] ?? sourceType;
 }
 
 export default App;

@@ -1,9 +1,11 @@
 from collections.abc import Iterator
 from datetime import date
 from decimal import Decimal
+from io import BytesIO
 from uuid import uuid4
 
 import pytest
+from fastapi import UploadFile
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -11,6 +13,7 @@ from app.core.auth import AuthContext
 from app.db.models import Base, ImportError, ImportJob, RawTransactionLine, SourceFile, Transaction
 from app.domain.imports import ImportStatus, ParsedTransaction, TransactionDirection
 from app.services.import_service import ImportService
+from app.services.storage_service import StoredFile
 
 
 @pytest.fixture()
@@ -76,9 +79,9 @@ def test_import_records_file_job_raw_lines_transactions_and_errors(
     assert transactions[0].source_file_id == source_files[0].id
     assert transactions[0].import_job_id == import_jobs[0].id
     assert transactions[0].source_type == "credit_card_statement"
-    assert transactions[0].description == "PADARIA SÃO JOSÉ CAFÉ"
+    assert transactions[0].description == "PADARIA SAO JOSE CAFE"
     assert transactions[0].raw_description == "PADARIA SÃO JOSÉ CAFÉ"
-    assert transactions[0].amount == Decimal("-26.06")
+    assert transactions[0].amount == Decimal("26.06")
     assert transactions[0].currency == "BRL"
     assert transactions[0].direction == "debit"
     assert transactions[0].source_line == 2
@@ -184,6 +187,46 @@ def test_import_dedupe_is_scoped_by_workspace(db_session: Session) -> None:
     assert db_session.scalar(select(func.count()).select_from(Transaction)) == 2
 
 
+def test_import_dedupes_transactions_when_file_changes_one_line(db_session: Session) -> None:
+    auth = AuthContext(user_id=str(uuid4()), workspace_id=str(uuid4()))
+    service = ImportService(db_session)
+    first_content = (
+        b"01/07/2025;PIX TRANSF DANIELL01/07;-10,00\n"
+        b"02/07/2025;MERCADO CENTRAL;-50,00\n"
+    )
+    changed_content = (
+        b"01/07/2025;PIX TRANSF DANIELL01/07;-10,00\n"
+        b"03/07/2025;FARMACIA VIDA;-25,00\n"
+    )
+
+    first = service.import_bytes(
+        auth=auth,
+        filename="extrato-a.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/first/extrato.txt",
+        content=first_content,
+    )
+    changed = service.import_bytes(
+        auth=auth,
+        filename="extrato-a-ajustado.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/second/extrato.txt",
+        content=changed_content,
+    )
+
+    assert first.valid_rows == 2
+    assert first.duplicate_rows == 0
+    assert changed.status == ImportStatus.COMPLETED
+    assert changed.total_rows == 2
+    assert changed.valid_rows == 1
+    assert changed.duplicate_rows == 1
+    assert db_session.scalar(select(func.count()).select_from(SourceFile)) == 2
+    assert db_session.scalar(select(func.count()).select_from(ImportJob)) == 2
+    assert db_session.scalar(select(func.count()).select_from(Transaction)) == 3
+
+
 def test_persist_transaction_reuses_same_source_file_and_line(db_session: Session) -> None:
     auth = AuthContext(user_id=str(uuid4()), workspace_id=str(uuid4()))
     service = ImportService(db_session)
@@ -221,3 +264,66 @@ def test_persist_transaction_reuses_same_source_file_and_line(db_session: Sessio
     assert duplicate.id == db_session.scalars(select(Transaction)).one().id
     assert db_session.scalar(select(func.count()).select_from(SourceFile)) == 1
     assert db_session.scalar(select(func.count()).select_from(Transaction)) == 1
+
+
+class FakeStorage:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, bytes, str | None]] = []
+
+    def store_original_file(
+        self,
+        workspace_id: str,
+        original_filename: str,
+        content: bytes,
+        source_file_id: str | None = None,
+    ) -> StoredFile:
+        self.calls.append((workspace_id, original_filename, content, source_file_id))
+        return StoredFile(
+            bucket="financial-files",
+            path=f"{workspace_id}/{source_file_id}/{original_filename}",
+        )
+
+
+@pytest.mark.anyio
+async def test_process_upload_stores_original_file_before_persisting(
+    db_session: Session,
+) -> None:
+    auth = AuthContext(user_id=str(uuid4()), workspace_id=str(uuid4()))
+    storage = FakeStorage()
+    service = ImportService(db_session, storage=storage)
+    upload = UploadFile(
+        filename="extrato.txt",
+        file=BytesIO(b"01/07/2025;PIX TRANSF DANIELL01/07;-10,00\n"),
+    )
+
+    result = await service.process_upload(auth=auth, file=upload)
+
+    source_file = db_session.scalars(select(SourceFile)).one()
+    assert result.status == ImportStatus.COMPLETED
+    assert len(storage.calls) == 1
+    assert storage.calls[0][0] == auth.workspace_id
+    assert storage.calls[0][1] == "extrato.txt"
+    assert storage.calls[0][3] == source_file.id
+    assert source_file.storage_bucket == "financial-files"
+    assert source_file.storage_path == f"{auth.workspace_id}/{source_file.id}/extrato.txt"
+
+
+@pytest.mark.anyio
+async def test_process_upload_does_not_store_duplicate_file_again(
+    db_session: Session,
+) -> None:
+    auth = AuthContext(user_id=str(uuid4()), workspace_id=str(uuid4()))
+    storage = FakeStorage()
+    service = ImportService(db_session, storage=storage)
+    content = b"01/07/2025;PIX TRANSF DANIELL01/07;-10,00\n"
+
+    first = UploadFile(filename="extrato.txt", file=BytesIO(content))
+    duplicate = UploadFile(filename="extrato.txt", file=BytesIO(content))
+
+    await service.process_upload(auth=auth, file=first)
+    result = await service.process_upload(auth=auth, file=duplicate)
+
+    assert result.status == ImportStatus.DUPLICATE_FILE
+    assert len(storage.calls) == 1
+    assert db_session.scalar(select(func.count()).select_from(SourceFile)) == 1
+    assert db_session.scalar(select(func.count()).select_from(ImportJob)) == 2
