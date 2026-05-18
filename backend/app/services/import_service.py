@@ -13,31 +13,58 @@ from app.db.models import (
     RawTransactionLine,
     SourceFile,
     Transaction,
-    User,
-    Workspace,
-    WorkspaceMember,
 )
 from app.domain.imports import ImportResult, ImportStatus, ParsedTransaction, SourceKind
+from app.services.categorization_service import CategorizationService
 from app.services.file_classifier import classify_file
 from app.services.parsers import parse_credit_card_csv, parse_txt_bank_statement
+from app.services.storage_service import StorageService
+from app.services.workspace_service import WorkspaceService
 
 
 class ImportService:
     max_upload_bytes = 2 * 1024 * 1024
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, storage: StorageService | None = None) -> None:
         self.db = db
+        self.storage = storage or StorageService()
 
     async def process_upload(self, auth: AuthContext, file: UploadFile) -> ImportResult:
         filename = file.filename or "upload"
         raw_bytes = await file.read()
+        _, workspace, _ = WorkspaceService(self.db).get_or_create_current_workspace(auth)
+        content_hash = sha256(raw_bytes).hexdigest()
+        existing_source_file = self.db.scalar(
+            select(SourceFile).where(
+                SourceFile.workspace_id == workspace.id,
+                SourceFile.content_hash == content_hash,
+            )
+        )
+        if existing_source_file is not None:
+            return self.import_bytes(
+                auth=AuthContext(user_id=auth.user_id, workspace_id=workspace.id, email=auth.email),
+                filename=filename,
+                mime_type=file.content_type or "application/octet-stream",
+                storage_bucket=existing_source_file.storage_bucket,
+                storage_path=existing_source_file.storage_path,
+                content=raw_bytes,
+            )
+
+        source_file_id = str(uuid4())
+        stored_file = self.storage.store_original_file(
+            workspace_id=workspace.id,
+            original_filename=filename,
+            content=raw_bytes,
+            source_file_id=source_file_id,
+        )
         return self.import_bytes(
-            auth=auth,
+            auth=AuthContext(user_id=auth.user_id, workspace_id=workspace.id, email=auth.email),
             filename=filename,
             mime_type=file.content_type or "application/octet-stream",
-            storage_bucket="local",
-            storage_path=f"{auth.workspace_id}/local/{filename}",
+            storage_bucket=stored_file.bucket,
+            storage_path=stored_file.path,
             content=raw_bytes,
+            source_file_id=source_file_id,
         )
 
     def import_bytes(
@@ -48,6 +75,7 @@ class ImportService:
         storage_bucket: str,
         storage_path: str,
         content: bytes,
+        source_file_id: str | None = None,
     ) -> ImportResult:
         suffix = filename.rsplit(".", maxsplit=1)[-1].lower() if "." in filename else ""
         if suffix not in {"txt", "csv"}:
@@ -73,16 +101,17 @@ class ImportService:
         source_kind = classify_file(filename, text_content)
         parse_result = self._parse(source_kind, text_content)
 
-        self._ensure_auth_entities(auth)
+        _, workspace, _ = WorkspaceService(self.db).get_or_create_current_workspace(auth)
+        workspace_id = workspace.id
         existing_source_file = self.db.scalar(
             select(SourceFile).where(
-                SourceFile.workspace_id == auth.workspace_id,
+                SourceFile.workspace_id == workspace_id,
                 SourceFile.content_hash == content_hash,
             )
         )
         if existing_source_file is not None:
             import_job = self._create_import_job(
-                workspace_id=auth.workspace_id,
+                workspace_id=workspace_id,
                 source_file_id=existing_source_file.id,
                 status_value=ImportStatus.DUPLICATE_FILE,
                 total_rows=0,
@@ -104,8 +133,8 @@ class ImportService:
             ImportStatus.COMPLETED_WITH_ERRORS if parse_result.errors else ImportStatus.COMPLETED
         )
         source_file = SourceFile(
-            id=str(uuid4()),
-            workspace_id=auth.workspace_id,
+            id=source_file_id or str(uuid4()),
+            workspace_id=workspace_id,
             original_filename=filename,
             content_hash=content_hash,
             mime_type=mime_type,
@@ -116,7 +145,7 @@ class ImportService:
             created_by_user_id=auth.user_id,
         )
         import_job = self._create_import_job(
-            workspace_id=auth.workspace_id,
+            workspace_id=workspace_id,
             source_file_id=source_file.id,
             status_value=status_value,
             total_rows=parse_result.total_rows,
@@ -128,7 +157,7 @@ class ImportService:
         self.db.flush()
 
         raw_lines = self._persist_raw_lines(
-            auth=auth,
+            workspace_id=workspace_id,
             source_file=source_file,
             import_job=import_job,
             source_kind=source_kind,
@@ -139,7 +168,7 @@ class ImportService:
         persisted_transactions = 0
         for parsed_transaction in parse_result.transactions:
             transaction = self.persist_transaction(
-                workspace_id=auth.workspace_id,
+                workspace_id=workspace_id,
                 source_file=source_file,
                 import_job=import_job,
                 raw_line=raw_lines.get(parsed_transaction.source_line),
@@ -152,7 +181,7 @@ class ImportService:
             self.db.add(
                 ImportError(
                     id=str(uuid4()),
-                    workspace_id=auth.workspace_id,
+                    workspace_id=workspace_id,
                     import_job_id=import_job.id,
                     source_line=parse_error.source_line,
                     field_name=parse_error.field_name,
@@ -163,6 +192,7 @@ class ImportService:
             )
 
         import_job.valid_rows = persisted_transactions
+        CategorizationService(self.db).apply_rules(workspace_id)
         self.db.commit()
         return ImportResult(
             import_job_id=import_job.id,
@@ -232,35 +262,6 @@ class ImportService:
             detail="Unsupported or unrecognized file layout",
         )
 
-    def _ensure_auth_entities(self, auth: AuthContext) -> None:
-        if self.db.get(User, auth.user_id) is None:
-            self.db.add(
-                User(
-                    id=auth.user_id,
-                    supabase_user_id=auth.user_id,
-                    email=f"{auth.user_id}@local.invalid",
-                    display_name=None,
-                )
-            )
-        if self.db.get(Workspace, auth.workspace_id) is None:
-            self.db.add(Workspace(id=auth.workspace_id, name="Local workspace"))
-        membership = self.db.scalar(
-            select(WorkspaceMember).where(
-                WorkspaceMember.workspace_id == auth.workspace_id,
-                WorkspaceMember.user_id == auth.user_id,
-            )
-        )
-        if membership is None:
-            self.db.add(
-                WorkspaceMember(
-                    id=str(uuid4()),
-                    workspace_id=auth.workspace_id,
-                    user_id=auth.user_id,
-                    role="owner",
-                )
-            )
-        self.db.flush()
-
     def _create_import_job(
         self,
         workspace_id: str,
@@ -285,7 +286,7 @@ class ImportService:
 
     def _persist_raw_lines(
         self,
-        auth: AuthContext,
+        workspace_id: str,
         source_file: SourceFile,
         import_job: ImportJob,
         source_kind: SourceKind,
@@ -306,7 +307,7 @@ class ImportService:
             )
             model = RawTransactionLine(
                 id=str(uuid4()),
-                workspace_id=auth.workspace_id,
+                workspace_id=workspace_id,
                 source_file_id=source_file.id,
                 import_job_id=import_job.id,
                 source_line=source_line,
