@@ -195,8 +195,8 @@ def test_categories_support_parent_and_clear_parent(client: TestClient) -> None:
         json={"name": "Restaurantes", "parent_category_id": other_parent_id},
     )
 
-    assert child_response.status_code == 200
-    assert same_name_other_parent.status_code == 200
+    assert child_response.status_code == 201
+    assert same_name_other_parent.status_code == 201
     child = child_response.json()
     assert child["parent_category_id"] == parent_id
 
@@ -265,7 +265,7 @@ def test_rule_application_categorizes_matching_transactions(
     apply_response = client.post("/v1/categorization-rules/apply")
     transaction_response = client.get(f"/v1/transactions?category_id={category_id}")
 
-    assert rule_response.status_code == 200
+    assert rule_response.status_code == 201
     assert apply_response.status_code == 200
     assert apply_response.json()["applied_count"] == 1
     assert [item["description"] for item in transaction_response.json()["items"]] == [

@@ -1,20 +1,20 @@
 from datetime import datetime
+from decimal import Decimal
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.auth import AuthContext, AuthDependency
 from app.db.models import (
     CategorizationRule,
     Category,
+    Transaction,
     TransactionCategoryAssignment,
 )
 from app.db.session import get_db
-from app.services.categorization_service import CategorizationService
 
 router = APIRouter(tags=["categories"])
 DbDependency = Depends(get_db)
@@ -28,6 +28,19 @@ class CategoryCreate(BaseModel):
 class CategoryUpdate(BaseModel):
     name: str | None = None
     parent_category_id: str | None = None
+
+
+class CategoryRead(BaseModel):
+    id: str
+    workspace_id: str
+    name: str
+    parent_category_id: str | None
+    created_at: datetime
+
+
+class CategoryListResponse(BaseModel):
+    workspace_id: str
+    items: list[CategoryRead]
 
 
 class CategorizationRuleCreate(BaseModel):
@@ -50,20 +63,9 @@ class CategorizationRuleUpdate(BaseModel):
     active: bool | None = None
 
 
-class CategoryRead(BaseModel):
-    id: str
-    name: str
-    parent_category_id: str | None
-    created_at: datetime
-
-
-class CategoryListResponse(BaseModel):
-    workspace_id: str
-    items: list[CategoryRead]
-
-
 class CategorizationRuleRead(BaseModel):
     id: str
+    workspace_id: str
     name: str
     field: str
     match_type: str
@@ -79,7 +81,7 @@ class CategorizationRuleListResponse(BaseModel):
     items: list[CategorizationRuleRead]
 
 
-class ApplyRulesResponse(BaseModel):
+class RuleApplyResponse(BaseModel):
     workspace_id: str
     applied_count: int
 
@@ -92,46 +94,41 @@ async def list_categories(
     categories = db.scalars(
         select(Category)
         .where(Category.workspace_id == auth.workspace_id)
-        .order_by(Category.parent_category_id.is_not(None), Category.name, Category.id)
+        .order_by(Category.name, Category.id)
     ).all()
     return CategoryListResponse(
         workspace_id=auth.workspace_id,
-        items=[_category_read(category) for category in _order_category_tree(categories)],
+        items=[_category_read(category) for category in _order_category_tree(list(categories))],
     )
 
 
-@router.post("/categories")
+@router.post("/categories", status_code=status.HTTP_201_CREATED)
 async def create_category(
     payload: CategoryCreate,
     auth: AuthContext = AuthDependency,
     db: Session = DbDependency,
 ) -> CategoryRead:
-    _validate_parent_category(
+    name = _normalize_name(payload.name)
+    _ensure_parent_category(
         db=db,
         workspace_id=auth.workspace_id,
-        category_id=payload.parent_category_id,
-    )
-    _ensure_category_name_available(
-        db=db,
-        workspace_id=auth.workspace_id,
-        name=payload.name,
         parent_category_id=payload.parent_category_id,
     )
+    _ensure_unique_category_name(
+        db=db,
+        workspace_id=auth.workspace_id,
+        name=name,
+        parent_category_id=payload.parent_category_id,
+    )
+
     category = Category(
         id=str(uuid4()),
         workspace_id=auth.workspace_id,
-        name=payload.name,
+        name=name,
         parent_category_id=payload.parent_category_id,
     )
     db.add(category)
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Category already exists in workspace",
-        ) from exc
+    db.commit()
     db.refresh(category)
     return _category_read(category)
 
@@ -144,39 +141,42 @@ async def update_category(
     db: Session = DbDependency,
 ) -> CategoryRead:
     category = _get_category(db=db, workspace_id=auth.workspace_id, category_id=category_id)
+    if payload.name is not None:
+        category.name = _normalize_name(payload.name)
+        _ensure_unique_category_name(
+            db=db,
+            workspace_id=auth.workspace_id,
+            name=category.name,
+            parent_category_id=category.parent_category_id,
+            exclude_category_id=category.id,
+        )
     if "parent_category_id" in payload.model_fields_set:
-        if payload.parent_category_id is None:
-            category.parent_category_id = None
-        elif payload.parent_category_id == category_id:
+        if payload.parent_category_id == category.id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Category cannot be its own parent",
             )
-        else:
-            _validate_parent_category(
-                db=db,
-                workspace_id=auth.workspace_id,
-                category_id=payload.parent_category_id,
-            )
-            category.parent_category_id = payload.parent_category_id
-    if payload.name is not None:
-        category.name = payload.name
-    _ensure_category_name_available(
-        db=db,
-        workspace_id=auth.workspace_id,
-        name=category.name,
-        parent_category_id=category.parent_category_id,
-        current_category_id=category_id,
-    )
+        _ensure_parent_category(
+            db=db,
+            workspace_id=auth.workspace_id,
+            parent_category_id=payload.parent_category_id,
+        )
+        _ensure_no_parent_cycle(
+            db=db,
+            workspace_id=auth.workspace_id,
+            category_id=category.id,
+            parent_category_id=payload.parent_category_id,
+        )
+        _ensure_unique_category_name(
+            db=db,
+            workspace_id=auth.workspace_id,
+            name=category.name,
+            parent_category_id=payload.parent_category_id,
+            exclude_category_id=category.id,
+        )
+        category.parent_category_id = payload.parent_category_id
 
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Category already exists in workspace",
-        ) from exc
+    db.commit()
     db.refresh(category)
     return _category_read(category)
 
@@ -186,30 +186,45 @@ async def delete_category(
     category_id: str,
     auth: AuthContext = AuthDependency,
     db: Session = DbDependency,
-) -> None:
+) -> Response:
     category = _get_category(db=db, workspace_id=auth.workspace_id, category_id=category_id)
-    in_use = db.scalar(
-        select(TransactionCategoryAssignment.id).where(
-            TransactionCategoryAssignment.workspace_id == auth.workspace_id,
-            TransactionCategoryAssignment.category_id == category_id,
-        )
-    )
-    if in_use is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Category is in use")
-    has_children = db.scalar(
-        select(Category.id).where(
+    child_category = db.scalar(
+        select(Category).where(
             Category.workspace_id == auth.workspace_id,
-            Category.parent_category_id == category_id,
+            Category.parent_category_id == category.id,
         )
     )
-    if has_children is not None:
+    if child_category is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Category has subcategories",
+            detail="Category has child categories",
+        )
+    assignment = db.scalar(
+        select(TransactionCategoryAssignment).where(
+            TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+            TransactionCategoryAssignment.category_id == category.id,
+        )
+    )
+    if assignment is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Category is assigned to transactions",
+        )
+    rule = db.scalar(
+        select(CategorizationRule).where(
+            CategorizationRule.workspace_id == auth.workspace_id,
+            CategorizationRule.category_id == category.id,
+        )
+    )
+    if rule is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Category is used by categorization rules",
         )
 
     db.delete(category)
     db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/categorization-rules")
@@ -220,7 +235,7 @@ async def list_rules(
     rules = db.scalars(
         select(CategorizationRule)
         .where(CategorizationRule.workspace_id == auth.workspace_id)
-        .order_by(CategorizationRule.priority, CategorizationRule.created_at, CategorizationRule.id)
+        .order_by(CategorizationRule.priority, CategorizationRule.name, CategorizationRule.id)
     ).all()
     return CategorizationRuleListResponse(
         workspace_id=auth.workspace_id,
@@ -228,21 +243,20 @@ async def list_rules(
     )
 
 
-@router.post("/categorization-rules")
+@router.post("/categorization-rules", status_code=status.HTTP_201_CREATED)
 async def create_rule(
     payload: CategorizationRuleCreate,
     auth: AuthContext = AuthDependency,
     db: Session = DbDependency,
 ) -> CategorizationRuleRead:
-    _validate_rule_values(field=payload.field, match_type=payload.match_type)
     _get_category(db=db, workspace_id=auth.workspace_id, category_id=payload.category_id)
     rule = CategorizationRule(
         id=str(uuid4()),
         workspace_id=auth.workspace_id,
-        name=payload.name,
-        field=payload.field,
-        match_type=payload.match_type,
-        pattern=payload.pattern,
+        name=_normalize_name(payload.name),
+        field=_validate_rule_field(payload.field),
+        match_type=_validate_rule_match_type(payload.match_type),
+        pattern=_normalize_rule_pattern(payload.pattern),
         category_id=payload.category_id,
         priority=payload.priority,
         active=payload.active,
@@ -261,20 +275,17 @@ async def update_rule(
     db: Session = DbDependency,
 ) -> CategorizationRuleRead:
     rule = _get_rule(db=db, workspace_id=auth.workspace_id, rule_id=rule_id)
-    field = payload.field if payload.field is not None else rule.field
-    match_type = payload.match_type if payload.match_type is not None else rule.match_type
-    _validate_rule_values(field=field, match_type=match_type)
+    if payload.name is not None:
+        rule.name = _normalize_name(payload.name)
+    if payload.field is not None:
+        rule.field = _validate_rule_field(payload.field)
+    if payload.match_type is not None:
+        rule.match_type = _validate_rule_match_type(payload.match_type)
+    if payload.pattern is not None:
+        rule.pattern = _normalize_rule_pattern(payload.pattern)
     if payload.category_id is not None:
         _get_category(db=db, workspace_id=auth.workspace_id, category_id=payload.category_id)
         rule.category_id = payload.category_id
-    if payload.name is not None:
-        rule.name = payload.name
-    if payload.field is not None:
-        rule.field = payload.field
-    if payload.match_type is not None:
-        rule.match_type = payload.match_type
-    if payload.pattern is not None:
-        rule.pattern = payload.pattern
     if payload.priority is not None:
         rule.priority = payload.priority
     if payload.active is not None:
@@ -290,25 +301,79 @@ async def delete_rule(
     rule_id: str,
     auth: AuthContext = AuthDependency,
     db: Session = DbDependency,
-) -> None:
+) -> Response:
     rule = _get_rule(db=db, workspace_id=auth.workspace_id, rule_id=rule_id)
     db.delete(rule)
     db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/categorization-rules/apply")
 async def apply_rules(
     auth: AuthContext = AuthDependency,
     db: Session = DbDependency,
-) -> ApplyRulesResponse:
-    applied_count = CategorizationService(db).apply_rules(auth.workspace_id)
+) -> RuleApplyResponse:
+    rules = db.scalars(
+        select(CategorizationRule)
+        .where(
+            CategorizationRule.workspace_id == auth.workspace_id,
+            CategorizationRule.active.is_(True),
+        )
+        .order_by(CategorizationRule.priority, CategorizationRule.id)
+    ).all()
+    transactions = db.scalars(
+        select(Transaction)
+        .where(Transaction.workspace_id == auth.workspace_id)
+        .order_by(Transaction.transaction_date, Transaction.id)
+    ).all()
+    applied_count = 0
+
+    for transaction in transactions:
+        existing_assignment = db.scalar(
+            select(TransactionCategoryAssignment).where(
+                TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+                TransactionCategoryAssignment.transaction_id == transaction.id,
+            )
+        )
+        if existing_assignment is not None and existing_assignment.source == "manual":
+            continue
+
+        matching_rule = next(
+            (rule for rule in rules if _rule_matches_transaction(rule, transaction)),
+            None,
+        )
+        if matching_rule is None:
+            continue
+
+        if existing_assignment is None:
+            db.add(
+                TransactionCategoryAssignment(
+                    id=str(uuid4()),
+                    workspace_id=auth.workspace_id,
+                    transaction_id=transaction.id,
+                    category_id=matching_rule.category_id,
+                    source="rule",
+                    confidence=Decimal("1.0000"),
+                    reason=f"Matched rule {matching_rule.name}",
+                    review_status="accepted",
+                )
+            )
+        else:
+            existing_assignment.category_id = matching_rule.category_id
+            existing_assignment.source = "rule"
+            existing_assignment.confidence = Decimal("1.0000")
+            existing_assignment.reason = f"Matched rule {matching_rule.name}"
+            existing_assignment.review_status = "accepted"
+        applied_count += 1
+
     db.commit()
-    return ApplyRulesResponse(workspace_id=auth.workspace_id, applied_count=applied_count)
+    return RuleApplyResponse(workspace_id=auth.workspace_id, applied_count=applied_count)
 
 
 def _category_read(category: Category) -> CategoryRead:
     return CategoryRead(
         id=category.id,
+        workspace_id=category.workspace_id,
         name=category.name,
         parent_category_id=category.parent_category_id,
         created_at=category.created_at,
@@ -332,6 +397,7 @@ def _order_category_tree(categories: list[Category]) -> list[Category]:
 def _rule_read(rule: CategorizationRule) -> CategorizationRuleRead:
     return CategorizationRuleRead(
         id=rule.id,
+        workspace_id=rule.workspace_id,
         name=rule.name,
         field=rule.field,
         match_type=rule.match_type,
@@ -367,43 +433,104 @@ def _get_rule(db: Session, workspace_id: str, rule_id: str) -> CategorizationRul
     return rule
 
 
-def _validate_parent_category(
+def _ensure_parent_category(
     db: Session,
     workspace_id: str,
-    category_id: str | None,
+    parent_category_id: str | None,
 ) -> None:
-    if category_id is None:
+    if parent_category_id is None:
         return
-    _get_category(db=db, workspace_id=workspace_id, category_id=category_id)
+    _get_category(db=db, workspace_id=workspace_id, category_id=parent_category_id)
 
 
-def _ensure_category_name_available(
+def _ensure_no_parent_cycle(
+    db: Session,
+    workspace_id: str,
+    category_id: str,
+    parent_category_id: str | None,
+) -> None:
+    next_parent_id = parent_category_id
+    while next_parent_id is not None:
+        if next_parent_id == category_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Category parent cycle is not allowed",
+            )
+        parent = _get_category(db=db, workspace_id=workspace_id, category_id=next_parent_id)
+        next_parent_id = parent.parent_category_id
+
+
+def _ensure_unique_category_name(
     db: Session,
     workspace_id: str,
     name: str,
     parent_category_id: str | None,
-    current_category_id: str | None = None,
+    exclude_category_id: str | None = None,
 ) -> None:
-    normalized_name = name.strip()
-    query = select(Category).where(
-        Category.workspace_id == workspace_id,
-        Category.name == normalized_name,
-    )
+    query = select(Category).where(Category.workspace_id == workspace_id, Category.name == name)
     if parent_category_id is None:
         query = query.where(Category.parent_category_id.is_(None))
     else:
         query = query.where(Category.parent_category_id == parent_category_id)
-    if current_category_id is not None:
-        query = query.where(Category.id != current_category_id)
+    if exclude_category_id is not None:
+        query = query.where(Category.id != exclude_category_id)
     if db.scalar(query) is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Category already exists in workspace",
+            detail="Category name already exists",
         )
 
 
-def _validate_rule_values(field: str, match_type: str) -> None:
+def _normalize_name(name: str) -> str:
+    normalized = name.strip()
+    if not normalized:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Category name is required",
+        )
+    return normalized
+
+
+def _normalize_rule_pattern(pattern: str) -> str:
+    normalized = _normalize_spaces(pattern)
+    if not normalized:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Rule pattern is required",
+        )
+    return normalized
+
+
+def _validate_rule_field(field: str) -> str:
     if field not in {"description", "raw_description", "source_name"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid rule field")
+    return field
+
+
+def _validate_rule_match_type(match_type: str) -> str:
     if match_type not in {"contains", "starts_with", "equals"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid match type")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid rule match type",
+        )
+    return match_type
+
+
+def _rule_matches_transaction(rule: CategorizationRule, transaction: Transaction) -> bool:
+    raw_value = getattr(transaction, rule.field)
+    if raw_value is None:
+        return False
+
+    value = _normalize_spaces(str(raw_value)).casefold()
+    pattern = _normalize_spaces(rule.pattern).casefold()
+    if rule.match_type == "contains":
+        return pattern in value
+    if rule.match_type == "starts_with":
+        return value.startswith(pattern)
+    if rule.match_type == "equals":
+        return value == pattern
+    return False
+
+
+def _normalize_spaces(value: str) -> str:
+    return " ".join(value.strip().split())

@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import and_, asc, desc, or_, select
+from sqlalchemy import and_, asc, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import AuthContext, AuthDependency
@@ -43,11 +43,17 @@ class TransactionRead(BaseModel):
     installment_total: int | None
     source_line: int | None
     category: CategoryAssignmentRead | None = None
+    category_id: str | None = None
+    category_source: str | None = None
+    category_review_status: str | None = None
 
 
 class TransactionListResponse(BaseModel):
     workspace_id: str
     items: list[TransactionRead]
+    total: int
+    limit: int
+    offset: int
 
 
 @router.get("")
@@ -118,7 +124,7 @@ async def list_transactions(
             )
         )
 
-    rows = db.execute(
+    query = (
         select(Transaction, TransactionCategoryAssignment)
         .outerjoin(
             TransactionCategoryAssignment,
@@ -128,6 +134,10 @@ async def list_transactions(
             ),
         )
         .where(*filters)
+    )
+    total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
+    rows = db.execute(
+        query
         .order_by(
             sort_expression,
             desc(Transaction.created_at),
@@ -142,6 +152,9 @@ async def list_transactions(
             _transaction_read(transaction=transaction, assignment=assignment)
             for transaction, assignment in rows
         ],
+        total=total,
+        limit=limit,
+        offset=offset,
     )
 
 
@@ -229,4 +242,7 @@ def _transaction_read(
         )
         if assignment is not None
         else None,
+        category_id=assignment.category_id if assignment is not None else None,
+        category_source=assignment.source if assignment is not None else None,
+        category_review_status=assignment.review_status if assignment is not None else None,
     )

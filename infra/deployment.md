@@ -3,25 +3,25 @@
 ## Branches
 
 - `feature/*`: development branches. Run CI on push and pull request.
-- `develop`: integration branch. Run CI and trigger the development deploy.
-- `main`: production branch. Run CI and trigger the production deploy.
+- `main`: single deploy branch. Run CI and trigger deploy after pull requests are merged.
+
+The MVP currently has one deployed environment. Use pull requests from
+`feature/*` directly to `main`; keep `develop` unused unless a real development
+environment is introduced later.
 
 ## GitHub Actions
 
 Workflows:
 
 - `.github/workflows/ci.yml`: runs backend lint/tests and frontend lint/build.
-  On push to `develop` or `main`, the frontend deploy is triggered only after
-  these checks pass.
-- Tags in the format `v*` run CI so release candidates are validated before
-  release notes are published.
+  On push to `main`, deploy jobs are triggered only after these checks pass.
 
 Cost rule:
 
 - Feature branches and pull requests run CI only.
 - Amplify deploy is not triggered for feature branches.
-- Amplify deploy is triggered for `develop` and `main` only after backend and
-  frontend checks pass.
+- Amplify deploy is triggered for `main` only after backend and frontend checks
+  pass.
 
 ## Terraform
 
@@ -38,8 +38,10 @@ Decision:
 Initial scope:
 
 - GitHub Actions OIDC provider.
-- GitHub Actions deploy role scoped to `develop` and `main`.
+- GitHub Actions deploy role scoped to `main`.
 - Optional Amplify deploy permission when `amplify_app_arn` is set.
+- Backend Lambda, API Gateway HTTP API, CloudWatch log group, and least-privilege
+  deploy permission for updating Lambda code/configuration.
 
 ## AWS Cost Tags
 
@@ -104,52 +106,82 @@ Repository variables:
 - `AWS_REGION`: AWS region used by Amplify/Lambda.
 - `AMPLIFY_APP_ID`: AWS Amplify app id.
 - `AMPLIFY_APP_ARN`: AWS Amplify app ARN used by Terraform IAM policy.
+- `BACKEND_LAMBDA_FUNCTION_NAME`: Lambda function name from Terraform output
+  `backend_lambda_function_name`.
+- `BACKEND_CORS_ORIGINS`: comma-separated browser origins allowed to call the
+  backend, including the Amplify domain and any local URLs needed for testing.
 - `TERRAFORM_DEPLOY_ENABLED`: keep `false` until application Terraform state is
   separated from bootstrap IAM/OIDC state.
+
+Repository secrets:
+
+- `BACKEND_DATABASE_URL`: Neon pooled PostgreSQL URL used by the Lambda backend.
+  Do not commit it to the repo or store it in Terraform variables.
 
 ## AWS OIDC
 
 Use GitHub OIDC instead of long-lived AWS access keys. The IAM role should trust
 the repository and allow only the required actions.
 
-Minimum action for the current frontend deploy workflow:
+Minimum actions for the current deploy workflows:
 
 ```text
 amplify:StartJob
+lambda:UpdateFunctionCode
+lambda:UpdateFunctionConfiguration
 ```
 
-Scope the permission to the Amplify app used by this project.
+Scope Amplify permissions to the project app and Lambda permissions to the
+project backend function.
 
 ## Backend Deploy
 
-Backend deploy is intentionally gated until the Lambda/API Gateway infrastructure
-template is created. The target remains:
+Backend deploy uses Lambda plus API Gateway HTTP API:
 
 ```text
-API Gateway HTTP API -> AWS Lambda Python -> Supabase
+API Gateway HTTP API -> AWS Lambda Python -> Neon PostgreSQL
 ```
 
-The next infra artifact should define the Lambda package, API Gateway routes,
-environment variables, and log retention before automatic backend deploy is
-enabled.
+CORS:
 
-## Tags and Changelog
+- FastAPI owns CORS response headers through `CORS_ORIGINS`.
+- API Gateway HTTP API CORS remains disabled to avoid stripping or conflicting
+  with application-level CORS headers.
 
-Changelogs are based on annotated Git tags in the format `vX.Y.Z`.
+Cost guardrails:
 
-Rules:
+- No RDS.
+- No NAT Gateway.
+- No VPC attachment unless a future private networking requirement is approved.
+- Lambda connects to Neon over public TLS using the pooled connection string.
+- CloudWatch log retention defaults to 14 days.
 
-- Create a tag only after CI is green on the commit being released.
-- Use annotated tags, not lightweight tags.
-- Generate release notes from commits between the previous tag and the new tag.
-- Do not include sensitive financial data, real filenames, or production values
-  in tag messages or release notes.
+Initial Terraform apply:
 
-Useful commands:
+1. Build an initial Lambda package on Linux or a compatible environment:
 
-```powershell
-git describe --tags --abbrev=0
-git log --oneline <previous-tag>..<new-tag>
-git tag -a v0.1.0 -m "v0.1.0"
-git push origin v0.1.0
-```
+   ```bash
+   cd backend
+   python -m pip install --target build/lambda .
+   cd build/lambda
+   zip -r ../backend-lambda.zip .
+   ```
+
+2. Set `backend_cors_origins` in `infra/terraform/terraform.tfvars` with the
+   Amplify domain.
+3. Run `terraform apply`.
+4. Add Terraform output `backend_lambda_function_name` to GitHub variable
+   `BACKEND_LAMBDA_FUNCTION_NAME`.
+5. Add Terraform output `backend_api_base_url` to Amplify environment variable
+   `VITE_API_BASE_URL`.
+6. Add Neon pooled URL to GitHub secret `BACKEND_DATABASE_URL`.
+
+After these are configured, pushes to `main` that change backend or infra files
+package the backend and update the Lambda automatically.
+
+Manual backend refresh:
+
+- If the Lambda was created from the initial Terraform package before GitHub
+  deploy variables/secrets were configured, run the `CI` workflow manually on
+  `main` with `deploy_backend=true`. This rebuilds the Lambda package on Linux
+  and updates the function code/configuration from GitHub Actions.

@@ -9,6 +9,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -235,14 +236,6 @@ class ImportError(Base):
 
 class Category(Base):
     __tablename__ = "categories"
-    __table_args__ = (
-        UniqueConstraint(
-            "workspace_id",
-            "parent_category_id",
-            "name",
-            name="uq_category_workspace_parent_name",
-        ),
-    )
 
     id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
     workspace_id: Mapped[str] = mapped_column(
@@ -252,6 +245,25 @@ class Category(Base):
     parent_category_id: Mapped[str | None] = mapped_column(UUID_TYPE, ForeignKey("categories.id"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    __table_args__ = (
+        Index(
+            "uq_category_workspace_root_name",
+            "workspace_id",
+            "name",
+            unique=True,
+            postgresql_where=parent_category_id.is_(None),
+            sqlite_where=parent_category_id.is_(None),
+        ),
+        Index(
+            "uq_category_workspace_parent_name",
+            "workspace_id",
+            "parent_category_id",
+            "name",
+            unique=True,
+            postgresql_where=parent_category_id.is_not(None),
+            sqlite_where=parent_category_id.is_not(None),
+        ),
     )
 
 

@@ -62,3 +62,33 @@ variable "amplify_app_arn" {
   type        = string
   default     = ""
 }
+
+variable "backend_lambda_package_path" {
+  description = "Local path to the backend Lambda zip package used for the initial Terraform create."
+  type        = string
+  default     = "../../backend/build/backend-lambda.zip"
+}
+
+variable "backend_lambda_memory_size" {
+  description = "Memory size for the backend Lambda function."
+  type        = number
+  default     = 512
+}
+
+variable "backend_lambda_timeout_seconds" {
+  description = "Timeout in seconds for the backend Lambda function."
+  type        = number
+  default     = 30
+}
+
+variable "backend_log_retention_days" {
+  description = "CloudWatch log retention for the backend Lambda function."
+  type        = number
+  default     = 14
+}
+
+variable "backend_cors_origins" {
+  description = "Allowed browser origins for API Gateway and FastAPI CORS."
+  type        = list(string)
+  default     = ["http://localhost:5173", "http://127.0.0.1:5173"]
+}

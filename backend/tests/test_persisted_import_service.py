@@ -47,6 +47,7 @@ def test_import_records_file_job_raw_lines_transactions_and_errors(
     assert result.total_rows == 2
     assert result.valid_rows == 1
     assert result.error_rows == 1
+    assert result.duplicate_rows == 0
 
     source_files = db_session.scalars(select(SourceFile)).all()
     import_jobs = db_session.scalars(select(ImportJob)).all()
@@ -119,9 +120,50 @@ def test_import_dedupes_same_file_in_same_workspace(db_session: Session) -> None
 
     assert first.status == ImportStatus.COMPLETED
     assert duplicate.status == ImportStatus.DUPLICATE_FILE
+    assert duplicate.duplicate_rows == 0
     assert db_session.scalar(select(func.count()).select_from(SourceFile)) == 1
     assert db_session.scalar(select(func.count()).select_from(Transaction)) == 1
     assert db_session.scalar(select(func.count()).select_from(ImportJob)) == 2
+
+
+def test_import_dedupes_overlapping_transactions_from_new_file(db_session: Session) -> None:
+    auth = AuthContext(user_id=str(uuid4()), workspace_id=str(uuid4()))
+    service = ImportService(db_session)
+
+    first = service.import_bytes(
+        auth=auth,
+        filename="extrato-julho.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato-julho.txt",
+        content=b"01/07/2025;PIX MERCADO;-10,00\n",
+    )
+    overlap = service.import_bytes(
+        auth=auth,
+        filename="extrato-julho-agosto.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato-julho-agosto.txt",
+        content=(
+            b"01/07/2025;PIX MERCADO;-10,00\n"
+            b"01/08/2025;SALARIO;100,00\n"
+        ),
+    )
+
+    assert first.status == ImportStatus.COMPLETED
+    assert overlap.status == ImportStatus.COMPLETED
+    assert overlap.total_rows == 2
+    assert overlap.valid_rows == 1
+    assert overlap.error_rows == 0
+    assert overlap.duplicate_rows == 1
+    assert db_session.scalar(select(func.count()).select_from(SourceFile)) == 2
+    assert db_session.scalar(select(func.count()).select_from(Transaction)) == 2
+
+    second_job = db_session.get(ImportJob, overlap.import_job_id)
+    assert second_job is not None
+    assert second_job.total_rows == 2
+    assert second_job.valid_rows == 1
+    assert second_job.error_rows == 0
 
 
 def test_import_dedupe_is_scoped_by_workspace(db_session: Session) -> None:

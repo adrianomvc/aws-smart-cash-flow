@@ -86,6 +86,7 @@ export type TransactionRead = {
 
 export type CategorizationRuleRead = {
   id: string;
+  workspace_id?: string;
   name: string;
   field: string;
   match_type: string;
@@ -137,6 +138,9 @@ export type DataQuality = {
 export type ListResponse<T> = {
   workspace_id: string;
   items: T[];
+  total?: number;
+  limit?: number;
+  offset?: number;
 };
 
 type ApiOptions = {
@@ -276,6 +280,25 @@ export function createRule(
 ) {
   return apiRequest<CategorizationRuleRead>("/categorization-rules", session, {
     method: "POST",
+    body: payload,
+  });
+}
+
+export function updateRule(
+  session: ApiSession,
+  ruleId: string,
+  payload: Partial<{
+    name: string;
+    field: string;
+    match_type: string;
+    pattern: string;
+    category_id: string;
+    priority: number;
+    active: boolean;
+  }>,
+) {
+  return apiRequest<CategorizationRuleRead>(`/categorization-rules/${ruleId}`, session, {
+    method: "PATCH",
     body: payload,
   });
 }

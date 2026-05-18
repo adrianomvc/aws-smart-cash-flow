@@ -18,9 +18,14 @@ class Settings(BaseSettings):
     database_url: str = ""
     supabase_url: str = ""
     supabase_jwt_secret: str = ""
-    supabase_service_role_key: str = ""
     supabase_storage_bucket: str = "financial-files"
-    cors_origins_raw: str = Field(default="http://localhost:5173", alias="CORS_ORIGINS")
+    database_pool_size: int = 1
+    database_max_overflow: int = 2
+    database_pool_recycle_seconds: int = 300
+    cors_origins_raw: str = Field(
+        default="http://localhost:5173,http://127.0.0.1:5173",
+        alias="CORS_ORIGINS",
+    )
 
     @property
     def cors_origins(self) -> list[str]:
@@ -33,9 +38,6 @@ class Settings(BaseSettings):
                 name
                 for name, value in {
                     "DATABASE_URL": self.database_url,
-                    "SUPABASE_URL": self.supabase_url,
-                    "SUPABASE_JWT_SECRET": self.supabase_jwt_secret,
-                    "SUPABASE_SERVICE_ROLE_KEY": self.supabase_service_role_key,
                 }.items()
                 if not value
             ]
