@@ -124,6 +124,9 @@ class ImportJob(Base):
     total_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     valid_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     error_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    duplicate_rows: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -163,6 +166,9 @@ class Transaction(Base):
     __tablename__ = "transactions"
     __table_args__ = (
         UniqueConstraint("workspace_id", "dedupe_key", name="uq_transaction_dedupe"),
+        UniqueConstraint(
+            "workspace_id", "natural_dedupe_key", name="uq_transaction_natural_dedupe"
+        ),
         CheckConstraint(
             "source_type in ('bank_statement', 'credit_card_statement', 'unknown')",
             name="ck_transaction_source_type",
@@ -201,6 +207,7 @@ class Transaction(Base):
     installment_total: Mapped[int | None] = mapped_column(Integer)
     source_line: Mapped[int | None] = mapped_column(Integer)
     dedupe_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    natural_dedupe_key: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -228,7 +235,14 @@ class ImportError(Base):
 
 class Category(Base):
     __tablename__ = "categories"
-    __table_args__ = (UniqueConstraint("workspace_id", "name", name="uq_category_workspace_name"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id",
+            "parent_category_id",
+            "name",
+            name="uq_category_workspace_parent_name",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
     workspace_id: Mapped[str] = mapped_column(

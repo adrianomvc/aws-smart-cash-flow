@@ -57,3 +57,4 @@ class ImportResult(BaseModel):
     total_rows: int
     valid_rows: int
     error_rows: int
+    duplicate_rows: int = 0

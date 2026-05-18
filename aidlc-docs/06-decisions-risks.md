@@ -133,6 +133,11 @@ R-004: Dedupe pode descartar transacoes legitimamente repetidas.
 Mitigacao:
 
 - Incluir `source_file_id` e `source_line` na chave inicial.
+- Para arquivos quase iguais, usar assinatura natural como possivel duplicidade,
+  com resumo/auditoria, antes de descartar automaticamente transacoes repetidas.
+- Teste observado em 2026-05-18: reimportar arquivo identico gera
+  `duplicate_file`, mas alterar uma linha faz o arquivo inteiro ser aceito como
+  novo. Esse comportamento deve ser tratado para nao inflar indicadores.
 
 R-005: Multiusuario implementado tarde pode exigir refatoracao profunda.
 

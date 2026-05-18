@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import and_, desc, or_, select
+from sqlalchemy import and_, asc, desc, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import AuthContext, AuthDependency
@@ -58,17 +58,48 @@ async def list_transactions(
     date_to: date | None = None,
     category_id: str | None = None,
     source_type: str | None = None,
+    direction: str | None = None,
     q: str | None = None,
+    sort_by: str = Query(default="transaction_date"),
+    sort_dir: str = Query(default="desc"),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> TransactionListResponse:
-    filters = [Transaction.workspace_id == auth.workspace_id]
+    sort_columns = {
+        "transaction_date": Transaction.transaction_date,
+        "amount": Transaction.amount,
+        "description": Transaction.description,
+        "direction": Transaction.direction,
+        "source_type": Transaction.source_type,
+    }
+    sort_column = sort_columns.get(sort_by)
+    if sort_column is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Invalid sort_by. Use transaction_date, amount, description, "
+                "direction, or source_type."
+            ),
+        )
+    if sort_dir not in {"asc", "desc"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid sort_dir. Use asc or desc.",
+        )
+    sort_expression = asc(sort_column) if sort_dir == "asc" else desc(sort_column)
+
+    filters = [
+        Transaction.workspace_id == auth.workspace_id,
+        Transaction.natural_dedupe_key.is_not(None),
+    ]
     if date_from is not None:
         filters.append(Transaction.transaction_date >= date_from)
     if date_to is not None:
         filters.append(Transaction.transaction_date <= date_to)
     if source_type is not None:
         filters.append(Transaction.source_type == source_type)
+    if direction is not None:
+        filters.append(Transaction.direction == direction)
     if q:
         search = f"%{q.casefold()}%"
         filters.append(
@@ -98,7 +129,7 @@ async def list_transactions(
         )
         .where(*filters)
         .order_by(
-            desc(Transaction.transaction_date),
+            sort_expression,
             desc(Transaction.created_at),
             desc(Transaction.id),
         )

@@ -2,6 +2,7 @@ import csv
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from io import StringIO
+from unicodedata import normalize
 
 from app.domain.imports import (
     ParsedTransaction,
@@ -18,6 +19,22 @@ def parse_brazilian_decimal(raw_value: str) -> Decimal:
     if not amount.is_finite():
         raise InvalidOperation
     return amount
+
+
+def normalize_transaction_description(raw_description: str) -> str:
+    ascii_description = "".join(
+        char
+        for char in normalize("NFKD", raw_description)
+        if char.encode("ascii", "ignore") != b""
+    )
+    cleaned = ascii_description.replace("*", " ").replace("_", " ").upper()
+    return " ".join(cleaned.split())
+
+
+def is_credit_card_payment_description(description: str) -> bool:
+    return "FATURA" in description and (
+        "PAGAMENTO" in description or "PAGTO" in description or "PGTO" in description
+    )
 
 
 def parse_txt_bank_statement(content: str) -> ParseResult:
@@ -82,15 +99,22 @@ def parse_txt_bank_statement(content: str) -> ParseResult:
             )
             continue
 
+        normalized_description = normalize_transaction_description(raw_description)
+        direction = (
+            TransactionDirection.PAYMENT
+            if amount < 0 and is_credit_card_payment_description(normalized_description)
+            else TransactionDirection.DEBIT
+            if amount < 0
+            else TransactionDirection.CREDIT
+        )
+
         transactions.append(
             ParsedTransaction(
                 transaction_date=transaction_date,
                 raw_description=raw_description,
-                description=" ".join(raw_description.split()),
+                description=normalized_description,
                 amount=amount,
-                direction=TransactionDirection.DEBIT
-                if amount < 0
-                else TransactionDirection.CREDIT,
+                direction=direction,
                 source_line=line_number,
             )
         )
@@ -191,12 +215,13 @@ def parse_credit_card_csv(content: str) -> ParseResult:
             )
             continue
 
-        normalized_description = " ".join(raw_description.split())
-        direction = (
-            TransactionDirection.PAYMENT
-            if amount < 0 and normalized_description.upper() == "PAGAMENTO EFETUADO"
-            else TransactionDirection.DEBIT
-        )
+        normalized_description = normalize_transaction_description(raw_description)
+        if amount < 0 and normalized_description == "PAGAMENTO EFETUADO":
+            direction = TransactionDirection.PAYMENT
+        elif amount < 0:
+            direction = TransactionDirection.CREDIT
+        else:
+            direction = TransactionDirection.DEBIT
         transactions.append(
             ParsedTransaction(
                 transaction_date=transaction_date,

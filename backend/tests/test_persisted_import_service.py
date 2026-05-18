@@ -78,7 +78,7 @@ def test_import_records_file_job_raw_lines_transactions_and_errors(
     assert transactions[0].source_file_id == source_files[0].id
     assert transactions[0].import_job_id == import_jobs[0].id
     assert transactions[0].source_type == "credit_card_statement"
-    assert transactions[0].description == "PADARIA SÃO JOSÉ CAFÉ"
+    assert transactions[0].description == "PADARIA SAO JOSE CAFE"
     assert transactions[0].raw_description == "PADARIA SÃO JOSÉ CAFÉ"
     assert transactions[0].amount == Decimal("26.06")
     assert transactions[0].currency == "BRL"
@@ -143,6 +143,46 @@ def test_import_dedupe_is_scoped_by_workspace(db_session: Session) -> None:
 
     assert db_session.scalar(select(func.count()).select_from(SourceFile)) == 2
     assert db_session.scalar(select(func.count()).select_from(Transaction)) == 2
+
+
+def test_import_dedupes_transactions_when_file_changes_one_line(db_session: Session) -> None:
+    auth = AuthContext(user_id=str(uuid4()), workspace_id=str(uuid4()))
+    service = ImportService(db_session)
+    first_content = (
+        b"01/07/2025;PIX TRANSF DANIELL01/07;-10,00\n"
+        b"02/07/2025;MERCADO CENTRAL;-50,00\n"
+    )
+    changed_content = (
+        b"01/07/2025;PIX TRANSF DANIELL01/07;-10,00\n"
+        b"03/07/2025;FARMACIA VIDA;-25,00\n"
+    )
+
+    first = service.import_bytes(
+        auth=auth,
+        filename="extrato-a.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/first/extrato.txt",
+        content=first_content,
+    )
+    changed = service.import_bytes(
+        auth=auth,
+        filename="extrato-a-ajustado.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/second/extrato.txt",
+        content=changed_content,
+    )
+
+    assert first.valid_rows == 2
+    assert first.duplicate_rows == 0
+    assert changed.status == ImportStatus.COMPLETED
+    assert changed.total_rows == 2
+    assert changed.valid_rows == 1
+    assert changed.duplicate_rows == 1
+    assert db_session.scalar(select(func.count()).select_from(SourceFile)) == 2
+    assert db_session.scalar(select(func.count()).select_from(ImportJob)) == 2
+    assert db_session.scalar(select(func.count()).select_from(Transaction)) == 3
 
 
 def test_persist_transaction_reuses_same_source_file_and_line(db_session: Session) -> None:

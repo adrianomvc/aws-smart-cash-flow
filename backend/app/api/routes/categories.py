@@ -92,11 +92,11 @@ async def list_categories(
     categories = db.scalars(
         select(Category)
         .where(Category.workspace_id == auth.workspace_id)
-        .order_by(Category.name, Category.id)
+        .order_by(Category.parent_category_id.is_not(None), Category.name, Category.id)
     ).all()
     return CategoryListResponse(
         workspace_id=auth.workspace_id,
-        items=[_category_read(category) for category in categories],
+        items=[_category_read(category) for category in _order_category_tree(categories)],
     )
 
 
@@ -110,6 +110,12 @@ async def create_category(
         db=db,
         workspace_id=auth.workspace_id,
         category_id=payload.parent_category_id,
+    )
+    _ensure_category_name_available(
+        db=db,
+        workspace_id=auth.workspace_id,
+        name=payload.name,
+        parent_category_id=payload.parent_category_id,
     )
     category = Category(
         id=str(uuid4()),
@@ -138,20 +144,30 @@ async def update_category(
     db: Session = DbDependency,
 ) -> CategoryRead:
     category = _get_category(db=db, workspace_id=auth.workspace_id, category_id=category_id)
-    if payload.parent_category_id is not None:
-        if payload.parent_category_id == category_id:
+    if "parent_category_id" in payload.model_fields_set:
+        if payload.parent_category_id is None:
+            category.parent_category_id = None
+        elif payload.parent_category_id == category_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Category cannot be its own parent",
             )
-        _validate_parent_category(
-            db=db,
-            workspace_id=auth.workspace_id,
-            category_id=payload.parent_category_id,
-        )
-        category.parent_category_id = payload.parent_category_id
+        else:
+            _validate_parent_category(
+                db=db,
+                workspace_id=auth.workspace_id,
+                category_id=payload.parent_category_id,
+            )
+            category.parent_category_id = payload.parent_category_id
     if payload.name is not None:
         category.name = payload.name
+    _ensure_category_name_available(
+        db=db,
+        workspace_id=auth.workspace_id,
+        name=category.name,
+        parent_category_id=category.parent_category_id,
+        current_category_id=category_id,
+    )
 
     try:
         db.commit()
@@ -180,6 +196,17 @@ async def delete_category(
     )
     if in_use is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Category is in use")
+    has_children = db.scalar(
+        select(Category.id).where(
+            Category.workspace_id == auth.workspace_id,
+            Category.parent_category_id == category_id,
+        )
+    )
+    if has_children is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Category has subcategories",
+        )
 
     db.delete(category)
     db.commit()
@@ -288,6 +315,20 @@ def _category_read(category: Category) -> CategoryRead:
     )
 
 
+def _order_category_tree(categories: list[Category]) -> list[Category]:
+    by_parent: dict[str | None, list[Category]] = {}
+    for category in categories:
+        by_parent.setdefault(category.parent_category_id, []).append(category)
+    for items in by_parent.values():
+        items.sort(key=lambda category: (category.name.casefold(), category.id))
+
+    ordered: list[Category] = []
+    for root in by_parent.get(None, []):
+        ordered.append(root)
+        ordered.extend(by_parent.get(root.id, []))
+    return ordered
+
+
 def _rule_read(rule: CategorizationRule) -> CategorizationRuleRead:
     return CategorizationRuleRead(
         id=rule.id,
@@ -334,6 +375,31 @@ def _validate_parent_category(
     if category_id is None:
         return
     _get_category(db=db, workspace_id=workspace_id, category_id=category_id)
+
+
+def _ensure_category_name_available(
+    db: Session,
+    workspace_id: str,
+    name: str,
+    parent_category_id: str | None,
+    current_category_id: str | None = None,
+) -> None:
+    normalized_name = name.strip()
+    query = select(Category).where(
+        Category.workspace_id == workspace_id,
+        Category.name == normalized_name,
+    )
+    if parent_category_id is None:
+        query = query.where(Category.parent_category_id.is_(None))
+    else:
+        query = query.where(Category.parent_category_id == parent_category_id)
+    if current_category_id is not None:
+        query = query.where(Category.id != current_category_id)
+    if db.scalar(query) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Category already exists in workspace",
+        )
 
 
 def _validate_rule_values(field: str, match_type: str) -> None:

@@ -99,10 +99,10 @@ def test_dashboard_summary_calculates_period_totals(
     payload = response.json()
     assert payload["workspace_id"] == auth.workspace_id
     assert payload["income"] == "5000.00"
-    assert payload["expenses"] == "2325.50"
-    assert payload["payments"] == "0.00"
-    assert payload["balance"] == "2674.50"
-    assert payload["savings_rate"] == "0.5349"
+    assert payload["expenses"] == "1525.50"
+    assert payload["payments"] == "800.00"
+    assert payload["balance"] == "3474.50"
+    assert payload["savings_rate"] == "0.6949"
     assert payload["transaction_count"] == 4
 
 
@@ -119,8 +119,9 @@ def test_dashboard_monthly_cashflow_groups_by_month(
     payload = response.json()
     assert [item["month"] for item in payload["items"]] == ["2026-05", "2026-06"]
     assert payload["items"][0]["income"] == "5000.00"
-    assert payload["items"][0]["expenses"] == "2325.50"
-    assert payload["items"][0]["balance"] == "2674.50"
+    assert payload["items"][0]["expenses"] == "1525.50"
+    assert payload["items"][0]["payments"] == "800.00"
+    assert payload["items"][0]["balance"] == "3474.50"
     assert payload["items"][1]["expenses"] == "40.00"
 
 
@@ -136,10 +137,40 @@ def test_dashboard_category_ranking_groups_uncategorized_expenses(
     assert response.status_code == 200
     payload = response.json()
     assert payload["items"][0]["category_name"] == "Sem categoria"
-    assert payload["items"][0]["amount"] == "2300.00"
-    assert payload["items"][0]["count"] == 2
+    assert payload["items"][0]["amount"] == "1500.00"
+    assert payload["items"][0]["count"] == 1
     assert payload["items"][1]["category_name"] == "Transporte"
     assert payload["items"][1]["amount"] == "25.50"
+
+
+def test_dashboard_category_ranking_groups_subcategories_by_parent(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="fatura.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/fatura.csv",
+        content=b"data,lan\xc3\xa7amento,valor\n2026-05-04,IFOOD,25.50\n",
+    )
+    parent_id = client.post("/v1/categories", json={"name": "Alimentacao"}).json()["id"]
+    child_id = client.post(
+        "/v1/categories",
+        json={"name": "Delivery", "parent_category_id": parent_id},
+    ).json()["id"]
+    tx_id = client.get("/v1/transactions?q=ifood").json()["items"][0]["id"]
+    client.patch(f"/v1/transactions/{tx_id}/category", json={"category_id": child_id})
+
+    response = client.get("/v1/dashboard/category-ranking?date_from=2026-05-01&date_to=2026-05-31")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["items"][0]["category_id"] == parent_id
+    assert payload["items"][0]["category_name"] == "Alimentacao"
+    assert payload["items"][0]["amount"] == "25.50"
 
 
 def test_dashboard_data_quality_counts_categories_and_import_issues(

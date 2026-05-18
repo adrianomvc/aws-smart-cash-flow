@@ -148,6 +148,7 @@ Constraints:
 - `total_rows` integer not null default 0
 - `valid_rows` integer not null default 0
 - `error_rows` integer not null default 0
+- `duplicate_rows` integer not null default 0
 - `created_at` timestamptz not null
 
 Status:
@@ -195,11 +196,13 @@ Constraints:
 - `installment_total` integer null
 - `source_line` integer null
 - `dedupe_key` text not null
+- `natural_dedupe_key` text null
 - `created_at` timestamptz not null
 
 Constraints:
 
 - unique (`workspace_id`, `dedupe_key`)
+- unique (`workspace_id`, `natural_dedupe_key`)
 - `source_type` in `bank_statement`, `credit_card_statement`, `unknown`
 - `direction` in `debit`, `credit`, `payment`
 
@@ -225,7 +228,7 @@ Constraints:
 
 Constraints:
 
-- unique (`workspace_id`, `name`)
+- unique (`workspace_id`, `parent_category_id`, `name`)
 
 ### transaction_category_assignments
 
@@ -286,6 +289,7 @@ Regras:
 - Valor em formato brasileiro.
 - Valor negativo: `debit`.
 - Valor positivo: `credit`.
+- Valor negativo com descricao de pagamento de fatura: `payment`.
 
 ### CSV Fatura
 
@@ -302,6 +306,10 @@ Regras:
 - Valor decimal com ponto.
 - Valor negativo com descricao `PAGAMENTO EFETUADO`: `payment`.
 - Valor positivo: `debit`.
+- Valor negativo que nao seja pagamento: `credit` para devolucao, estorno ou
+  credito do cartao.
+- `amount` preserva o sinal original do arquivo; os indicadores usam `direction`
+  para separar despesa, receita/credito e pagamento.
 
 ## Dedupe
 
@@ -317,10 +325,18 @@ Transacao:
 sha256(workspace_id | source_file_id | source_line | transaction_date | raw_description | amount)
 ```
 
+Transacao entre arquivos diferentes ou quase iguais:
+
+```text
+sha256(workspace_id | source_type | transaction_date | normalized_raw_description | amount | direction)
+```
+
 Regra:
 
 - Mesmo arquivo no mesmo workspace deve gerar `duplicate_file`.
 - Mesma transacao no mesmo workspace nao deve ser duplicada.
+- Arquivo quase igual ao ja importado deve importar apenas transacoes novas e
+  contabilizar transacoes ja existentes em `duplicate_rows`.
 
 ## Endpoints
 
@@ -398,7 +414,10 @@ Query params:
 - `date_to`
 - `category_id`
 - `source_type`
+- `direction`
 - `q`
+- `sort_by`: `transaction_date`, `amount`, `description`, `direction` ou `source_type`; padrao `transaction_date`
+- `sort_dir`: `asc` ou `desc`; padrao `desc`
 - `limit`
 - `offset`
 
@@ -491,6 +510,8 @@ Retorna receitas, despesas, pagamentos e saldo por mes.
 `GET /v1/dashboard/category-ranking`
 
 Retorna ranking de despesas por categoria, agrupando transacoes sem categoria como `Sem categoria`.
+Quando houver subcategoria, o ranking principal agrupa pelo pai da categoria.
+Transacoes com `direction = payment` nao entram no ranking de despesas.
 
 `GET /v1/dashboard/data-quality`
 

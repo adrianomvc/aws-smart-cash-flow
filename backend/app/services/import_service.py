@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
+from decimal import Decimal
 from hashlib import sha256
+from unicodedata import normalize
 from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile, status
@@ -117,6 +119,7 @@ class ImportService:
                 total_rows=0,
                 valid_rows=0,
                 error_rows=0,
+                duplicate_rows=0,
             )
             self.db.add(import_job)
             self.db.commit()
@@ -127,6 +130,7 @@ class ImportService:
                 total_rows=0,
                 valid_rows=0,
                 error_rows=0,
+                duplicate_rows=0,
             )
 
         status_value = (
@@ -166,6 +170,7 @@ class ImportService:
             invalid_lines={error.source_line for error in parse_result.errors if error.source_line},
         )
         persisted_transactions = 0
+        duplicate_transactions = 0
         for parsed_transaction in parse_result.transactions:
             transaction = self.persist_transaction(
                 workspace_id=workspace_id,
@@ -176,6 +181,8 @@ class ImportService:
             )
             if transaction.import_job_id == import_job.id:
                 persisted_transactions += 1
+            else:
+                duplicate_transactions += 1
 
         for parse_error in parse_result.errors:
             self.db.add(
@@ -192,6 +199,7 @@ class ImportService:
             )
 
         import_job.valid_rows = persisted_transactions
+        import_job.duplicate_rows = duplicate_transactions
         CategorizationService(self.db).apply_rules(workspace_id)
         self.db.commit()
         return ImportResult(
@@ -201,6 +209,7 @@ class ImportService:
             total_rows=parse_result.total_rows,
             valid_rows=persisted_transactions,
             error_rows=len(parse_result.errors),
+            duplicate_rows=duplicate_transactions,
         )
 
     def persist_transaction(
@@ -217,7 +226,16 @@ class ImportService:
             source_line=parsed_transaction.source_line,
             transaction_date=parsed_transaction.transaction_date.isoformat(),
             raw_description=parsed_transaction.raw_description,
-            amount=str(parsed_transaction.amount),
+            amount=self._normalize_amount(parsed_transaction.amount),
+        )
+        source_type = self._source_type(source_file.source_kind)
+        natural_dedupe_key = self._natural_transaction_dedupe_key(
+            workspace_id=workspace_id,
+            source_type=source_type,
+            transaction_date=parsed_transaction.transaction_date.isoformat(),
+            raw_description=parsed_transaction.raw_description,
+            amount=self._normalize_amount(parsed_transaction.amount),
+            direction=parsed_transaction.direction.value,
         )
         existing_transaction = self.db.scalar(
             select(Transaction).where(
@@ -228,13 +246,22 @@ class ImportService:
         if existing_transaction is not None:
             return existing_transaction
 
+        existing_natural_transaction = self.db.scalar(
+            select(Transaction).where(
+                Transaction.workspace_id == workspace_id,
+                Transaction.natural_dedupe_key == natural_dedupe_key,
+            )
+        )
+        if existing_natural_transaction is not None:
+            return existing_natural_transaction
+
         transaction = Transaction(
             id=str(uuid4()),
             workspace_id=workspace_id,
             source_file_id=source_file.id,
             import_job_id=import_job.id,
             raw_transaction_line_id=raw_line.id if raw_line is not None else None,
-            source_type=self._source_type(source_file.source_kind),
+            source_type=source_type,
             source_name=None,
             account_or_card=None,
             transaction_date=parsed_transaction.transaction_date,
@@ -247,6 +274,7 @@ class ImportService:
             installment_total=None,
             source_line=parsed_transaction.source_line,
             dedupe_key=dedupe_key,
+            natural_dedupe_key=natural_dedupe_key,
         )
         self.db.add(transaction)
         self.db.flush()
@@ -270,6 +298,7 @@ class ImportService:
         total_rows: int,
         valid_rows: int,
         error_rows: int,
+        duplicate_rows: int = 0,
     ) -> ImportJob:
         now = datetime.now(UTC)
         return ImportJob(
@@ -282,6 +311,7 @@ class ImportService:
             total_rows=total_rows,
             valid_rows=valid_rows,
             error_rows=error_rows,
+            duplicate_rows=duplicate_rows,
         )
 
     def _persist_raw_lines(
@@ -345,6 +375,36 @@ class ImportService:
             ]
         )
         return sha256(raw_key.encode("utf-8")).hexdigest()
+
+    def _natural_transaction_dedupe_key(
+        self,
+        workspace_id: str,
+        source_type: str,
+        transaction_date: str,
+        raw_description: str,
+        amount: str,
+        direction: str,
+    ) -> str:
+        raw_key = "|".join(
+            [
+                workspace_id,
+                source_type,
+                transaction_date,
+                self._normalize_description(raw_description),
+                amount,
+                direction,
+            ]
+        )
+        return sha256(raw_key.encode("utf-8")).hexdigest()
+
+    def _normalize_description(self, value: str) -> str:
+        without_accents = "".join(
+            char for char in normalize("NFKD", value) if char.encode("ascii", "ignore") != b""
+        )
+        return " ".join(without_accents.upper().split())
+
+    def _normalize_amount(self, value: Decimal) -> str:
+        return str(value.quantize(Decimal("0.01")))
 
     def _source_type(self, source_kind: str) -> str:
         if source_kind == SourceKind.BANK_STATEMENT_TXT.value:

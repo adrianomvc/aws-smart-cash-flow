@@ -25,6 +25,8 @@ Transaction:
 - `installment_total`: total de parcelas, quando identificado.
 - `source_line`: linha do arquivo, quando aplicavel.
 - `dedupe_key`: chave deterministica de deduplicacao.
+- `natural_dedupe_key`: chave de deduplicacao por assinatura natural entre
+  arquivos diferentes ou quase iguais.
 - `created_at`: data de criacao.
 
 SourceFile:
@@ -48,6 +50,7 @@ ImportJob:
 - `total_rows`
 - `valid_rows`
 - `error_rows`
+- `duplicate_rows`
 
 ImportError:
 
@@ -78,6 +81,8 @@ Category:
 - `name`
 - `parent_category_id`
 - `created_at`
+- Nomes de categoria/subcategoria devem ser unicos dentro do mesmo pai, permitindo
+  a mesma subcategoria em categorias diferentes.
 
 TransactionCategoryAssignment:
 
@@ -141,6 +146,9 @@ Contrato:
 - Coluna 3: valor em formato brasileiro, com virgula decimal.
 - Valor negativo representa debito.
 - Valor positivo representa credito.
+- Valor negativo com descricao normalizada de pagamento de fatura deve ser
+  classificado como `payment`, para nao duplicar despesas ja detalhadas na fatura
+  do cartao.
 
 ### Fatura CSV
 
@@ -159,6 +167,11 @@ Contrato:
 - `valor`: decimal com ponto.
 - Lancamento `PAGAMENTO EFETUADO` com valor negativo deve ser classificado como `payment`.
 - Valores positivos em fatura representam despesas do cartao.
+- Valores negativos em fatura que nao sejam pagamento representam credito,
+  devolucao ou estorno do cartao.
+- O valor numerico da fatura deve ser preservado como veio no arquivo; a direcao
+  canonica (`debit`, `credit`, `payment`) define como o dashboard interpreta o
+  lancamento.
 
 ### PDF
 
@@ -174,6 +187,12 @@ Transacao:
 
 - `dedupe_key` deve ser derivada de `source_file_id`, `source_line`, `transaction_date`, `raw_description` e `amount`.
 - Se o mesmo arquivo for reprocessado, transacoes existentes devem ser reaproveitadas ou ignoradas, nao duplicadas.
+- Arquivos diferentes com conteudo quase igual devem passar por dedupe adicional
+  por assinatura natural da transacao, usando ao menos workspace, tipo de origem,
+  data, descricao normalizada, valor e direcao.
+- O MVP deve preservar auditoria de duplicidade: linhas ignoradas ou marcadas como
+  possiveis duplicadas precisam aparecer no resumo da importacao, sem inflar os
+  indicadores financeiros.
 
 ## Fluxo de Importacao
 
@@ -233,6 +252,19 @@ Providers iniciais de IA:
 - A conciliacao inicial pode comparar descricao, data aproximada e valor.
 - Conciliacoes devem ser rastreadas, reversiveis e visiveis ao usuario.
 
+## Consulta de Transacoes
+
+- A listagem de transacoes deve ser paginada para permitir navegar pelo historico
+  sem carregar todos os lancamentos de uma vez.
+- A listagem de transacoes deve vir por padrao ordenada por `transaction_date`
+  decrescente, exibindo os lancamentos mais recentes primeiro.
+- A API deve permitir ordenacao por `transaction_date`, `amount`, `description`,
+  `direction` e `source_type`.
+- Direcoes de ordenacao validas: `asc` e `desc`.
+- Ordenacoes invalidas devem retornar erro claro, sem cair silenciosamente em um
+  comportamento inesperado.
+- A interface deve expor controles de ordenacao e paginacao na tela de transacoes.
+
 ## Dashboard e Indicadores
 
 - Indicadores devem sempre respeitar `workspace_id` e filtros de periodo.
@@ -245,9 +277,23 @@ Providers iniciais de IA:
   quando houver receita positiva; caso contrario deve ser nula.
 - Ranking por categoria deve considerar despesas e agrupar transacoes sem categoria
   como `Sem categoria`.
+- Quando a transacao estiver classificada em subcategoria, o ranking principal do
+  dashboard deve agrupar pelo pai da categoria.
+- Transacoes marcadas como pagamento de fatura (`direction = payment`) devem ficar
+  fora do ranking de despesas por categoria.
 - Qualidade de dados deve indicar transacoes categorizadas, pendentes de categoria,
   importacoes com erro e importacoes duplicadas.
 - Indicadores nao devem expor descricoes completas ou valores sensiveis em logs.
+
+## Internacionalizacao
+
+- A interface deve suportar portugues do Brasil e ingles.
+- Portugues do Brasil deve ser o idioma padrao do MVP.
+- O usuario deve conseguir alterar o idioma pela interface.
+- A preferencia deve ser persistida por usuario quando houver perfil; antes disso,
+  pode ser persistida localmente no navegador.
+- Datas, numeros e moeda devem respeitar o locale selecionado, mantendo BRL como
+  moeda padrao do produto no MVP.
 
 ## Casos de Erro
 

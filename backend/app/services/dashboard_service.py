@@ -108,6 +108,12 @@ class DashboardService:
             )
             .where(*filters, Transaction.direction == "debit")
         ).all()
+        categories_by_id = {
+            category.id: category
+            for category in self.db.scalars(
+                select(Category).where(Category.workspace_id == workspace_id)
+            ).all()
+        }
 
         empty_category = {
             "category_id": None,
@@ -119,9 +125,14 @@ class DashboardService:
             lambda: empty_category.copy()
         )
         for transaction, category in rows:
+            display_category = (
+                categories_by_id.get(category.parent_category_id)
+                if category is not None and category.parent_category_id is not None
+                else category
+            )
             key = (
-                category.id if category is not None else None,
-                category.name if category is not None else "Sem categoria",
+                display_category.id if display_category is not None else None,
+                display_category.name if display_category is not None else "Sem categoria",
             )
             totals[key]["category_id"] = key[0]
             totals[key]["category_name"] = key[1]
@@ -215,7 +226,10 @@ class DashboardService:
         date_from: date | None,
         date_to: date | None,
     ) -> list[object]:
-        filters: list[object] = [Transaction.workspace_id == workspace_id]
+        filters: list[object] = [
+            Transaction.workspace_id == workspace_id,
+            Transaction.natural_dedupe_key.is_not(None),
+        ]
         if date_from is not None:
             filters.append(Transaction.transaction_date >= date_from)
         if date_to is not None:

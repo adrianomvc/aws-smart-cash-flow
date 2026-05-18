@@ -1,5 +1,12 @@
 # Backlog
 
+## Nota de Gestao do Backlog
+
+- Ideias, melhorias e observacoes levantadas durante testes que nao forem tratadas
+  na fatia atual devem ser registradas como backlog de evolucao.
+- Correcoes que bloqueiam a validacao do MVP em teste devem ser tratadas na fatia
+  atual antes do commit de aprovacao.
+
 ## Epic 1: Fundacao do Projeto
 
 US-001: Como Tech Lead, quero uma estrutura de projeto com backend, frontend, testes e migracoes para permitir evolucao segura.
@@ -68,7 +75,26 @@ Aceite:
 
 - Hash do arquivo evita reimportacao identica.
 - Chave de dedupe evita duplicidade por linha.
+- Arquivo com conteudo quase igual ao ja importado nao deve recriar todas as
+  transacoes antigas; transacoes ja existentes devem ser ignoradas ou marcadas
+  como possiveis duplicadas.
+- Quando somente uma linha muda em um arquivo ja importado, a importacao deve
+  evidenciar quantas linhas eram novas, quantas ja existiam e quantas tiveram
+  erro.
 - Importacoes repetidas ficam rastreaveis.
+
+US-005A: Como usuario, quero detectar possiveis transacoes duplicadas entre arquivos diferentes para evitar inflar meus indicadores financeiros.
+
+Aceite:
+
+- Sistema calcula uma assinatura natural por workspace, origem, data, descricao
+  normalizada, valor e direcao.
+- Transacoes com mesma assinatura natural em arquivos diferentes nao devem inflar
+  dashboard sem revisao explicita.
+- Interface deve mostrar resumo de linhas novas, linhas duplicadas/possiveis
+  duplicadas e erros da importacao.
+- Regra deve evitar descartar automaticamente casos legitimamente repetidos sem
+  rastro de auditoria.
 
 ## Epic 5: Interface Operacional
 
@@ -121,6 +147,26 @@ Aceite:
 - Importacao registra parser/layout usado, origem inferida, total de linhas e linhas ignoradas.
 - Linhas ignoradas possuem motivo quando identificavel.
 - Detalhe da importacao exibe metadados sem expor dados financeiros desnecessarios.
+
+US-055: Como usuario, quero uma revisao visual e de UX da interface para tornar o produto mais moderno, claro e agradavel de usar.
+
+Aceite:
+
+- Revisao cobre dashboard, importacao, transacoes, categorias, regras, revisao e configuracoes.
+- Mudancas de frontend devem ser agrupadas em uma entrega unica ou em fatias coesas por fluxo.
+- Design deve priorizar clareza operacional, leitura rapida de indicadores e reducao de ruido visual.
+- Componentes devem manter responsividade em desktop e mobile.
+- Antes da subida, a interface deve ser testada localmente pelo usuario.
+
+US-056: Como usuario, quero que as telas financeiras tenham hierarquia visual consistente para entender rapidamente o que exige acao.
+
+Aceite:
+
+- Cards, tabelas, badges, filtros, estados vazios, loading e erros seguem um padrao visual unico.
+- Indicadores importantes usam destaque proporcional ao impacto financeiro.
+- Acoes primarias, secundarias e destrutivas sao visualmente diferenciadas.
+- Textos e controles nao estouram em resolucoes comuns.
+- A experiencia evita visual de landing page e prioriza uso recorrente.
 
 ## Epic 6: Consulta e Categorizacao de Transacoes
 
@@ -201,6 +247,16 @@ Aceite:
 - Tela de regras permite previsualizar transacoes afetadas.
 - Preview respeita filtros de workspace.
 - Alteracoes relevantes em regras exigem confirmacao quando afetarem muitas transacoes.
+
+US-026A: Como usuario, quero editar regras de categorizacao existentes para corrigir criterios sem precisar excluir e recriar.
+
+Aceite:
+
+- Tela de regras permite alterar nome, campo, tipo de comparacao, padrao, categoria, prioridade e status ativo/inativo.
+- Edicao valida campos obrigatorios e mostra mensagem clara quando houver erro.
+- Ao salvar uma regra alterada, a lista reflete a nova configuracao sem recarregar a pagina.
+- Usuario consegue aplicar regras apos editar e ver estado de aplicacao em andamento.
+- Alteracoes relevantes devem preservar auditoria quando o historico de regras estiver disponivel.
 
 US-027: Como administrador, quero historico de categorizacao para auditar mudancas importantes.
 
@@ -390,6 +446,64 @@ Aceite:
 - Indicador deixa claro que nao substitui saldo bancario real enquanto nao houver integracao bancaria.
 - Usuario pode filtrar por conta/origem quando essa informacao estiver disponivel.
 
+## Epic 7.2: Copilot Financeiro Conversacional
+
+US-048: Como usuario, quero conversar com um copilot financeiro sobre a saude da minha carteira para entender minha situacao sem precisar interpretar todos os graficos.
+
+Aceite:
+
+- Chat responde usando apenas dados do workspace ativo.
+- Resposta informa periodo analisado, filtros usados e principais numeros considerados.
+- Copilot destaca saldo, despesas, receitas, taxa de poupanca, pendencias de categorizacao e qualidade dos dados.
+- Quando a qualidade dos dados for baixa, resposta deve avisar que a analise pode estar incompleta.
+
+US-049: Como usuario, quero perguntar se posso fazer um gasto especifico para decidir com mais seguranca.
+
+Aceite:
+
+- Usuario informa valor, categoria e horizonte desejado.
+- Copilot compara o gasto com saldo do periodo, ritmo de despesas, recorrencias conhecidas e orcamentos quando existirem.
+- Resposta classifica a recomendacao como `seguro`, `atenção` ou `nao recomendado`.
+- Resposta explica os motivos e mostra quais dados sustentam a recomendacao.
+- Copilot deve deixar claro que e apoio de planejamento, nao consultoria financeira profissional.
+
+US-050: Como usuario, quero receber sugestoes de como gastar melhor para melhorar minha saude financeira.
+
+Aceite:
+
+- Copilot identifica categorias com aumento relevante, gastos variaveis altos e recorrencias que merecem revisao.
+- Sugestoes devem ser acionaveis, como revisar categoria, reduzir frequencia, definir limite ou categorizar pendencias.
+- Cada sugestao deve ter impacto estimado quando houver dados suficientes.
+- Usuario consegue abrir as transacoes relacionadas a uma sugestao.
+
+US-051: Como usuario, quero perguntar "o que fazer agora" e receber um plano de acao financeiro simples.
+
+Aceite:
+
+- Copilot gera ate 3 proximas acoes priorizadas.
+- Acoes podem incluir revisar pendencias, categorizar transacoes, reduzir uma categoria, conferir importacao com erro ou definir orcamento.
+- Cada acao informa motivo, impacto esperado e link/atalho para a tela correspondente.
+- Plano deve evitar recomendacoes genericas quando os dados forem insuficientes.
+
+US-052: Como usuario, quero que o copilot explique qualquer resposta com rastreabilidade para confiar nas recomendacoes.
+
+Aceite:
+
+- Toda resposta relevante inclui fontes de dados: periodo, quantidade de transacoes e indicadores usados.
+- Quando citar uma categoria ou gasto, deve permitir navegar para as transacoes relacionadas.
+- Copilot nao deve expor dados financeiros em logs.
+- Prompt, resposta, modelo e versao de estrategia podem ser auditados sem armazenar dados sensiveis desnecessarios.
+
+US-053: Como administrador, quero limites de seguranca para o copilot financeiro para evitar respostas perigosas ou caras.
+
+Aceite:
+
+- Copilot deve recusar pedidos fora do escopo financeiro do workspace.
+- Copilot nao deve prometer retorno, investimento garantido ou aconselhamento profissional.
+- Chamadas ao LLM devem ter limite de custo, timeout e fallback.
+- Respostas devem preferir dados agregados e minimizacao de dados sensiveis.
+- Chat completo fica fora do caminho critico de importacao e categorizacao.
+
 ## Epic 8: Conciliacao
 
 US-013: Como usuario, quero conciliar pagamentos de fatura no extrato com cartoes para entender se as faturas foram pagas corretamente.
@@ -427,3 +541,18 @@ Aceite:
 - Transacoes extraidas preservam linha/texto de origem quando possivel.
 - Parser diferencia data da compra e data da fatura quando disponivel.
 - Fixtures usadas em testes devem ser anonimizadas.
+
+## Epic 10: Internacionalizacao
+
+US-054: Como usuario, quero alternar o idioma do site entre portugues e ingles para usar a aplicacao no idioma preferido.
+
+Aceite:
+
+- Idioma padrao deve ser portugues do Brasil.
+- Usuario consegue alternar para ingles pela interface.
+- Preferencia de idioma deve ser persistida por usuario ou, no minimo, no navegador
+  enquanto nao houver configuracao de perfil.
+- Textos de navegacao, formularios, tabelas, estados vazios, erros e indicadores
+  principais devem usar o idioma selecionado.
+- Valores monetarios e datas devem respeitar locale compativel com o idioma
+  selecionado, mantendo moeda BRL por padrao no MVP.
