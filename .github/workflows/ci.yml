@@ -10,6 +10,8 @@ on:
       - "feature/**"
       - develop
       - main
+    tags:
+      - "v*"
 
 permissions:
   contents: read

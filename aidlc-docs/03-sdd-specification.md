@@ -233,6 +233,22 @@ Providers iniciais de IA:
 - A conciliacao inicial pode comparar descricao, data aproximada e valor.
 - Conciliacoes devem ser rastreadas, reversiveis e visiveis ao usuario.
 
+## Dashboard e Indicadores
+
+- Indicadores devem sempre respeitar `workspace_id` e filtros de periodo.
+- Despesas consideram transacoes com `direction = debit`.
+- Receitas consideram transacoes com `direction = credit`.
+- Pagamentos de fatura com `direction = payment` devem ficar separados de despesas
+  e receitas nos indicadores principais.
+- Saldo do periodo deve ser calculado como `receitas - despesas`.
+- Taxa de poupanca deve ser calculada como `(receitas - despesas) / receitas`
+  quando houver receita positiva; caso contrario deve ser nula.
+- Ranking por categoria deve considerar despesas e agrupar transacoes sem categoria
+  como `Sem categoria`.
+- Qualidade de dados deve indicar transacoes categorizadas, pendentes de categoria,
+  importacoes com erro e importacoes duplicadas.
+- Indicadores nao devem expor descricoes completas ou valores sensiveis em logs.
+
 ## Casos de Erro
 
 - Arquivo sem layout reconhecido.

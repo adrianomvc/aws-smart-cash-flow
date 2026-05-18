@@ -22,6 +22,7 @@ Incluido:
 - CRUD basico de categorias.
 - CRUD basico de regras deterministicas.
 - Aplicacao de regras apos importacao.
+- Indicadores basicos de dashboard para resumo mensal, serie mensal, categorias e qualidade dos dados.
 
 Fora do MVP 1:
 
@@ -29,7 +30,7 @@ Fora do MVP 1:
 - Embedding.
 - LLM.
 - Conciliacao automatica.
-- Dashboard avancado.
+- Dashboard avancado com orcamento, recorrencias, alertas e drill-down completo.
 - App mobile nativo.
 
 ## Deploy
@@ -77,6 +78,14 @@ Regras:
 - Upload permitido no MVP 1: `.txt`, `.csv`.
 - PDF deve ser rejeitado no MVP 1 com mensagem de recurso futuro.
 - O backend deve registrar `storage_bucket` e `storage_path`.
+- O backend deve enviar arquivo original ao storage antes de persistir `SourceFile`.
+- Arquivo duplicado no mesmo workspace nao deve ser enviado ao storage novamente.
+
+Configuracao:
+
+- `SUPABASE_STORAGE_BUCKET`: bucket para arquivos financeiros.
+- `SUPABASE_SERVICE_ROLE_KEY`: chave server-side usada apenas pelo backend para gravar no storage.
+- A chave service role nao deve ser exposta ao frontend.
 
 ## Banco de Dados
 
@@ -339,6 +348,13 @@ Resposta:
 
 Retorna workspace ativo do usuario.
 
+Comportamento:
+
+- Valida token antes de resolver workspace.
+- Cria usuario espelhado no banco da aplicacao quando nao existir.
+- Cria workspace inicial e membership `owner` quando o usuario ainda nao tiver workspace.
+- Em ambiente local sem `SUPABASE_JWT_SECRET`, aceita token de desenvolvimento apenas para scaffold local.
+
 ### Imports
 
 `POST /v1/imports`
@@ -443,6 +459,43 @@ Payload:
 
 Aplica regras ativas nas transacoes sem categoria manual.
 
+### Dashboard
+
+`GET /v1/dashboard/summary`
+
+Query params:
+
+- `date_from`
+- `date_to`
+
+Resposta:
+
+```json
+{
+  "workspace_id": "uuid",
+  "date_from": "2026-05-01",
+  "date_to": "2026-05-31",
+  "income": "1000.00",
+  "expenses": "650.00",
+  "payments": "200.00",
+  "balance": "350.00",
+  "savings_rate": "0.3500",
+  "transaction_count": 20
+}
+```
+
+`GET /v1/dashboard/monthly-cashflow`
+
+Retorna receitas, despesas, pagamentos e saldo por mes.
+
+`GET /v1/dashboard/category-ranking`
+
+Retorna ranking de despesas por categoria, agrupando transacoes sem categoria como `Sem categoria`.
+
+`GET /v1/dashboard/data-quality`
+
+Retorna contadores de qualidade da base: transacoes categorizadas, sem categoria, importacoes com erro e importacoes duplicadas.
+
 ## Regras de Categorizacao no MVP 1
 
 Ordem:
@@ -521,6 +574,9 @@ Backend:
 - Dedupe de transacao.
 - Aplicacao de regra `contains`.
 - Categoria manual prevalece sobre regra.
+- Resumo mensal de dashboard.
+- Ranking de categorias.
+- Qualidade dos dados.
 
 Frontend:
 

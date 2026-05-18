@@ -33,11 +33,18 @@ Fluxo de branches:
 GitHub Actions:
 
 - CI roda em `feature/*`, `develop`, `main` e pull requests para `develop`/`main`.
+- CI tambem roda em tags `v*` para validar releases versionados.
 - Deploy roda em push para `develop` e `main`.
 - Frontend: deploy via AWS Amplify quando `AWS_ROLE_TO_ASSUME`, `AWS_REGION` e
   `AMPLIFY_APP_ID` estiverem configurados como repository variables.
 - Backend: deploy automatico fica bloqueado ate existir template de
   Lambda/API Gateway em `infra/`.
+
+Changelog e releases:
+
+- Changelogs sao baseados em Git tags anotadas no formato `vX.Y.Z`.
+- Release notes devem ser geradas a partir dos commits entre tags.
+- Detalhes em `CHANGELOG.md`.
 
 Detalhes em `infra/deployment.md`.
 

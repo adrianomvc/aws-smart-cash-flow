@@ -189,6 +189,25 @@ Motivo:
 - Mantem rastreabilidade operacional sem incluir dados financeiros sensiveis em
   nomes de recursos, logs ou tags.
 
+DEC-020: Mudancas de frontend devem ser agrupadas por fluxo antes da subida.
+
+Motivo:
+
+- Reduz retrabalho de deploy e validacao visual em telas interdependentes.
+- Evita publicar experiencia parcial quando upload, importacoes, transacoes,
+  categorias e regras dependem umas das outras para fazer sentido ao usuario.
+- Mantem uma subida unica e coesa para o pacote operacional do MVP frontend.
+
+DEC-021: Changelogs devem ser baseados em Git tags anotadas.
+
+Motivo:
+
+- Mantem historico de releases alinhado ao estado real do repositorio.
+- Permite gerar notas de versao por intervalo entre tags.
+- Evita manter changelog manual desconectado de commits e deploys.
+- Tags e release notes nao devem conter dados financeiros sensiveis, nomes reais
+  de arquivos financeiros ou valores de producao.
+
 R-007: Banco gratuito pode impor limites de armazenamento, conexoes ou pausa por inatividade.
 
 Mitigacao:

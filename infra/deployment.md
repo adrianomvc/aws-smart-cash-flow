@@ -13,6 +13,8 @@ Workflows:
 - `.github/workflows/ci.yml`: runs backend lint/tests and frontend lint/build.
   On push to `develop` or `main`, the frontend deploy is triggered only after
   these checks pass.
+- Tags in the format `v*` run CI so release candidates are validated before
+  release notes are published.
 
 Cost rule:
 
@@ -130,3 +132,24 @@ API Gateway HTTP API -> AWS Lambda Python -> Supabase
 The next infra artifact should define the Lambda package, API Gateway routes,
 environment variables, and log retention before automatic backend deploy is
 enabled.
+
+## Tags and Changelog
+
+Changelogs are based on annotated Git tags in the format `vX.Y.Z`.
+
+Rules:
+
+- Create a tag only after CI is green on the commit being released.
+- Use annotated tags, not lightweight tags.
+- Generate release notes from commits between the previous tag and the new tag.
+- Do not include sensitive financial data, real filenames, or production values
+  in tag messages or release notes.
+
+Useful commands:
+
+```powershell
+git describe --tags --abbrev=0
+git log --oneline <previous-tag>..<new-tag>
+git tag -a v0.1.0 -m "v0.1.0"
+git push origin v0.1.0
+```
