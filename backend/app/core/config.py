@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_jwt_secret: str = ""
     supabase_storage_bucket: str = "financial-files"
+    allow_local_auth: bool = Field(default=False, alias="ALLOW_LOCAL_AUTH")
     database_pool_size: int = 1
     database_max_overflow: int = 2
     database_pool_recycle_seconds: int = 300

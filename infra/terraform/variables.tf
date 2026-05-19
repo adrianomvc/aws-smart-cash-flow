@@ -92,3 +92,9 @@ variable "backend_cors_origins" {
   type        = list(string)
   default     = ["http://localhost:5173", "http://127.0.0.1:5173"]
 }
+
+variable "backend_allow_local_auth" {
+  description = "Allow the MVP demo/local token outside local development. Keep enabled for MVP validation; disable before real production use."
+  type        = bool
+  default     = true
+}

@@ -220,6 +220,7 @@ jobs:
       - name: Deploy Lambda code and configuration
         env:
           BACKEND_CORS_ORIGINS: ${{ vars.BACKEND_CORS_ORIGINS }}
+          BACKEND_ALLOW_LOCAL_AUTH: ${{ vars.BACKEND_ALLOW_LOCAL_AUTH || 'true' }}
           BACKEND_DATABASE_URL: ${{ secrets.BACKEND_DATABASE_URL }}
           BACKEND_LAMBDA_FUNCTION_NAME: ${{ vars.BACKEND_LAMBDA_FUNCTION_NAME }}
         run: |
@@ -242,6 +243,7 @@ jobs:
           payload = {
               "Variables": {
                   "APP_ENV": os.environ["GITHUB_REF_NAME"],
+                  "ALLOW_LOCAL_AUTH": os.environ["BACKEND_ALLOW_LOCAL_AUTH"],
                   "CORS_ORIGINS": os.environ["BACKEND_CORS_ORIGINS"],
                   "DATABASE_MAX_OVERFLOW": "2",
                   "DATABASE_POOL_RECYCLE_SECONDS": "300",

@@ -117,3 +117,32 @@ def test_current_workspace_rejects_invalid_supabase_jwt_when_secret_is_configure
     )
 
     assert response.status_code == 401
+
+
+def test_current_workspace_accepts_local_demo_when_enabled_outside_local_env(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(auth_module.settings, "app_env", "main")
+    monkeypatch.setattr(auth_module.settings, "allow_local_auth", True)
+    monkeypatch.setattr(auth_module.settings, "supabase_jwt_secret", "")
+
+    response = client.get("/v1/workspaces/current", headers={"Authorization": "Bearer local-dev"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["user_id"] == auth_module.LOCAL_USER_ID
+    assert payload["workspace_id"] == auth_module.LOCAL_WORKSPACE_ID
+
+
+def test_current_workspace_rejects_local_demo_when_disabled_outside_local_env(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(auth_module.settings, "app_env", "main")
+    monkeypatch.setattr(auth_module.settings, "allow_local_auth", False)
+    monkeypatch.setattr(auth_module.settings, "supabase_jwt_secret", "")
+
+    response = client.get("/v1/workspaces/current", headers={"Authorization": "Bearer local-dev"})
+
+    assert response.status_code == 401

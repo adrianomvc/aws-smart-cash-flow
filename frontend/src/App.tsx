@@ -183,7 +183,7 @@ function LoginScreen({ onLogin }: { onLogin: (session: ApiSession) => void }) {
         </form>
 
         <button className="ghost-button full" onClick={() => onLogin({ token: "local-dev", mode: "local" })}>
-          Acessar ambiente local
+          Acessar demonstração MVP
         </button>
       </section>
     </main>
@@ -261,7 +261,7 @@ function ProtectedApp({ page, session }: { page: Page; session: ApiSession }) {
       <PageState
         icon={AlertCircle}
         title="Não foi possível carregar o workspace"
-        description="Confira se a API local está rodando e tente novamente."
+        description="Confira sua sessão ou a disponibilidade da API e tente novamente."
       />
     );
   }
