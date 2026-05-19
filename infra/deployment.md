@@ -42,6 +42,10 @@ Initial scope:
 - Optional Amplify deploy permission when `amplify_app_arn` is set.
 - Backend Lambda, API Gateway HTTP API, CloudWatch log group, and least-privilege
   deploy permission for updating Lambda code/configuration.
+- Backend Lambda uses Python 3.12 so native wheels such as `cryptography` run on
+  the Amazon Linux 2023 Lambda runtime. Do not downgrade the Lambda runtime to
+  Python 3.11 without also changing the package build strategy to Amazon Linux 2
+  compatible wheels.
 
 ## AWS Cost Tags
 

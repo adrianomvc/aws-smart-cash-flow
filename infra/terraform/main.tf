@@ -135,7 +135,7 @@ resource "aws_lambda_function" "backend" {
   description   = "FastAPI backend for aws-smart-cash-flow"
   role          = aws_iam_role.backend_lambda_execution.arn
   handler       = "app.main.handler"
-  runtime       = "python3.11"
+  runtime       = "python3.12"
   architectures = ["x86_64"]
   filename      = var.backend_lambda_package_path
   memory_size   = var.backend_lambda_memory_size
