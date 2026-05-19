@@ -68,12 +68,12 @@ def _backfill_natural_dedupe_keys() -> None:
     )
     for row in rows:
         key = _natural_key(
-            workspace_id=row.workspace_id,
-            source_type=row.source_type,
+            workspace_id=str(row.workspace_id),
+            source_type=str(row.source_type),
             transaction_date=row.transaction_date.isoformat(),
-            raw_description=row.raw_description,
+            raw_description=str(row.raw_description),
             amount=_normalize_amount(row.amount),
-            direction=row.direction,
+            direction=str(row.direction),
         )
         if key in seen:
             continue
