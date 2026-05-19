@@ -4,7 +4,7 @@ Python backend for the aws-smart-cash-flow MVP.
 
 Target runtime:
 
-- AWS Lambda
+- AWS Lambda Python 3.12
 - API Gateway HTTP API
 - FastAPI
 - Mangum
