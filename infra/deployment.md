@@ -46,6 +46,9 @@ Initial scope:
   the Amazon Linux 2023 Lambda runtime. Do not downgrade the Lambda runtime to
   Python 3.11 without also changing the package build strategy to Amazon Linux 2
   compatible wheels.
+- MVP validation allows the demo/local token through `ALLOW_LOCAL_AUTH=true`.
+  Disable this flag before handling real production users and require Supabase
+  JWT authentication instead.
 
 ## AWS Cost Tags
 

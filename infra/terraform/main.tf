@@ -144,6 +144,7 @@ resource "aws_lambda_function" "backend" {
   environment {
     variables = {
       APP_ENV                       = var.environment
+      ALLOW_LOCAL_AUTH              = tostring(var.backend_allow_local_auth)
       CORS_ORIGINS                  = join(",", var.backend_cors_origins)
       DATABASE_MAX_OVERFLOW         = "2"
       DATABASE_POOL_RECYCLE_SECONDS = "300"

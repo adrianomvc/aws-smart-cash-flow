@@ -35,6 +35,13 @@ async def get_auth_context(authorization: str | None = Header(default=None)) -> 
             email="local@example.invalid",
         )
 
+    if settings.allow_local_auth and token == "local-dev":
+        return AuthContext(
+            user_id=LOCAL_USER_ID,
+            workspace_id=LOCAL_WORKSPACE_ID,
+            email="local@example.invalid",
+        )
+
     try:
         claims = jwt.decode(
             token,
