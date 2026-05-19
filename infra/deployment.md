@@ -49,6 +49,10 @@ Initial scope:
 - MVP validation allows the demo/local token through `ALLOW_LOCAL_AUTH=true`.
   Disable this flag before handling real production users and require Supabase
   JWT authentication instead.
+- While `ALLOW_LOCAL_AUTH=true`, original file storage uses metadata-only paths
+  and does not require Supabase Storage. Before real production use, configure
+  `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` so uploaded originals are stored
+  in the configured bucket.
 
 ## AWS Cost Tags
 

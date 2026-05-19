@@ -25,7 +25,7 @@ class StorageService:
         path = f"{workspace_id}/{resolved_source_file_id}/{original_filename}"
         bucket = settings.supabase_storage_bucket
 
-        if settings.app_env == "local":
+        if settings.app_env == "local" or settings.allow_local_auth:
             return StoredFile(bucket=bucket, path=path)
 
         if not settings.supabase_url or not settings.supabase_service_role_key:

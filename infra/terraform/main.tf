@@ -152,6 +152,7 @@ resource "aws_lambda_function" "backend" {
       DATABASE_URL                  = "configured-by-github-actions"
       LOG_LEVEL                     = "INFO"
       SUPABASE_JWT_SECRET           = ""
+      SUPABASE_SERVICE_ROLE_KEY     = ""
       SUPABASE_STORAGE_BUCKET       = "financial-files"
       SUPABASE_URL                  = ""
     }
