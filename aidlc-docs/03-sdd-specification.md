@@ -101,7 +101,9 @@ CategorizationRule:
 - `name`
 - `match_type`
 - `pattern`
-- `category_id`
+- `category_id`: categoria alvo opcional.
+- `target_direction`: direcao financeira alvo opcional: `debit`, `credit` ou
+  `payment`.
 - `priority`
 - `active`
 
@@ -227,6 +229,11 @@ Transacao:
 ## Categorizacao
 
 - O MVP deve permitir categoria manual.
+- Regras deterministicas podem categorizar transacoes e/ou ajustar a direcao
+  financeira para separar pagamentos de fatura dos gastos reais.
+- Uma regra deve ter ao menos uma acao: `category_id` ou `target_direction`.
+- Antes de aplicar uma regra, a API deve permitir preview das transacoes afetadas
+  e das mudancas de categoria/direcao.
 - A estrategia oficial de categorizacao e: Regra -> Embedding -> LLM -> Revisao.
 - A implementacao deve ser faseada para controlar custo e complexidade.
 - Regra deterministica roda primeiro e deve ter prioridade quando houver alta confianca.
@@ -234,6 +241,9 @@ Transacao:
 - LLM deve ser usado apenas quando regra e embedding nao tiverem confianca suficiente.
 - Revisao manual deve validar sugestoes incertas.
 - Categoria manual sempre prevalece sobre classificacoes automaticas.
+- Categoria manual nao deve ser sobrescrita por regra automatica; ajustes de
+  direcao financeira por regra continuam permitidos enquanto nao houver historico
+  manual especifico de direcao.
 - Cada classificacao deve preservar fonte, confianca, justificativa e status de revisao.
 
 Providers iniciais de IA:

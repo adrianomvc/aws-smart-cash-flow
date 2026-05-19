@@ -38,14 +38,30 @@ class CategorizationService:
                     TransactionCategoryAssignment.transaction_id == transaction.id,
                 )
             )
-            if existing is not None and existing.source == "manual":
-                continue
 
             matching_rule = next(
                 (rule for rule in rules if self._matches(rule=rule, transaction=transaction)),
                 None,
             )
             if matching_rule is None:
+                continue
+
+            changed = False
+            if (
+                matching_rule.target_direction is not None
+                and transaction.direction != matching_rule.target_direction
+            ):
+                transaction.direction = matching_rule.target_direction
+                changed = True
+
+            if matching_rule.category_id is None:
+                if changed:
+                    applied += 1
+                continue
+
+            if existing is not None and existing.source == "manual":
+                if changed:
+                    applied += 1
                 continue
 
             if existing is None:
@@ -61,13 +77,17 @@ class CategorizationService:
                         review_status="accepted",
                     )
                 )
+                changed = True
             else:
-                existing.category_id = matching_rule.category_id
-                existing.source = "rule"
-                existing.confidence = Decimal("1.0")
-                existing.reason = f"Matched rule: {matching_rule.name}"
-                existing.review_status = "accepted"
-            applied += 1
+                if existing.category_id != matching_rule.category_id:
+                    existing.category_id = matching_rule.category_id
+                    existing.source = "rule"
+                    existing.confidence = Decimal("1.0")
+                    existing.reason = f"Matched rule: {matching_rule.name}"
+                    existing.review_status = "accepted"
+                    changed = True
+            if changed:
+                applied += 1
 
         self.db.flush()
         return applied

@@ -48,7 +48,8 @@ class CategorizationRuleCreate(BaseModel):
     field: str
     match_type: str
     pattern: str
-    category_id: str
+    category_id: str | None = None
+    target_direction: str | None = None
     priority: int = 100
     active: bool = True
 
@@ -59,6 +60,7 @@ class CategorizationRuleUpdate(BaseModel):
     match_type: str | None = None
     pattern: str | None = None
     category_id: str | None = None
+    target_direction: str | None = None
     priority: int | None = None
     active: bool | None = None
 
@@ -70,7 +72,8 @@ class CategorizationRuleRead(BaseModel):
     field: str
     match_type: str
     pattern: str
-    category_id: str
+    category_id: str | None
+    target_direction: str | None
     priority: int
     active: bool
     created_at: datetime
@@ -84,6 +87,34 @@ class CategorizationRuleListResponse(BaseModel):
 class RuleApplyResponse(BaseModel):
     workspace_id: str
     applied_count: int
+    category_applied_count: int
+    direction_applied_count: int
+    skipped_manual_count: int
+
+
+class RulePreviewItem(BaseModel):
+    transaction_id: str
+    transaction_date: str
+    description: str
+    amount: str
+    current_direction: str
+    target_direction: str | None
+    current_category_id: str | None
+    target_category_id: str | None
+    category_source: str | None
+    would_change_category: bool
+    would_change_direction: bool
+    skipped_manual_category: bool
+
+
+class RulePreviewResponse(BaseModel):
+    workspace_id: str
+    total_count: int
+    change_count: int
+    category_change_count: int
+    direction_change_count: int
+    skipped_manual_count: int
+    items: list[RulePreviewItem]
 
 
 @router.get("/categories")
@@ -249,7 +280,9 @@ async def create_rule(
     auth: AuthContext = AuthDependency,
     db: Session = DbDependency,
 ) -> CategorizationRuleRead:
-    _get_category(db=db, workspace_id=auth.workspace_id, category_id=payload.category_id)
+    _validate_rule_actions(payload.category_id, payload.target_direction)
+    if payload.category_id is not None:
+        _get_category(db=db, workspace_id=auth.workspace_id, category_id=payload.category_id)
     rule = CategorizationRule(
         id=str(uuid4()),
         workspace_id=auth.workspace_id,
@@ -258,6 +291,7 @@ async def create_rule(
         match_type=_validate_rule_match_type(payload.match_type),
         pattern=_normalize_rule_pattern(payload.pattern),
         category_id=payload.category_id,
+        target_direction=_validate_target_direction(payload.target_direction),
         priority=payload.priority,
         active=payload.active,
     )
@@ -283,17 +317,33 @@ async def update_rule(
         rule.match_type = _validate_rule_match_type(payload.match_type)
     if payload.pattern is not None:
         rule.pattern = _normalize_rule_pattern(payload.pattern)
-    if payload.category_id is not None:
+    if "category_id" in payload.model_fields_set and payload.category_id is not None:
         _get_category(db=db, workspace_id=auth.workspace_id, category_id=payload.category_id)
         rule.category_id = payload.category_id
+    if "category_id" in payload.model_fields_set and payload.category_id is None:
+        rule.category_id = None
+    if "target_direction" in payload.model_fields_set:
+        rule.target_direction = _validate_target_direction(payload.target_direction)
     if payload.priority is not None:
         rule.priority = payload.priority
     if payload.active is not None:
         rule.active = payload.active
+    _validate_rule_actions(rule.category_id, rule.target_direction)
 
     db.commit()
     db.refresh(rule)
     return _rule_read(rule)
+
+
+@router.get("/categorization-rules/{rule_id}/preview")
+async def preview_rule(
+    rule_id: str,
+    limit: int = 10,
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> RulePreviewResponse:
+    rule = _get_rule(db=db, workspace_id=auth.workspace_id, rule_id=rule_id)
+    return _preview_rule(db=db, workspace_id=auth.workspace_id, rule=rule, limit=limit)
 
 
 @router.delete("/categorization-rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -327,6 +377,9 @@ async def apply_rules(
         .order_by(Transaction.transaction_date, Transaction.id)
     ).all()
     applied_count = 0
+    category_applied_count = 0
+    direction_applied_count = 0
+    skipped_manual_count = 0
 
     for transaction in transactions:
         existing_assignment = db.scalar(
@@ -335,8 +388,6 @@ async def apply_rules(
                 TransactionCategoryAssignment.transaction_id == transaction.id,
             )
         )
-        if existing_assignment is not None and existing_assignment.source == "manual":
-            continue
 
         matching_rule = next(
             (rule for rule in rules if _rule_matches_transaction(rule, transaction)),
@@ -345,29 +396,53 @@ async def apply_rules(
         if matching_rule is None:
             continue
 
-        if existing_assignment is None:
-            db.add(
-                TransactionCategoryAssignment(
-                    id=str(uuid4()),
-                    workspace_id=auth.workspace_id,
-                    transaction_id=transaction.id,
-                    category_id=matching_rule.category_id,
-                    source="rule",
-                    confidence=Decimal("1.0000"),
-                    reason=f"Matched rule {matching_rule.name}",
-                    review_status="accepted",
+        changed = False
+        if (
+            matching_rule.target_direction is not None
+            and transaction.direction != matching_rule.target_direction
+        ):
+            transaction.direction = matching_rule.target_direction
+            direction_applied_count += 1
+            changed = True
+
+        if matching_rule.category_id is not None:
+            if existing_assignment is not None and existing_assignment.source == "manual":
+                skipped_manual_count += 1
+            elif existing_assignment is None:
+                db.add(
+                    TransactionCategoryAssignment(
+                        id=str(uuid4()),
+                        workspace_id=auth.workspace_id,
+                        transaction_id=transaction.id,
+                        category_id=matching_rule.category_id,
+                        source="rule",
+                        confidence=Decimal("1.0000"),
+                        reason=f"Matched rule {matching_rule.name}",
+                        review_status="accepted",
+                    )
                 )
-            )
-        else:
-            existing_assignment.category_id = matching_rule.category_id
-            existing_assignment.source = "rule"
-            existing_assignment.confidence = Decimal("1.0000")
-            existing_assignment.reason = f"Matched rule {matching_rule.name}"
-            existing_assignment.review_status = "accepted"
-        applied_count += 1
+                category_applied_count += 1
+                changed = True
+            elif existing_assignment.category_id != matching_rule.category_id:
+                existing_assignment.category_id = matching_rule.category_id
+                existing_assignment.source = "rule"
+                existing_assignment.confidence = Decimal("1.0000")
+                existing_assignment.reason = f"Matched rule {matching_rule.name}"
+                existing_assignment.review_status = "accepted"
+                category_applied_count += 1
+                changed = True
+
+        if changed:
+            applied_count += 1
 
     db.commit()
-    return RuleApplyResponse(workspace_id=auth.workspace_id, applied_count=applied_count)
+    return RuleApplyResponse(
+        workspace_id=auth.workspace_id,
+        applied_count=applied_count,
+        category_applied_count=category_applied_count,
+        direction_applied_count=direction_applied_count,
+        skipped_manual_count=skipped_manual_count,
+    )
 
 
 def _category_read(category: Category) -> CategoryRead:
@@ -403,6 +478,7 @@ def _rule_read(rule: CategorizationRule) -> CategorizationRuleRead:
         match_type=rule.match_type,
         pattern=rule.pattern,
         category_id=rule.category_id,
+        target_direction=rule.target_direction,
         priority=rule.priority,
         active=rule.active,
         created_at=rule.created_at,
@@ -516,6 +592,25 @@ def _validate_rule_match_type(match_type: str) -> str:
     return match_type
 
 
+def _validate_target_direction(target_direction: str | None) -> str | None:
+    if target_direction is None:
+        return None
+    if target_direction not in {"debit", "credit", "payment"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid rule target direction",
+        )
+    return target_direction
+
+
+def _validate_rule_actions(category_id: str | None, target_direction: str | None) -> None:
+    if category_id is None and target_direction is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Rule must define a category or target direction",
+        )
+
+
 def _rule_matches_transaction(rule: CategorizationRule, transaction: Transaction) -> bool:
     raw_value = getattr(transaction, rule.field)
     if raw_value is None:
@@ -530,6 +625,91 @@ def _rule_matches_transaction(rule: CategorizationRule, transaction: Transaction
     if rule.match_type == "equals":
         return value == pattern
     return False
+
+
+def _preview_rule(
+    db: Session,
+    workspace_id: str,
+    rule: CategorizationRule,
+    limit: int,
+) -> RulePreviewResponse:
+    resolved_limit = max(1, min(limit, 100))
+    transactions = db.scalars(
+        select(Transaction)
+        .where(Transaction.workspace_id == workspace_id)
+        .order_by(Transaction.transaction_date.desc(), Transaction.id)
+    ).all()
+    matching_transactions = [
+        transaction for transaction in transactions if _rule_matches_transaction(rule, transaction)
+    ]
+    assignments = {
+        assignment.transaction_id: assignment
+        for assignment in db.scalars(
+            select(TransactionCategoryAssignment).where(
+                TransactionCategoryAssignment.workspace_id == workspace_id,
+                TransactionCategoryAssignment.transaction_id.in_(
+                    [transaction.id for transaction in matching_transactions]
+                ),
+            )
+        ).all()
+    }
+
+    items = [
+        _preview_item(
+            transaction=transaction,
+            assignment=assignments.get(transaction.id),
+            rule=rule,
+        )
+        for transaction in matching_transactions
+    ]
+    return RulePreviewResponse(
+        workspace_id=workspace_id,
+        total_count=len(items),
+        change_count=sum(
+            1 for item in items if item.would_change_category or item.would_change_direction
+        ),
+        category_change_count=sum(1 for item in items if item.would_change_category),
+        direction_change_count=sum(1 for item in items if item.would_change_direction),
+        skipped_manual_count=sum(1 for item in items if item.skipped_manual_category),
+        items=items[:resolved_limit],
+    )
+
+
+def _preview_item(
+    transaction: Transaction,
+    assignment: TransactionCategoryAssignment | None,
+    rule: CategorizationRule,
+) -> RulePreviewItem:
+    current_category_id = assignment.category_id if assignment is not None else None
+    category_source = assignment.source if assignment is not None else None
+    skipped_manual = (
+        rule.category_id is not None
+        and assignment is not None
+        and assignment.source == "manual"
+        and assignment.category_id != rule.category_id
+    )
+    would_change_category = (
+        rule.category_id is not None
+        and not skipped_manual
+        and current_category_id != rule.category_id
+    )
+    would_change_direction = (
+        rule.target_direction is not None and transaction.direction != rule.target_direction
+    )
+    return RulePreviewItem(
+        transaction_id=transaction.id,
+        transaction_date=transaction.transaction_date.isoformat(),
+        description=transaction.description,
+        amount=str(transaction.amount),
+        current_direction=transaction.direction,
+        target_direction=rule.target_direction,
+        current_category_id=current_category_id,
+        target_category_id=rule.category_id,
+        category_source=category_source,
+        would_change_category=would_change_category,
+        would_change_direction=would_change_direction,
+        skipped_manual_category=skipped_manual,
+    )
 
 
 def _normalize_spaces(value: str) -> str:

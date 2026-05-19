@@ -273,3 +273,69 @@ def test_apply_rules_matches_by_priority_and_preserves_manual_assignments(
     assert assignments["UBER EATS"].source == "rule"
     assert assignments["PIX MERCADO"].category_id == market.id
     assert assignments["PIX MERCADO"].source == "manual"
+
+
+def test_preview_and_apply_financial_direction_rule(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="extrato.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato.txt",
+        content=b"01/07/2026;DEBITO CARTAO VISA;-500,00\n"
+        b"02/07/2026;SUPERMERCADO;-120,00\n",
+    )
+
+    create_response = client.post(
+        "/v1/categorization-rules",
+        json={
+            "name": "Pagamento fatura",
+            "field": "description",
+            "match_type": "contains",
+            "pattern": "VISA",
+            "target_direction": "payment",
+            "priority": 1,
+        },
+    )
+    rule = create_response.json()
+
+    preview_response = client.get(f"/v1/categorization-rules/{rule['id']}/preview")
+    apply_response = client.post("/v1/categorization-rules/apply")
+
+    transaction = db_session.scalars(
+        select(Transaction).where(Transaction.description == "DEBITO CARTAO VISA")
+    ).one()
+
+    assert create_response.status_code == 201
+    assert rule["category_id"] is None
+    assert rule["target_direction"] == "payment"
+    assert preview_response.status_code == 200
+    preview = preview_response.json()
+    assert preview["total_count"] == 1
+    assert preview["direction_change_count"] == 1
+    assert preview["items"][0]["would_change_direction"] is True
+    assert apply_response.status_code == 200
+    assert apply_response.json()["applied_count"] == 1
+    assert apply_response.json()["direction_applied_count"] == 1
+    assert transaction.direction == "payment"
+
+
+def test_rule_requires_category_or_financial_direction(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/v1/categorization-rules",
+        json={
+            "name": "Sem acao",
+            "field": "description",
+            "match_type": "contains",
+            "pattern": "FATURA",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Rule must define a category or target direction"

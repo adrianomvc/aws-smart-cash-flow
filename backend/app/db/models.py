@@ -309,6 +309,10 @@ class CategorizationRule(Base):
             "match_type in ('contains', 'starts_with', 'equals')",
             name="ck_categorization_rule_match_type",
         ),
+        CheckConstraint(
+            "target_direction is null or target_direction in ('debit', 'credit', 'payment')",
+            name="ck_categorization_rule_target_direction",
+        ),
     )
 
     id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
@@ -319,7 +323,8 @@ class CategorizationRule(Base):
     field: Mapped[str] = mapped_column(String(32), nullable=False)
     match_type: Mapped[str] = mapped_column(String(32), nullable=False)
     pattern: Mapped[str] = mapped_column(Text, nullable=False)
-    category_id: Mapped[str] = mapped_column(UUID_TYPE, ForeignKey("categories.id"), nullable=False)
+    category_id: Mapped[str | None] = mapped_column(UUID_TYPE, ForeignKey("categories.id"))
+    target_direction: Mapped[str | None] = mapped_column(String(16))
     priority: Mapped[int] = mapped_column(
         Integer, nullable=False, default=100, server_default="100"
     )
