@@ -299,6 +299,17 @@ Aceite:
 - Regras regex possuem prioridade e podem ser ativadas/desativadas.
 - Motor de regras continua avaliando regras simples antes de regex quando configurado.
 
+US-029A: Como usuario, quero configurar regras financeiras para identificar pagamento de fatura, transferencia, estorno, receita e despesa.
+
+Aceite:
+
+- Tela de regras permite criar e editar regras de tipo financeiro alem de regras de categoria.
+- Usuario pode classificar transacoes como `despesa`, `receita`, `pagamento_fatura`, `transferencia`, `estorno` ou `ignorar`.
+- Pagamento de fatura deve ficar separado das despesas do cartao para evitar dupla contagem nos indicadores.
+- Regra permite testar uma previa das transacoes afetadas antes de salvar ou aplicar.
+- Alteracoes preservam auditoria de quem alterou, quando alterou, criterio anterior e novo criterio quando o historico estiver disponivel.
+- Sistema deve manter regras deterministicas padrao para pagamentos comuns de fatura, mas permitir ajuste pelo usuario.
+
 ## Epic 7: Dashboards
 
 US-012: Como usuario, quero dashboards financeiros para entender meus gastos e tendencias.
