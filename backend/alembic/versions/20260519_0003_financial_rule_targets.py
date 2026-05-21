@@ -18,23 +18,40 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "categorization_rules",
-        sa.Column("target_direction", sa.String(length=16), nullable=True),
-    )
-    op.alter_column("categorization_rules", "category_id", nullable=True)
-    op.create_check_constraint(
-        "ck_categorization_rule_target_direction",
-        "categorization_rules",
-        "target_direction is null or target_direction in ('debit', 'credit', 'payment')",
-    )
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = {column["name"] for column in inspector.get_columns("categorization_rules")}
+    check_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("categorization_rules")
+    }
+
+    with op.batch_alter_table("categorization_rules") as batch_op:
+        if "target_direction" not in columns:
+            batch_op.add_column(sa.Column("target_direction", sa.String(length=16), nullable=True))
+        batch_op.alter_column("category_id", existing_type=sa.CHAR(length=32), nullable=True)
+        if "ck_categorization_rule_target_direction" not in check_constraints:
+            batch_op.create_check_constraint(
+                "ck_categorization_rule_target_direction",
+                "target_direction is null or target_direction in ('debit', 'credit', 'payment')",
+            )
 
 
 def downgrade() -> None:
-    op.drop_constraint(
-        "ck_categorization_rule_target_direction",
-        "categorization_rules",
-        type_="check",
-    )
-    op.alter_column("categorization_rules", "category_id", nullable=False)
-    op.drop_column("categorization_rules", "target_direction")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = {column["name"] for column in inspector.get_columns("categorization_rules")}
+    check_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("categorization_rules")
+    }
+
+    with op.batch_alter_table("categorization_rules") as batch_op:
+        if "ck_categorization_rule_target_direction" in check_constraints:
+            batch_op.drop_constraint(
+                "ck_categorization_rule_target_direction",
+                type_="check",
+            )
+        batch_op.alter_column("category_id", existing_type=sa.CHAR(length=32), nullable=False)
+        if "target_direction" in columns:
+            batch_op.drop_column("target_direction")

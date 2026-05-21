@@ -165,7 +165,9 @@ Cost guardrails:
 - No NAT Gateway.
 - No VPC attachment unless a future private networking requirement is approved.
 - Lambda connects to Neon over public TLS using the pooled connection string.
-- CloudWatch log retention defaults to 14 days.
+- CloudWatch log retention defaults to 14 days for Lambda and API Gateway.
+- API Gateway access logs must not include request body, response body,
+  authorization headers, file names, descriptions or financial values.
 
 Initial Terraform apply:
 

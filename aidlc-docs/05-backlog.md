@@ -567,3 +567,138 @@ Aceite:
   principais devem usar o idioma selecionado.
 - Valores monetarios e datas devem respeitar locale compativel com o idioma
   selecionado, mantendo moeda BRL por padrao no MVP.
+
+## Epic 11: Evolucao Arquitetural AWS Serverless
+
+US-057: Como Tech Lead, quero avaliar a migracao para uma arquitetura AWS serverless completa para reduzir custo operacional e acelerar deploys futuros.
+
+Aceite:
+
+- Avaliacao compara o estado atual com Amplify Hosting, Lambda, API Gateway,
+  S3, DynamoDB e Cognito.
+- Resultado separa ganhos esperados, riscos, custo estimado, impacto no roadmap
+  e esforco de migracao.
+- Decisao deve indicar se a migracao sera feita em uma etapa unica, por fases ou
+  como arquitetura hibrida.
+- Avaliacao deve considerar LGPD, isolamento por workspace, auditoria financeira
+  e minimizacao de dados sensiveis em logs.
+
+US-058: Como usuario, quero que a autenticacao seja migrada para Amazon Cognito para manter login seguro dentro da stack AWS.
+
+Aceite:
+
+- Cognito deve suportar email e senha.
+- Login com Google deve permanecer suportado ou planejado sem redesenho.
+- Backend deve validar JWT do Cognito em rotas protegidas.
+- Primeiro acesso deve continuar criando usuario, workspace e papel `owner`.
+- Migracao deve prever convivencia ou corte seguro com usuarios existentes.
+
+US-059: Como operador, quero armazenar arquivos financeiros brutos no Amazon S3 para ter storage duravel e barato.
+
+Aceite:
+
+- Uploads TXT/CSV/PDF devem ser gravados em bucket S3 por workspace.
+- Objetos devem usar criptografia em repouso.
+- Chaves de objeto nao devem expor nomes ou dados financeiros sensiveis.
+- Backend deve usar URL assinada ou fluxo equivalente quando isso reduzir carga
+  da API.
+- Metadados de importacao devem continuar rastreando arquivo, hash e origem.
+
+US-060: Como Tech Lead, quero processar importacoes em Lambda de forma assincrona para evitar timeout e melhorar resiliencia.
+
+Aceite:
+
+- Upload e processamento pesado nao devem depender de uma unica requisicao HTTP
+  longa.
+- Cada arquivo deve gerar job rastreavel com status, contadores, erros e
+  reprocessamento idempotente.
+- Falha em uma importacao nao deve bloquear outras importacoes do mesmo lote.
+- Logs nao devem conter descricoes completas, valores financeiros reais ou
+  conteudo bruto de arquivos.
+
+US-061: Como Tech Lead, quero fazer uma POC de DynamoDB antes de migrar o banco principal para garantir que dashboards e auditoria continuem eficientes.
+
+Aceite:
+
+- POC deve modelar os principais padroes de acesso: workspace, periodo,
+  transacoes paginadas, ordenacao por data, categoria, dashboard mensal,
+  qualidade de dados, regras, auditoria e conciliacao.
+- POC deve evitar scans como caminho principal de dashboard ou listagem.
+- POC deve estimar custo para carga inicial historica e uso mensal recorrente.
+- POC deve comparar DynamoDB puro, PostgreSQL atual e alternativa hibrida
+  DynamoDB + S3/arquivos + jobs analiticos.
+- Migracao para DynamoDB so pode seguir se os padroes de consulta ficarem
+  claros, testados e documentados.
+
+## Epic 12: Seguranca AWS e Prontidao para Dados Reais
+
+US-062: Como administrador, quero remover acessos de demo/local auth do ambiente online antes de usar dados reais para evitar acesso indevido.
+
+Aceite:
+
+- `ALLOW_LOCAL_AUTH` deve ficar desabilitado em qualquer ambiente com dados reais.
+- Backend deve rejeitar token local/demo fora de ambiente explicitamente local.
+- Rotas protegidas devem exigir JWT valido do provedor de autenticacao aprovado.
+- CI/deploy deve impedir promocao para producao quando auth de demo estiver
+  habilitada.
+
+US-063: Como Tech Lead, quero fechar CORS e exposicao publica da API para permitir apenas origens oficiais.
+
+Aceite:
+
+- CORS de producao deve aceitar somente o dominio oficial do Amplify e dominios
+  customizados aprovados.
+- `localhost`, `127.0.0.1` e curingas devem ficar restritos a ambiente local ou
+  desenvolvimento.
+- API Gateway deve manter throttling/rate limit configurado.
+- Endpoints administrativos, internos ou de diagnostico nao devem ficar expostos
+  sem autenticacao.
+
+US-064: Como administrador, quero proteger segredos e configuracoes sensiveis para evitar vazamento de credenciais.
+
+Aceite:
+
+- Secrets devem ficar em GitHub Secrets, AWS Secrets Manager ou mecanismo
+  equivalente aprovado.
+- Terraform state nao deve armazenar secrets de banco, Supabase, Cognito ou
+  provedores de IA.
+- Nenhum secret pode ser commitado no repositorio.
+- Pipeline deve documentar quais variaveis sao secrets e quais sao variables.
+
+US-065: Como administrador, quero configurar guardrails de conta AWS para reduzir risco operacional e financeiro.
+
+Aceite:
+
+- Conta root deve ter MFA e nao deve possuir access keys ativas.
+- GitHub Actions deve usar OIDC e IAM role com menor privilegio possivel.
+- IAM roles devem ser revisadas para evitar permissoes amplas desnecessarias.
+- AWS Budgets deve alertar quando custo mensal passar de limites definidos.
+- CloudTrail deve estar ativo para auditoria de acoes na conta.
+
+US-066: Como Tech Lead, quero hardening de API Gateway e Lambda para reduzir abuso e vazamento de dados sensiveis.
+
+Aceite:
+
+- API Gateway deve ter access logs com retencao curta e sem payload financeiro,
+  headers de autorizacao, nomes reais de arquivos ou valores.
+- Lambda deve evitar persistir dados sensiveis em `/tmp`, variaveis globais ou
+  logs entre invocacoes.
+- Timeout, memoria e concorrencia devem ser revisados para controlar custo e
+  superficie de abuso.
+- WAF deve ser avaliado antes de abrir uso para dados reais ou usuarios externos.
+- Alertas devem cobrir erros 5xx, aumento de latencia e aumento anormal de
+  invocacoes.
+
+US-067: Como operador, quero que buckets S3 usados por arquivos financeiros sejam privados e tenham ciclo de vida definido.
+
+Aceite:
+
+- S3 Block Public Access deve estar habilitado.
+- Objetos devem ser criptografados em repouso.
+- Bucket policy deve negar acesso publico.
+- Chaves de objetos nao devem conter nomes reais de arquivos, descricoes ou
+  dados financeiros.
+- Arquivos temporarios, previews e artefatos intermediarios devem ter lifecycle
+  de expiracao.
+- Retencao de arquivos originais deve ser definida antes de producao conforme
+  necessidade do produto e LGPD.

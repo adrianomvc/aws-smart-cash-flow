@@ -46,6 +46,7 @@ import {
   type ApiSession,
   type CategoryRead,
   type CategorizationRuleRead,
+  type RulePreview,
   type TransactionRead,
   applyRules,
   createCategory,
@@ -60,9 +61,11 @@ import {
   getImportErrors,
   getImports,
   getMonthlyCashflow,
+  getRulePreview,
   getRules,
   getTransactions,
   updateCategory,
+  updateRule,
   updateTransactionCategory,
   uploadImport,
 } from "./lib/api";
@@ -85,6 +88,30 @@ const navItems: Array<{ id: Page; label: string; icon: LucideIcon }> = [
   { id: "review", label: "Revisão", icon: ShieldCheck },
   { id: "settings", label: "Configurações", icon: Settings },
 ];
+
+type RuleFormState = {
+  id: string | null;
+  name: string;
+  field: string;
+  match_type: string;
+  pattern: string;
+  category_id: string;
+  target_direction: string;
+  priority: number;
+  active: boolean;
+};
+
+const emptyRuleForm: RuleFormState = {
+  id: null,
+  name: "",
+  field: "description",
+  match_type: "contains",
+  pattern: "",
+  category_id: "",
+  target_direction: "",
+  priority: 100,
+  active: true,
+};
 
 function App() {
   const [session, setSession] = useState<ApiSession | null>(() => {
@@ -670,22 +697,41 @@ function RulesPage({ session }: { session: ApiSession }) {
     queryKey: ["rules", session.token],
     queryFn: () => getRules(session),
   });
-  const [form, setForm] = useState({
-    name: "",
-    field: "description",
-    match_type: "contains",
-    pattern: "",
-    category_id: "",
-    priority: 100,
-    active: true,
-  });
+  const [form, setForm] = useState<RuleFormState>(emptyRuleForm);
   const [ruleFormError, setRuleFormError] = useState("");
+  const [previewRule, setPreviewRule] = useState<CategorizationRuleRead | null>(null);
+  const preview = useQuery({
+    queryKey: ["rule-preview", session.token, previewRule?.id],
+    queryFn: () => getRulePreview(session, previewRule?.id ?? ""),
+    enabled: Boolean(previewRule),
+  });
+  const rulePayload = {
+    name: form.name,
+    field: form.field,
+    match_type: form.match_type,
+    pattern: form.pattern,
+    category_id: form.category_id || null,
+    target_direction: form.target_direction || null,
+    priority: form.priority,
+    active: form.active,
+  };
   const create = useMutation({
-    mutationFn: () => createRule(session, form),
+    mutationFn: () => createRule(session, rulePayload),
     onSuccess: () => {
-      setForm({ ...form, name: "", pattern: "" });
+      setForm(emptyRuleForm);
       setRuleFormError("");
       void queryClient.invalidateQueries({ queryKey: ["rules"] });
+    },
+  });
+  const update = useMutation({
+    mutationFn: () => updateRule(session, form.id ?? "", rulePayload),
+    onSuccess: () => {
+      setForm(emptyRuleForm);
+      setRuleFormError("");
+      void queryClient.invalidateQueries({ queryKey: ["rules"] });
+      if (previewRule?.id === form.id) {
+        void queryClient.invalidateQueries({ queryKey: ["rule-preview", session.token, form.id] });
+      }
     },
   });
   const remove = useMutation({
@@ -699,12 +745,43 @@ function RulesPage({ session }: { session: ApiSession }) {
       void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
     },
   });
+  const saving = create.isPending || update.isPending;
+
+  function validateRuleForm() {
+    const missingFields = [
+      !form.name.trim() ? "nome" : "",
+      !form.pattern.trim() ? "padrão" : "",
+      !form.category_id && !form.target_direction ? "ação da regra" : "",
+      !form.priority || form.priority < 1 ? "prioridade" : "",
+    ].filter(Boolean);
+    if (missingFields.length) {
+      setRuleFormError(`Preencha: ${missingFields.join(", ")}.`);
+      return false;
+    }
+    setRuleFormError("");
+    return true;
+  }
+
+  function editRule(rule: CategorizationRuleRead) {
+    setForm({
+      id: rule.id,
+      name: rule.name,
+      field: rule.field,
+      match_type: rule.match_type,
+      pattern: rule.pattern,
+      category_id: rule.category_id ?? "",
+      target_direction: rule.target_direction ?? "",
+      priority: rule.priority,
+      active: rule.active,
+    });
+    setRuleFormError("");
+  }
 
   return (
     <section className="page-stack">
       <PageHeader
         title="Regras"
-        description="Automatize classificações previsíveis. Categorias manuais sempre prevalecem."
+        description="Automatize categorias e tipos financeiros. Categorias manuais sempre prevalecem."
         action={
           <button className="secondary-button" onClick={() => apply.mutate()} disabled={apply.isPending}>
             <RefreshCw className={apply.isPending ? "spin" : ""} size={16} />
@@ -712,23 +789,14 @@ function RulesPage({ session }: { session: ApiSession }) {
           </button>
         }
       />
-      <Panel title="Nova regra">
+      <Panel title={form.id ? "Editar regra" : "Nova regra"}>
         <form
           className="rule-form"
           onSubmit={(event) => {
             event.preventDefault();
-            const missingFields = [
-              !form.name.trim() ? "nome" : "",
-              !form.pattern.trim() ? "padrão" : "",
-              !form.category_id ? "categoria" : "",
-              !form.priority || form.priority < 1 ? "prioridade" : "",
-            ].filter(Boolean);
-            if (missingFields.length) {
-              setRuleFormError(`Preencha: ${missingFields.join(", ")}.`);
-              return;
-            }
-            setRuleFormError("");
-            create.mutate();
+            if (!validateRuleForm()) return;
+            if (form.id) update.mutate();
+            else create.mutate();
           }}
         >
           <label>
@@ -768,6 +836,26 @@ function RulesPage({ session }: { session: ApiSession }) {
               ))}
             </select>
           </label>
+          <label>
+            Tipo financeiro
+            <select
+              value={form.target_direction}
+              onChange={(event) => setForm({ ...form, target_direction: event.target.value })}
+            >
+              <option value="">Não alterar</option>
+              <option value="payment">Pagamento de fatura</option>
+              <option value="debit">Despesa</option>
+              <option value="credit">Receita</option>
+            </select>
+          </label>
+          <label className="toggle-line">
+            <input
+              checked={form.active}
+              onChange={(event) => setForm({ ...form, active: event.target.checked })}
+              type="checkbox"
+            />
+            Ativa
+          </label>
           <label className="rule-priority">
             Prioridade
             <input
@@ -777,12 +865,28 @@ function RulesPage({ session }: { session: ApiSession }) {
               onChange={(event) => setForm({ ...form, priority: Number(event.target.value) })}
             />
           </label>
-          <button className="primary-button rule-submit" type="submit"><Plus size={16} /> Criar</button>
+          <div className="rule-submit-group">
+            <button className="primary-button rule-submit" disabled={saving} type="submit">
+              {saving ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
+              {form.id ? "Salvar" : "Criar"}
+            </button>
+            {form.id ? (
+              <button className="ghost-button" type="button" onClick={() => setForm(emptyRuleForm)}>
+                Cancelar
+              </button>
+            ) : null}
+          </div>
         </form>
         {ruleFormError ? <InlineError message={ruleFormError} /> : null}
         {create.isError ? <InlineError message={apiErrorMessage(create.error, "Falha ao criar regra.")} /> : null}
+        {update.isError ? <InlineError message={apiErrorMessage(update.error, "Falha ao salvar regra.")} /> : null}
       </Panel>
-      {apply.data ? <InlineSuccess message={`${apply.data.applied_count} transações categorizadas.`} /> : null}
+      {apply.data ? (
+        <InlineSuccess
+          message={`${apply.data.applied_count} transações alteradas: ${apply.data.category_applied_count} categorias e ${apply.data.direction_applied_count} tipos financeiros.`}
+        />
+      ) : null}
+      {apply.isError ? <InlineError message={apiErrorMessage(apply.error, "Falha ao aplicar regras.")} /> : null}
       <Panel title="Regras cadastradas">
         <ResponsiveTable loading={rules.isLoading} empty={!rules.data?.items.length} emptyMessage="Nenhuma regra criada.">
           <thead>
@@ -791,6 +895,7 @@ function RulesPage({ session }: { session: ApiSession }) {
               <th>Nome</th>
               <th>Condição</th>
               <th>Categoria</th>
+              <th>Tipo financeiro</th>
               <th>Status</th>
               <th />
             </tr>
@@ -801,12 +906,23 @@ function RulesPage({ session }: { session: ApiSession }) {
                 categories={categories.data?.items ?? []}
                 key={rule.id}
                 onDelete={() => remove.mutate(rule.id)}
+                onEdit={() => editRule(rule)}
+                onPreview={() => setPreviewRule(rule)}
                 rule={rule}
               />
             ))}
           </tbody>
         </ResponsiveTable>
       </Panel>
+      {previewRule ? (
+        <RulePreviewDrawer
+          categories={categories.data?.items ?? []}
+          loading={preview.isLoading}
+          onClose={() => setPreviewRule(null)}
+          preview={preview.data}
+          rule={previewRule}
+        />
+      ) : null}
     </section>
   );
 }
@@ -1169,10 +1285,14 @@ function RuleRow({
   rule,
   categories,
   onDelete,
+  onEdit,
+  onPreview,
 }: {
   rule: CategorizationRuleRead;
   categories: CategoryRead[];
   onDelete: () => void;
+  onEdit: () => void;
+  onPreview: () => void;
 }) {
   const category = categories.find((item) => item.id === rule.category_id);
   return (
@@ -1186,10 +1306,84 @@ function RuleRow({
           <code>{rule.pattern}</code>
         </div>
       </td>
-      <td><span className="category-path">{category ? categoryPath(category, categories) : "Categoria removida"}</span></td>
+      <td>
+        <span className="category-path">
+          {rule.category_id ? (category ? categoryPath(category, categories) : "Categoria removida") : "-"}
+        </span>
+      </td>
+      <td>{rule.target_direction ? <DirectionBadge direction={rule.target_direction} /> : "-"}</td>
       <td>{rule.active ? <StatusBadge status="active" /> : <StatusBadge status="inactive" />}</td>
-      <td><button className="icon-button danger" onClick={onDelete}><Trash2 size={16} /></button></td>
+      <td>
+        <div className="row-actions">
+          <button className="icon-button" onClick={onPreview} title="Prévia da regra">
+            <Search size={16} />
+          </button>
+          <button className="icon-button" onClick={onEdit} title="Editar regra">
+            <Pencil size={16} />
+          </button>
+          <button className="icon-button danger" onClick={onDelete} title="Excluir regra">
+            <Trash2 size={16} />
+          </button>
+        </div>
+      </td>
     </tr>
+  );
+}
+
+function RulePreviewDrawer({
+  rule,
+  preview,
+  categories,
+  loading,
+  onClose,
+}: {
+  rule: CategorizationRuleRead;
+  preview?: RulePreview;
+  categories: CategoryRead[];
+  loading: boolean;
+  onClose: () => void;
+}) {
+  const categoryNames = new Map(categories.map((category) => [category.id, category.name]));
+  return (
+    <Drawer title={`Prévia: ${rule.name}`} onClose={onClose}>
+      {loading ? <PageState icon={Loader2} title="Carregando prévia" description="Buscando transações afetadas." spin compact /> : null}
+      {preview ? (
+        <div className="preview-stack">
+          <div className="preview-summary">
+            <QualityRow label="Encontradas" value={preview.total_count} />
+            <QualityRow label="Serão alteradas" value={preview.change_count} />
+            <QualityRow label="Categorias" value={preview.category_change_count} />
+            <QualityRow label="Tipos financeiros" value={preview.direction_change_count} />
+            <QualityRow label="Manuais preservadas" value={preview.skipped_manual_count} />
+          </div>
+          {preview.items.length ? (
+            <div className="preview-list">
+              {preview.items.map((item) => (
+                <div className="preview-item" key={item.transaction_id}>
+                  <div>
+                    <strong>{item.description}</strong>
+                    <small>{dateLabel(item.transaction_date)} · {money(item.amount)}</small>
+                  </div>
+                  <div className="preview-actions">
+                    <span>
+                      {item.current_direction}
+                      {item.target_direction ? ` -> ${directionLabel(item.target_direction)}` : ""}
+                    </span>
+                    <span>
+                      {item.current_category_id ? categoryNames.get(item.current_category_id) ?? "Categoria atual" : "Sem categoria"}
+                      {item.target_category_id ? ` -> ${categoryNames.get(item.target_category_id) ?? "Categoria alvo"}` : ""}
+                    </span>
+                    {item.skipped_manual_category ? <StatusBadge status="manual" /> : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyInline message="Nenhuma transação encontrada para esta regra." />
+          )}
+        </div>
+      ) : null}
+    </Drawer>
   );
 }
 
@@ -1476,6 +1670,7 @@ function statusLabel(status: string) {
     duplicate_file: "Duplicado",
     active: "Ativa",
     inactive: "Inativa",
+    manual: "Manual",
   };
   return labels[status] ?? status;
 }

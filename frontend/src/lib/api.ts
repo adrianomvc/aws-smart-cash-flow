@@ -91,10 +91,36 @@ export type CategorizationRuleRead = {
   field: string;
   match_type: string;
   pattern: string;
-  category_id: string;
+  category_id: string | null;
+  target_direction: string | null;
   priority: number;
   active: boolean;
   created_at: string;
+};
+
+export type RulePreviewItem = {
+  transaction_id: string;
+  transaction_date: string;
+  description: string;
+  amount: string;
+  current_direction: string;
+  target_direction: string | null;
+  current_category_id: string | null;
+  target_category_id: string | null;
+  category_source: string | null;
+  would_change_category: boolean;
+  would_change_direction: boolean;
+  skipped_manual_category: boolean;
+};
+
+export type RulePreview = {
+  workspace_id: string;
+  total_count: number;
+  change_count: number;
+  category_change_count: number;
+  direction_change_count: number;
+  skipped_manual_count: number;
+  items: RulePreviewItem[];
 };
 
 export type DashboardSummary = {
@@ -273,7 +299,8 @@ export function createRule(
     field: string;
     match_type: string;
     pattern: string;
-    category_id: string;
+    category_id: string | null;
+    target_direction: string | null;
     priority: number;
     active: boolean;
   },
@@ -292,7 +319,8 @@ export function updateRule(
     field: string;
     match_type: string;
     pattern: string;
-    category_id: string;
+    category_id: string | null;
+    target_direction: string | null;
     priority: number;
     active: boolean;
   }>,
@@ -308,7 +336,15 @@ export function deleteRule(session: ApiSession, ruleId: string) {
 }
 
 export function applyRules(session: ApiSession) {
-  return apiRequest<{ workspace_id: string; applied_count: number }>("/categorization-rules/apply", session, {
-    method: "POST",
-  });
+  return apiRequest<{
+    workspace_id: string;
+    applied_count: number;
+    category_applied_count: number;
+    direction_applied_count: number;
+    skipped_manual_count: number;
+  }>("/categorization-rules/apply", session, { method: "POST" });
+}
+
+export function getRulePreview(session: ApiSession, ruleId: string) {
+  return apiRequest<RulePreview>(`/categorization-rules/${ruleId}/preview`, session);
 }
