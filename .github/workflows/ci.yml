@@ -261,6 +261,8 @@ jobs:
               json.dump(payload, handle)
           PY
 
+          DATABASE_URL="${BACKEND_DATABASE_URL}" PYTHONPATH="build/lambda" python -m alembic upgrade head
+
           aws lambda update-function-code \
             --function-name "${BACKEND_LAMBDA_FUNCTION_NAME}" \
             --zip-file fileb://build/backend-lambda.zip
