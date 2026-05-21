@@ -213,6 +213,31 @@ Motivo:
 - Tags e release notes nao devem conter dados financeiros sensiveis, nomes reais
   de arquivos financeiros ou valores de producao.
 
+DEC-022: A migracao para AWS serverless completa sera avaliada como evolucao faseada, nao como troca imediata do MVP atual.
+
+Motivo:
+
+- Amplify Hosting, Lambda, API Gateway, S3 e Cognito fazem sentido para reduzir
+  custo fixo e manter a operacao dentro da AWS.
+- Cognito e S3 podem ser migrados em fases com menor impacto no modelo de dados.
+- DynamoDB pode reduzir custo operacional, mas exige modelagem por padroes de
+  acesso e pode dificultar consultas analiticas financeiras se adotado antes da
+  POC.
+- O MVP ainda precisa priorizar validacao funcional de importacao, regras,
+  transacoes e indicadores antes de uma troca ampla de persistencia.
+
+DEC-023: Ambientes com dados reais devem bloquear auth de demo, CORS aberto e logs com dados financeiros.
+
+Motivo:
+
+- Dados financeiros exigem minimizacao de exposicao e rastreabilidade.
+- Demo/local auth e origens locais sao uteis para validacao MVP, mas nao podem
+  permanecer ativos em producao real.
+- Logs de infraestrutura devem apoiar operacao sem armazenar payload financeiro,
+  nomes reais de arquivos, descricoes ou valores.
+- Guardrails de conta AWS, IAM, API Gateway, Lambda, CloudWatch e S3 devem ser
+  tratados como requisito de prontidao para producao.
+
 R-007: Banco gratuito pode impor limites de armazenamento, conexoes ou pausa por inatividade.
 
 Mitigacao:
@@ -253,6 +278,35 @@ Mitigacao:
 - Manter embedding como fase posterior ao MVP de ingestao.
 - Nao executar embedding local na Lambda sincrona de upload/importacao.
 - Se necessario, usar Lambda separada com container image e processamento em lote.
+
+R-012: Migrar o banco principal para DynamoDB sem POC pode reduzir flexibilidade de dashboards, filtros e auditoria.
+
+Mitigacao:
+
+- Mapear padroes de acesso antes de desenhar tabelas e indices.
+- Provar listagem paginada, ordenacao, dashboard mensal, ranking por categoria,
+  qualidade de dados, regras e auditoria sem scans como caminho principal.
+- Comparar custo e complexidade com PostgreSQL atual e com arquitetura hibrida.
+- Manter SQLAlchemy/Alembic e contratos atuais como referencia ate a decisao
+  tecnica ser validada.
+
+R-013: Manter demo/local auth, CORS amplo ou logs detalhados em ambiente online pode expor dados financeiros.
+
+Mitigacao:
+
+- Desabilitar `ALLOW_LOCAL_AUTH` antes de usar dados reais.
+- Restringir CORS de producao a dominios oficiais.
+- Bloquear promocao de producao quando configuracoes inseguras estiverem ativas.
+- Registrar somente metadados operacionais nos logs, com retencao curta.
+
+R-014: Configuracao permissiva de IAM, S3 ou API Gateway pode permitir acesso indevido ou abuso de custo.
+
+Mitigacao:
+
+- Usar GitHub OIDC e roles de menor privilegio.
+- Manter S3 privado com Block Public Access, criptografia e lifecycle.
+- Configurar throttling, budgets, CloudTrail e alertas.
+- Avaliar WAF antes de abrir uso para usuarios externos ou dados reais.
 
 ## Perguntas Abertas
 

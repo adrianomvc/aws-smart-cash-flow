@@ -87,6 +87,12 @@ variable "backend_log_retention_days" {
   default     = 14
 }
 
+variable "api_gateway_log_retention_days" {
+  description = "CloudWatch log retention for API Gateway access logs."
+  type        = number
+  default     = 14
+}
+
 variable "backend_cors_origins" {
   description = "Allowed browser origins for API Gateway and FastAPI CORS."
   type        = list(string)

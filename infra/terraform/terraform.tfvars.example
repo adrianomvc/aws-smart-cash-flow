@@ -20,6 +20,7 @@ backend_lambda_package_path = "../../backend/build/backend-lambda.zip"
 backend_lambda_memory_size  = 512
 backend_lambda_timeout_seconds = 30
 backend_log_retention_days  = 14
+api_gateway_log_retention_days = 14
 
 backend_cors_origins = [
   "http://localhost:5173",
