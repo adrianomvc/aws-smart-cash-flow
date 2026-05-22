@@ -1,7 +1,6 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 from hashlib import sha256
-from unicodedata import normalize
 from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile, status
@@ -16,10 +15,21 @@ from app.db.models import (
     SourceFile,
     Transaction,
 )
-from app.domain.imports import ImportResult, ImportStatus, ParsedTransaction, SourceKind
+from app.domain.imports import (
+    ImportPreviewResult,
+    ImportResult,
+    ImportStatus,
+    ParsedTransaction,
+    PreviewTransaction,
+    SourceKind,
+)
 from app.services.categorization_service import CategorizationService
 from app.services.file_classifier import classify_file
-from app.services.parsers import parse_credit_card_csv, parse_txt_bank_statement
+from app.services.parsers import (
+    normalize_transaction_description,
+    parse_credit_card_csv,
+    parse_txt_bank_statement,
+)
 from app.services.storage_service import StorageService
 from app.services.workspace_service import WorkspaceService
 
@@ -31,7 +41,12 @@ class ImportService:
         self.db = db
         self.storage = storage or StorageService()
 
-    async def process_upload(self, auth: AuthContext, file: UploadFile) -> ImportResult:
+    async def process_upload(
+        self,
+        auth: AuthContext,
+        file: UploadFile,
+        source_kind: str | None = None,
+    ) -> ImportResult:
         filename = file.filename or "upload"
         raw_bytes = await file.read()
         _, workspace, _ = WorkspaceService(self.db).get_or_create_current_workspace(auth)
@@ -48,9 +63,10 @@ class ImportService:
                 filename=filename,
                 mime_type=file.content_type or "application/octet-stream",
                 storage_bucket=existing_source_file.storage_bucket,
-                storage_path=existing_source_file.storage_path,
-                content=raw_bytes,
-            )
+            storage_path=existing_source_file.storage_path,
+            content=raw_bytes,
+            source_kind=source_kind,
+        )
 
         source_file_id = str(uuid4())
         stored_file = self.storage.store_original_file(
@@ -67,6 +83,102 @@ class ImportService:
             storage_path=stored_file.path,
             content=raw_bytes,
             source_file_id=source_file_id,
+            source_kind=source_kind,
+        )
+
+    async def preview_upload(
+        self,
+        auth: AuthContext,
+        file: UploadFile,
+        source_kind: str | None = None,
+    ) -> ImportPreviewResult:
+        filename = file.filename or "upload"
+        raw_bytes = await file.read()
+        return self.preview_bytes(
+            auth=auth,
+            filename=filename,
+            content=raw_bytes,
+            source_kind=source_kind,
+        )
+
+    def preview_bytes(
+        self,
+        auth: AuthContext,
+        filename: str,
+        content: bytes,
+        source_kind: str | None = None,
+    ) -> ImportPreviewResult:
+        suffix = filename.rsplit(".", maxsplit=1)[-1].lower() if "." in filename else ""
+        if suffix not in {"txt", "csv"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only TXT and CSV files are supported in MVP 1",
+            )
+        if len(content) > self.max_upload_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="File exceeds MVP upload limit",
+            )
+        try:
+            text_content = content.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File must be encoded as UTF-8",
+            ) from exc
+
+        parsed_source_kind = self._resolve_source_kind(filename, text_content, source_kind)
+        parse_result = self._parse(parsed_source_kind, text_content)
+        _, workspace, _ = WorkspaceService(self.db).get_or_create_current_workspace(auth)
+        content_hash = sha256(content).hexdigest()
+        duplicate_file = self.db.scalar(
+            select(SourceFile.id).where(
+                SourceFile.workspace_id == workspace.id,
+                SourceFile.content_hash == content_hash,
+            )
+        ) is not None
+        source_type = self._source_type(parsed_source_kind.value)
+        duplicate_rows = 0
+        preview_items: list[PreviewTransaction] = []
+        for transaction in parse_result.transactions:
+            natural_key = self._natural_transaction_dedupe_key(
+                workspace_id=workspace.id,
+                source_type=source_type,
+                transaction_date=transaction.transaction_date.isoformat(),
+                raw_description=transaction.raw_description,
+                amount=self._normalize_amount(transaction.amount),
+                direction=transaction.direction.value,
+            )
+            duplicate = self.db.scalar(
+                select(Transaction.id).where(
+                    Transaction.workspace_id == workspace.id,
+                    Transaction.natural_dedupe_key == natural_key,
+                )
+            ) is not None
+            if duplicate:
+                duplicate_rows += 1
+            if len(preview_items) < 50:
+                preview_items.append(
+                    PreviewTransaction(
+                        source_line=transaction.source_line,
+                        transaction_date=transaction.transaction_date,
+                        description=transaction.description,
+                        amount=transaction.amount,
+                        direction=transaction.direction,
+                        duplicate=duplicate,
+                    )
+                )
+
+        return ImportPreviewResult(
+            filename=filename,
+            source_kind=parsed_source_kind,
+            duplicate_file=duplicate_file,
+            total_rows=parse_result.total_rows,
+            valid_rows=len(parse_result.transactions),
+            error_rows=len(parse_result.errors),
+            duplicate_rows=len(parse_result.transactions) if duplicate_file else duplicate_rows,
+            items=preview_items,
+            errors=parse_result.errors[:50],
         )
 
     def import_bytes(
@@ -78,6 +190,7 @@ class ImportService:
         storage_path: str,
         content: bytes,
         source_file_id: str | None = None,
+        source_kind: str | None = None,
     ) -> ImportResult:
         suffix = filename.rsplit(".", maxsplit=1)[-1].lower() if "." in filename else ""
         if suffix not in {"txt", "csv"}:
@@ -100,8 +213,8 @@ class ImportService:
                 detail="File must be encoded as UTF-8",
             ) from exc
 
-        source_kind = classify_file(filename, text_content)
-        parse_result = self._parse(source_kind, text_content)
+        parsed_source_kind = self._resolve_source_kind(filename, text_content, source_kind)
+        parse_result = self._parse(parsed_source_kind, text_content)
 
         _, workspace, _ = WorkspaceService(self.db).get_or_create_current_workspace(auth)
         workspace_id = workspace.id
@@ -145,7 +258,7 @@ class ImportService:
             size_bytes=len(content),
             storage_bucket=storage_bucket,
             storage_path=storage_path,
-            source_kind=source_kind.value,
+            source_kind=parsed_source_kind.value,
             created_by_user_id=auth.user_id,
         )
         import_job = self._create_import_job(
@@ -164,7 +277,7 @@ class ImportService:
             workspace_id=workspace_id,
             source_file=source_file,
             import_job=import_job,
-            source_kind=source_kind,
+            source_kind=parsed_source_kind,
             content=text_content,
             valid_lines={transaction.source_line for transaction in parse_result.transactions},
             invalid_lines={error.source_line for error in parse_result.errors if error.source_line},
@@ -290,6 +403,28 @@ class ImportService:
             detail="Unsupported or unrecognized file layout",
         )
 
+    def _resolve_source_kind(
+        self,
+        filename: str,
+        content: str,
+        source_kind: str | None,
+    ) -> SourceKind:
+        if not source_kind or source_kind == "auto":
+            return classify_file(filename, content)
+        try:
+            resolved = SourceKind(source_kind)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid source_kind. Use auto, bank_statement_txt, or credit_card_csv.",
+            ) from exc
+        if resolved == SourceKind.UNKNOWN:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid source_kind. Use auto, bank_statement_txt, or credit_card_csv.",
+            )
+        return resolved
+
     def _create_import_job(
         self,
         workspace_id: str,
@@ -398,10 +533,7 @@ class ImportService:
         return sha256(raw_key.encode("utf-8")).hexdigest()
 
     def _normalize_description(self, value: str) -> str:
-        without_accents = "".join(
-            char for char in normalize("NFKD", value) if char.encode("ascii", "ignore") != b""
-        )
-        return " ".join(without_accents.upper().split())
+        return normalize_transaction_description(value)
 
     def _normalize_amount(self, value: Decimal) -> str:
         return str(value.quantize(Decimal("0.01")))

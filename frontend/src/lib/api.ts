@@ -98,6 +98,33 @@ export type CategorizationRuleRead = {
   created_at: string;
 };
 
+export type ImportPreviewItem = {
+  source_line: number;
+  transaction_date: string;
+  description: string;
+  amount: string;
+  direction: string;
+  duplicate: boolean;
+};
+
+export type ImportPreviewResult = {
+  filename: string;
+  source_kind: string;
+  duplicate_file: boolean;
+  total_rows: number;
+  valid_rows: number;
+  error_rows: number;
+  duplicate_rows: number;
+  items: ImportPreviewItem[];
+  errors: Array<{
+    source_line: number | null;
+    field_name: string | null;
+    raw_value: string | null;
+    error_code: string;
+    message: string;
+  }>;
+};
+
 export type RulePreviewItem = {
   transaction_id: string;
   transaction_date: string;
@@ -144,11 +171,52 @@ export type MonthlyCashflowItem = {
   transaction_count: number;
 };
 
+export type WeekdaySpendingItem = {
+  weekday: number;
+  weekday_name: string;
+  amount: string;
+  count: number;
+  average_amount: string;
+  share_ratio: string | null;
+};
+
 export type CategoryRankingItem = {
   category_id: string | null;
   category_name: string;
   amount: string;
   count: number;
+  share_ratio: string | null;
+  average_amount: string;
+};
+
+export type MerchantRankingItem = {
+  description: string;
+  amount: string;
+  count: number;
+};
+
+export type CategoryGrowthAlertItem = {
+  category_id: string;
+  category_name: string;
+  current_amount: string;
+  previous_amount: string;
+  change_amount: string;
+  change_ratio: string;
+  current_count: number;
+  previous_count: number;
+  previous_date_from: string;
+  previous_date_to: string;
+};
+
+export type CreditCardPaymentMatchItem = {
+  bank_transaction_id: string;
+  card_transaction_id: string;
+  amount: string;
+  bank_date: string;
+  card_date: string;
+  date_delta_days: number;
+  bank_description: string;
+  card_description: string;
 };
 
 export type DataQuality = {
@@ -159,6 +227,12 @@ export type DataQuality = {
   categorized_ratio: string | null;
   imports_with_errors: number;
   duplicate_imports: number;
+};
+
+export type DescriptionNormalizationResult = {
+  workspace_id: string;
+  scanned_count: number;
+  changed_count: number;
 };
 
 export type ListResponse<T> = {
@@ -217,25 +291,49 @@ export function getMonthlyCashflow(session: ApiSession, query: string) {
   return apiRequest<ListResponse<MonthlyCashflowItem>>(`/dashboard/monthly-cashflow${query}`, session);
 }
 
+export function getWeekdaySpending(session: ApiSession, query: string) {
+  return apiRequest<ListResponse<WeekdaySpendingItem>>(`/dashboard/weekday-spending${query}`, session);
+}
+
 export function getCategoryRanking(session: ApiSession, query: string) {
   return apiRequest<ListResponse<CategoryRankingItem>>(`/dashboard/category-ranking${query}`, session);
+}
+
+export function getMerchantRanking(session: ApiSession, query: string) {
+  return apiRequest<ListResponse<MerchantRankingItem>>(`/dashboard/merchant-ranking${query}`, session);
+}
+
+export function getCategoryGrowthAlerts(session: ApiSession, query: string) {
+  return apiRequest<ListResponse<CategoryGrowthAlertItem>>(`/dashboard/category-growth-alerts${query}`, session);
+}
+
+export function getCreditCardPaymentMatches(session: ApiSession, query: string) {
+  return apiRequest<ListResponse<CreditCardPaymentMatchItem>>(`/dashboard/credit-card-payment-matches${query}`, session);
 }
 
 export function getDataQuality(session: ApiSession, query: string) {
   return apiRequest<DataQuality>(`/dashboard/data-quality${query}`, session);
 }
 
-export function getImports(session: ApiSession) {
-  return apiRequest<ListResponse<ImportJobRead>>("/imports?limit=20", session);
+export function getImports(session: ApiSession, query = "?limit=20") {
+  return apiRequest<ListResponse<ImportJobRead>>(`/imports${query}`, session);
 }
 
 export function getImportErrors(session: ApiSession, importId: string) {
   return apiRequest<ListResponse<ImportErrorRead>>(`/imports/${importId}/errors`, session);
 }
 
-export function uploadImport(session: ApiSession, file: File) {
+export function previewImport(session: ApiSession, file: File, sourceKind = "auto") {
   const data = new FormData();
   data.append("file", file);
+  data.append("source_kind", sourceKind);
+  return apiRequest<ImportPreviewResult>("/imports/preview", session, { method: "POST", body: data });
+}
+
+export function uploadImport(session: ApiSession, file: File, sourceKind = "auto") {
+  const data = new FormData();
+  data.append("file", file);
+  data.append("source_kind", sourceKind);
   return apiRequest<{
     import_job_id: string;
     source_file_id: string;
@@ -254,11 +352,28 @@ export function getTransactions(session: ApiSession, query: string) {
 export function updateTransactionCategory(
   session: ApiSession,
   transactionId: string,
-  categoryId: string,
+  categoryId: string | null,
 ) {
   return apiRequest<TransactionRead>(`/transactions/${transactionId}/category`, session, {
     method: "PATCH",
     body: { category_id: categoryId },
+  });
+}
+
+export function deleteTransaction(session: ApiSession, transactionId: string) {
+  return apiRequest<void>(`/transactions/${transactionId}`, session, { method: "DELETE" });
+}
+
+export function updateTransactionDirection(session: ApiSession, transactionId: string, direction: string) {
+  return apiRequest<TransactionRead>(`/transactions/${transactionId}/direction`, session, {
+    method: "PATCH",
+    body: { direction },
+  });
+}
+
+export function normalizeTransactionDescriptions(session: ApiSession) {
+  return apiRequest<DescriptionNormalizationResult>("/transactions/normalize-descriptions", session, {
+    method: "POST",
   });
 }
 

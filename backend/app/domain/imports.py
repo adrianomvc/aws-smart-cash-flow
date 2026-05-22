@@ -58,3 +58,24 @@ class ImportResult(BaseModel):
     valid_rows: int
     error_rows: int
     duplicate_rows: int = 0
+
+
+class PreviewTransaction(BaseModel):
+    source_line: int
+    transaction_date: date
+    description: str
+    amount: Decimal
+    direction: TransactionDirection
+    duplicate: bool = False
+
+
+class ImportPreviewResult(BaseModel):
+    filename: str
+    source_kind: SourceKind
+    duplicate_file: bool
+    total_rows: int
+    valid_rows: int
+    error_rows: int
+    duplicate_rows: int = 0
+    items: list[PreviewTransaction] = Field(default_factory=list)
+    errors: list[ParseError] = Field(default_factory=list)

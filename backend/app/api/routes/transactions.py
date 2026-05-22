@@ -4,19 +4,24 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import and_, asc, desc, func, or_, select
+from sqlalchemy import and_, asc, delete, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import AuthContext, AuthDependency
 from app.db.models import Category, Transaction, TransactionCategoryAssignment
 from app.db.session import get_db
+from app.services.parsers import normalize_transaction_description
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 DbDependency = Depends(get_db)
 
 
 class CategoryPatch(BaseModel):
-    category_id: str
+    category_id: str | None
+
+
+class DirectionPatch(BaseModel):
+    direction: str
 
 
 class CategoryAssignmentRead(BaseModel):
@@ -56,6 +61,12 @@ class TransactionListResponse(BaseModel):
     offset: int
 
 
+class DescriptionNormalizationResponse(BaseModel):
+    workspace_id: str
+    scanned_count: int
+    changed_count: int
+
+
 @router.get("")
 async def list_transactions(
     auth: AuthContext = AuthDependency,
@@ -63,8 +74,10 @@ async def list_transactions(
     date_from: date | None = None,
     date_to: date | None = None,
     category_id: str | None = None,
+    import_job_id: str | None = None,
     source_type: str | None = None,
     direction: str | None = None,
+    weekday: int | None = Query(default=None, ge=0, le=6),
     q: str | None = None,
     sort_by: str = Query(default="transaction_date"),
     sort_dir: str = Query(default="desc"),
@@ -102,10 +115,14 @@ async def list_transactions(
         filters.append(Transaction.transaction_date >= date_from)
     if date_to is not None:
         filters.append(Transaction.transaction_date <= date_to)
+    if import_job_id is not None:
+        filters.append(Transaction.import_job_id == import_job_id)
     if source_type is not None:
         filters.append(Transaction.source_type == source_type)
     if direction is not None:
         filters.append(Transaction.direction == direction)
+    if weekday is not None:
+        filters.append(func.extract("dow", Transaction.transaction_date) == (weekday + 1) % 7)
     if q:
         search = f"%{q.casefold()}%"
         filters.append(
@@ -115,11 +132,19 @@ async def list_transactions(
             )
         )
     if category_id is not None:
+        category_ids = [category_id]
+        child_category_ids = db.scalars(
+            select(Category.id).where(
+                Category.workspace_id == auth.workspace_id,
+                Category.parent_category_id == category_id,
+            )
+        ).all()
+        category_ids.extend(child_category_ids)
         filters.append(
             Transaction.id.in_(
                 select(TransactionCategoryAssignment.transaction_id).where(
                     TransactionCategoryAssignment.workspace_id == auth.workspace_id,
-                    TransactionCategoryAssignment.category_id == category_id,
+                    TransactionCategoryAssignment.category_id.in_(category_ids),
                 )
             )
         )
@@ -174,6 +199,19 @@ async def update_transaction_category(
     if transaction is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
 
+    if payload.category_id is None:
+        assignment = db.scalar(
+            select(TransactionCategoryAssignment).where(
+                TransactionCategoryAssignment.transaction_id == transaction.id,
+                TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+            )
+        )
+        if assignment is not None:
+            db.delete(assignment)
+            db.commit()
+            db.refresh(transaction)
+        return _transaction_read(transaction=transaction, assignment=None)
+
     category = db.scalar(
         select(Category).where(
             Category.id == payload.category_id,
@@ -212,6 +250,89 @@ async def update_transaction_category(
     db.refresh(transaction)
     db.refresh(assignment)
     return _transaction_read(transaction=transaction, assignment=assignment)
+
+
+@router.patch("/{transaction_id}/direction")
+async def update_transaction_direction(
+    transaction_id: str,
+    payload: DirectionPatch,
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> TransactionRead:
+    if payload.direction not in {"debit", "credit", "payment"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid direction. Use debit, credit, or payment.",
+        )
+    transaction = db.scalar(
+        select(Transaction).where(
+            Transaction.id == transaction_id,
+            Transaction.workspace_id == auth.workspace_id,
+        )
+    )
+    if transaction is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
+
+    transaction.direction = payload.direction
+    assignment = db.scalar(
+        select(TransactionCategoryAssignment).where(
+            TransactionCategoryAssignment.transaction_id == transaction.id,
+            TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+        )
+    )
+    db.commit()
+    db.refresh(transaction)
+    if assignment is not None:
+        db.refresh(assignment)
+    return _transaction_read(transaction=transaction, assignment=assignment)
+
+
+@router.delete("/{transaction_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_transaction(
+    transaction_id: str,
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> None:
+    transaction = db.scalar(
+        select(Transaction).where(
+            Transaction.id == transaction_id,
+            Transaction.workspace_id == auth.workspace_id,
+        )
+    )
+    if transaction is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
+
+    db.execute(
+        delete(TransactionCategoryAssignment).where(
+            TransactionCategoryAssignment.transaction_id == transaction.id,
+            TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+        )
+    )
+    db.delete(transaction)
+    db.commit()
+
+
+@router.post("/normalize-descriptions")
+async def normalize_transaction_descriptions(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> DescriptionNormalizationResponse:
+    transactions = db.scalars(
+        select(Transaction).where(Transaction.workspace_id == auth.workspace_id)
+    ).all()
+    changed_count = 0
+    for transaction in transactions:
+        normalized_description = normalize_transaction_description(transaction.raw_description)
+        if transaction.description != normalized_description:
+            transaction.description = normalized_description
+            changed_count += 1
+
+    db.commit()
+    return DescriptionNormalizationResponse(
+        workspace_id=auth.workspace_id,
+        scanned_count=len(transactions),
+        changed_count=changed_count,
+    )
 
 
 def _transaction_read(

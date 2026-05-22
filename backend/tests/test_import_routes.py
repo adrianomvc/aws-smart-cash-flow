@@ -82,8 +82,140 @@ def test_list_imports_returns_jobs_for_current_workspace(
     payload = response.json()
     assert payload["workspace_id"] == auth.workspace_id
     assert [item["id"] for item in payload["items"]] == [first.import_job_id]
+    assert payload["total"] == 1
+    assert payload["limit"] == 50
+    assert payload["offset"] == 0
     assert payload["items"][0]["source_file"]["original_filename"] == "extrato.txt"
     assert payload["items"][0]["duplicate_rows"] == 0
+
+
+def test_create_import_accepts_manual_source_kind(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/v1/imports",
+        data={"source_kind": "credit_card_csv"},
+        files={
+            "file": (
+                "fatura-renomeada.txt",
+                b"data,lan\xc3\xa7amento,valor\n2026-05-08,PADARIA,26.06\n",
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["valid_rows"] == 1
+
+    list_response = client.get("/v1/imports")
+    assert list_response.status_code == 200
+    assert list_response.json()["items"][0]["source_file"]["source_kind"] == "credit_card_csv"
+
+
+def test_preview_import_parses_without_persisting(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/v1/imports/preview",
+        data={"source_kind": "credit_card_csv"},
+        files={
+            "file": (
+                "preview.txt",
+                b"data,lan\xc3\xa7amento,valor\n2026-05-08,PADARIA,26.06\n2026-99-08,ERRO,10.00\n",
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["filename"] == "preview.txt"
+    assert payload["source_kind"] == "credit_card_csv"
+    assert payload["duplicate_file"] is False
+    assert payload["total_rows"] == 2
+    assert payload["valid_rows"] == 1
+    assert payload["error_rows"] == 1
+    assert payload["items"][0]["description"] == "PADARIA"
+    assert payload["errors"][0]["error_code"] == "invalid_date"
+    assert client.get("/v1/imports").json()["total"] == 0
+
+
+def test_list_imports_filters_by_status_filename_and_paginates(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    service = ImportService(db_session)
+    service.import_bytes(
+        auth=auth,
+        filename="extrato-janeiro.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato-janeiro.txt",
+        content=b"01/01/2026;PIX MERCADO;-10,00\n",
+    )
+    duplicate = service.import_bytes(
+        auth=auth,
+        filename="extrato-janeiro-copia.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato-janeiro-copia.txt",
+        content=b"01/01/2026;PIX MERCADO;-10,00\n",
+    )
+    service.import_bytes(
+        auth=auth,
+        filename="fatura-fevereiro.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/fatura-fevereiro.csv",
+        content=b"data,lan\xc3\xa7amento,valor\n2026-02-01,PADARIA,20.00\n",
+    )
+
+    response = client.get(
+        "/v1/imports",
+        params={"status": "duplicate_file", "q": "janeiro", "limit": 1, "offset": 0},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert payload["limit"] == 1
+    assert payload["offset"] == 0
+    assert [item["id"] for item in payload["items"]] == [duplicate.import_job_id]
+    assert payload["items"][0]["source_file"]["original_filename"] == "extrato-janeiro.txt"
+
+
+def test_list_imports_filters_jobs_with_errors(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    errored = ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="fatura-com-erro.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/fatura-com-erro.csv",
+        content=b"data,lan\xc3\xa7amento,valor\n2026-05-08,PADARIA,26.06\n2026-99-08,DATA INVALIDA,10.00\n",
+    )
+    ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="fatura-ok.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/fatura-ok.csv",
+        content=b"data,lan\xc3\xa7amento,valor\n2026-06-08,UBER,12.50\n",
+    )
+
+    response = client.get("/v1/imports", params={"has_errors": True})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert [item["id"] for item in payload["items"]] == [errored.import_job_id]
+    assert payload["items"][0]["error_rows"] == 1
 
 
 def test_get_import_derives_duplicate_rows_for_overlapping_file(

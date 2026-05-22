@@ -1,13 +1,14 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import AuthContext, AuthDependency
 from app.db.models import ImportError, ImportJob, SourceFile
 from app.db.session import get_db
+from app.domain.imports import ImportPreviewResult
 from app.services.import_service import ImportService
 
 router = APIRouter(prefix="/imports", tags=["imports"])
@@ -54,6 +55,9 @@ class ImportErrorRead(BaseModel):
 class ImportListResponse(BaseModel):
     workspace_id: str
     items: list[ImportJobRead]
+    total: int
+    limit: int
+    offset: int
 
 
 class ImportErrorListResponse(BaseModel):
@@ -67,35 +71,60 @@ async def create_import(
     auth: AuthContext = AuthDependency,
     file: UploadFile = UploadFileDependency,
     db: Session = DbDependency,
+    source_kind: str | None = Form(default=None),
 ) -> dict[str, object]:
-    result = await ImportService(db).process_upload(auth=auth, file=file)
+    result = await ImportService(db).process_upload(auth=auth, file=file, source_kind=source_kind)
     return result.model_dump()
+
+
+@router.post("/preview")
+async def preview_import(
+    auth: AuthContext = AuthDependency,
+    file: UploadFile = UploadFileDependency,
+    db: Session = DbDependency,
+    source_kind: str | None = Form(default=None),
+) -> ImportPreviewResult:
+    return await ImportService(db).preview_upload(auth=auth, file=file, source_kind=source_kind)
 
 
 @router.get("")
 async def list_imports(
     auth: AuthContext = AuthDependency,
     db: Session = DbDependency,
+    has_errors: bool = False,
+    q: str | None = None,
     status_filter: str | None = Query(default=None, alias="status"),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> ImportListResponse:
+    filters = [ImportJob.workspace_id == auth.workspace_id]
+    if status_filter:
+        filters.append(ImportJob.status == status_filter)
+    if has_errors:
+        filters.append(ImportJob.error_rows > 0)
+    if q:
+        filters.append(SourceFile.original_filename.ilike(f"%{q}%"))
+
+    total = db.scalar(
+        select(func.count())
+        .select_from(ImportJob)
+        .join(SourceFile, SourceFile.id == ImportJob.source_file_id)
+        .where(*filters)
+    ) or 0
     query = (
         select(ImportJob, SourceFile)
         .join(SourceFile, SourceFile.id == ImportJob.source_file_id)
-        .where(ImportJob.workspace_id == auth.workspace_id)
+        .where(*filters)
         .order_by(desc(ImportJob.created_at), desc(ImportJob.id))
         .limit(limit)
         .offset(offset)
     )
-    if status_filter:
-        query = query.where(ImportJob.status == status_filter)
 
     items = [
         _import_job_read(import_job=import_job, source_file=source_file)
         for import_job, source_file in db.execute(query).all()
     ]
-    return ImportListResponse(workspace_id=auth.workspace_id, items=items)
+    return ImportListResponse(workspace_id=auth.workspace_id, items=items, total=total, limit=limit, offset=offset)
 
 
 @router.get("/{import_job_id}")
