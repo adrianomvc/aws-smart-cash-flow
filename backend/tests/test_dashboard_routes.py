@@ -313,7 +313,10 @@ def test_dashboard_category_growth_alerts_compare_previous_period(
     transporte_id = client.post("/v1/categories", json={"name": "Transporte"}).json()["id"]
     for query, category_id in (("ifood", alimentacao_id), ("uber", transporte_id)):
         for transaction in client.get(f"/v1/transactions?q={query}").json()["items"]:
-            client.patch(f"/v1/transactions/{transaction['id']}/category", json={"category_id": category_id})
+            client.patch(
+                f"/v1/transactions/{transaction['id']}/category",
+                json={"category_id": category_id},
+            )
 
     response = client.get(
         "/v1/dashboard/category-growth-alerts?date_from=2026-05-01&date_to=2026-05-31&limit=3"

@@ -198,7 +198,9 @@ def test_list_imports_filters_jobs_with_errors(
         mime_type="text/csv",
         storage_bucket="financial-files",
         storage_path=f"{auth.workspace_id}/fatura-com-erro.csv",
-        content=b"data,lan\xc3\xa7amento,valor\n2026-05-08,PADARIA,26.06\n2026-99-08,DATA INVALIDA,10.00\n",
+        content=b"data,lan\xc3\xa7amento,valor\n"
+        b"2026-05-08,PADARIA,26.06\n"
+        b"2026-99-08,DATA INVALIDA,10.00\n",
     )
     ImportService(db_session).import_bytes(
         auth=auth,

@@ -157,8 +157,14 @@ class DashboardService:
         for item in ranked:
             amount = Decimal(item["amount"])
             count = int(item["count"])
-            item["share_ratio"] = (amount / total_amount).quantize(Decimal("0.0001")) if total_amount > ZERO else None
-            item["average_amount"] = (amount / Decimal(count)).quantize(Decimal("0.01")) if count else ZERO
+            item["share_ratio"] = (
+                (amount / total_amount).quantize(Decimal("0.0001"))
+                if total_amount > ZERO
+                else None
+            )
+            item["average_amount"] = (
+                (amount / Decimal(count)).quantize(Decimal("0.01")) if count else ZERO
+            )
         return ranked[:limit]
 
     def merchant_ranking(
@@ -299,8 +305,14 @@ class DashboardService:
             amount = Decimal(bucket["amount"])
             count = int(bucket["count"])
             bucket["amount"] = amount.quantize(Decimal("0.01"))
-            bucket["average_amount"] = (amount / Decimal(count)).quantize(Decimal("0.01")) if count else ZERO
-            bucket["share_ratio"] = (amount / total_amount).quantize(Decimal("0.0001")) if total_amount > ZERO else None
+            bucket["average_amount"] = (
+                (amount / Decimal(count)).quantize(Decimal("0.01")) if count else ZERO
+            )
+            bucket["share_ratio"] = (
+                (amount / total_amount).quantize(Decimal("0.0001"))
+                if total_amount > ZERO
+                else None
+            )
 
         return list(buckets.values())
 
@@ -382,7 +394,10 @@ class DashboardService:
         card_payments = [
             transaction
             for transaction in transactions
-            if transaction.direction == "payment" and transaction.source_type == "credit_card_statement"
+            if (
+                transaction.direction == "payment"
+                and transaction.source_type == "credit_card_statement"
+            )
         ]
         matches: list[dict[str, object]] = []
         for bank_payment in bank_payments:

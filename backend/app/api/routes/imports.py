@@ -124,7 +124,13 @@ async def list_imports(
         _import_job_read(import_job=import_job, source_file=source_file)
         for import_job, source_file in db.execute(query).all()
     ]
-    return ImportListResponse(workspace_id=auth.workspace_id, items=items, total=total, limit=limit, offset=offset)
+    return ImportListResponse(
+        workspace_id=auth.workspace_id,
+        items=items,
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/{import_job_id}")

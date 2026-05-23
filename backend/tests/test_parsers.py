@@ -168,13 +168,19 @@ def test_normalize_transaction_description_cleans_card_decorations() -> None:
 
 def test_normalize_transaction_description_removes_long_numeric_reference_tokens() -> None:
     assert normalize_transaction_description("BKI PM SAO PAU 626400399") == "BKI PM SAO PAU"
-    assert normalize_transaction_description("PAYPAL * MERCADO LIVRE 4029357733") == "PAYPAL MERCADO LIVRE"
+    assert (
+        normalize_transaction_description("PAYPAL * MERCADO LIVRE 4029357733")
+        == "PAYPAL MERCADO LIVRE"
+    )
     assert normalize_transaction_description("UBER * TRIP 123456") == "UBER TRIP"
 
 
 def test_normalize_transaction_description_preserves_semantic_channel_and_merchant() -> None:
     assert normalize_transaction_description("MERCADOLIVRE*LOJA EXEMPLO") == "MERCADO LIVRE"
-    assert normalize_transaction_description("99FOOD*RESTAURANTE EXEMPLO") == "99FOOD RESTAURANTE EXEMPLO"
+    assert (
+        normalize_transaction_description("99FOOD*RESTAURANTE EXEMPLO")
+        == "99FOOD RESTAURANTE EXEMPLO"
+    )
     assert normalize_transaction_description("SHELL*POSTO EXEMPLO") == "SHELL POSTO EXEMPLO"
     assert normalize_transaction_description("SHOPEE*LOJA EXEMPLO") == "SHOPEE"
     assert normalize_transaction_description("AMAZONMKTPLC*LOJA EXEMPLO") == "AMAZON"

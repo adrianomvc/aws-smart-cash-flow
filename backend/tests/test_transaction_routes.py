@@ -251,7 +251,9 @@ def test_list_transactions_parent_category_filter_includes_direct_children(
     )
     other = Category(id=str(uuid4()), workspace_id=auth.workspace_id, name="Transporte")
     db_session.add_all([parent, child, other])
-    padaria = db_session.scalars(select(Transaction).where(Transaction.description == "PADARIA")).one()
+    padaria = db_session.scalars(
+        select(Transaction).where(Transaction.description == "PADARIA")
+    ).one()
     ifood = db_session.scalars(select(Transaction).where(Transaction.description == "IFOOD")).one()
     uber = db_session.scalars(select(Transaction).where(Transaction.description == "UBER")).one()
     db_session.add_all(
@@ -578,13 +580,18 @@ def test_delete_transaction_removes_current_workspace_transaction_and_assignment
 
     assert response.status_code == 204
     assert other_response.status_code == 404
-    assert db_session.scalars(select(Transaction).where(Transaction.id == transaction.id)).first() is None
+    assert (
+        db_session.scalars(select(Transaction).where(Transaction.id == transaction.id)).first()
+        is None
+    )
     assert db_session.scalars(
         select(TransactionCategoryAssignment).where(
             TransactionCategoryAssignment.transaction_id == transaction.id
         )
     ).first() is None
-    assert db_session.scalars(select(Transaction).where(Transaction.id == other_transaction.id)).one()
+    assert db_session.scalars(
+        select(Transaction).where(Transaction.id == other_transaction.id)
+    ).one()
 
 
 def test_normalize_transaction_descriptions_updates_current_workspace_only(
