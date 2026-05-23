@@ -251,6 +251,20 @@ Motivo:
 - Guardrails de conta AWS, IAM, API Gateway, Lambda, CloudWatch e S3 devem ser
   tratados como requisito de prontidao para producao.
 
+DEC-024: A evolucao do dashboard deve ser orientada por saude financeira e narrativa executiva.
+
+Motivo:
+
+- O usuario precisa responder rapidamente se esta saudavel, se pode gastar, se a
+  fatura cabe no caixa e quais categorias exigem acao.
+- Indicadores como burn rate, runway, saving rate, comprometimento, saldo
+  projetado e parcelado futuro entregam mais valor do que apenas listar gastos.
+- O dashboard deve contar a historia do periodo antes de abrir detalhes
+  operacionais, mantendo drill-down e rastreabilidade para transacoes.
+- Referencias visuais fornecidas em 2026-05-23 devem orientar a evolucao de UX,
+  mas a implementacao deve preservar simplicidade, responsividade e leitura de
+  produto financeiro de uso recorrente.
+
 R-007: Banco gratuito pode impor limites de armazenamento, conexoes ou pausa por inatividade.
 
 Mitigacao:

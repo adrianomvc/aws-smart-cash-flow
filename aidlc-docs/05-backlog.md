@@ -170,6 +170,39 @@ Aceite:
 - Textos e controles nao estouram em resolucoes comuns.
 - A experiencia evita visual de landing page e prioriza uso recorrente.
 
+US-076: Como usuario, quero uma estrutura de telas moderna e consistente para navegar por toda a minha vida financeira.
+
+Aceite:
+
+- A interface deve seguir uma navegacao lateral clara com as areas principais:
+  visao geral, fluxo de caixa, transacoes, cartoes, orcamentos, investimentos,
+  metas, relatorios, insights e configuracoes.
+- A tela de visao geral deve funcionar como resumo executivo e historia do
+  dinheiro no periodo.
+- A tela de fluxo de caixa deve focar em evolucao, resumo do periodo,
+  distribuicao de despesas e fluxo projetado.
+- A tela de transacoes deve priorizar busca, filtros, tabs de tipo financeiro,
+  tabela paginada, ordenacao e drill-down recebido de graficos.
+- A tela de cartoes deve consolidar fatura atual, limite, fechamento,
+  vencimento, parcelado futuro, recorrencias e distribuicao por categoria.
+- A tela de orcamentos deve comparar realizado, orcado, restante e percentual
+  consumido por categoria.
+- A tela de investimentos deve mostrar patrimonio total, rentabilidade,
+  distribuicao da carteira e evolucao mensal quando esses dados existirem.
+- A tela de metas deve acompanhar objetivo, progresso, prazo e valor faltante.
+- A tela de relatorios deve organizar analises como fluxo de caixa, despesas por
+  categoria, evolucao patrimonial, imposto de renda, comparacao mensal e
+  relatorio personalizado.
+- A tela de insights deve centralizar alertas, oportunidades, historico e
+  recomendacoes acionaveis.
+- A tela de configuracoes deve agrupar dados pessoais, notificacoes, seguranca,
+  categorias, formas de pagamento, moedas, conexoes bancarias, canais de contato
+  e importacao de dados.
+- Referencias visuais fornecidas em 2026-05-23 devem ser tratadas como direcao
+  de UX e nao como obrigacao de copiar layout pixel a pixel.
+- Mudancas de front relacionadas a essas telas devem ser agrupadas por pacote de
+  experiencia e testadas localmente antes da subida.
+
 ## Epic 6: Consulta e Categorizacao de Transacoes
 
 US-007: Como analista, quero consultar transacoes importadas por periodo, origem e descricao.
@@ -423,6 +456,27 @@ Aceite:
 
 ## Epic 7.1: Indicadores de Controle Financeiro
 
+Mapa de indicadores para evolucao do dashboard:
+
+- Camada 1, saude imediata: saldo de caixa atual, fluxo de caixa liquido, burn
+  rate e runway.
+- Camada 2, controle operacional: receita total por fonte, despesa total por
+  tipo, percentual de comprometimento da receita e saving rate.
+- Camada 3, cartao de credito: gasto no cartao do mes, comprometimento futuro do
+  cartao e percentual da receita comprometida com cartao.
+- Camada 4, inteligencia de produto: desvio contra media historica, top
+  categorias consumidoras, gastos recorrentes e gasto por dia.
+- Camada 5, previsibilidade: fluxo projetado 30/60/90 dias, saldo previsto no
+  vencimento e alerta de deficit futuro.
+- Camada 6, patrimonio: evolucao patrimonial e net worth.
+- KPIs obrigatorios de produto SaaS: fluxo liquido, saldo projetado, parcelado
+  futuro, burn rate e saving rate.
+- Organizacao visual desejada do dashboard: linha 1 com saldo atual, fluxo
+  liquido, burn rate e runway; linha 2 com receita, despesas, saving rate e
+  comprometimento; linha 3 com fatura atual, parcelado futuro, gastos recorrentes
+  e saldo projetado; linha 4 com top categorias, tendencia mensal, anomalias e
+  evolucao patrimonial.
+
 US-037: Como usuario, quero ver um resumo executivo mensal para entender rapidamente minha situacao financeira.
 
 Aceite:
@@ -533,6 +587,101 @@ Aceite:
 - Dashboard calcula saldo acumulado a partir de receitas e despesas importadas.
 - Indicador deixa claro que nao substitui saldo bancario real enquanto nao houver integracao bancaria.
 - Usuario pode filtrar por conta/origem quando essa informacao estiver disponivel.
+
+US-068: Como usuario, quero acompanhar saldo atual, burn rate e runway para entender minha saude financeira imediata.
+
+Aceite:
+
+- Dashboard exibe saldo atual informado ou calculado a partir das contas disponiveis.
+- Fluxo de caixa liquido continua sendo o KPI principal e deve indicar alerta
+  quando o periodo ficar negativo.
+- Burn rate calcula gasto medio mensal com base em despesas recorrentes e/ou media dos ultimos meses.
+- Runway calcula autonomia financeira como `saldo disponivel / burn rate`.
+- Indicadores deixam claro a origem dos dados e quando o calculo for estimado.
+- Quando nao houver saldo real integrado, a interface deve sinalizar que o saldo e uma estimativa operacional.
+
+US-069: Como usuario, quero ver comprometimento da receita para saber se meus gastos estao saudaveis.
+
+Aceite:
+
+- Dashboard calcula `% comprometimento` como `despesas totais / receita total`.
+- Dashboard calcula `saving rate` como `fluxo liquido / receita total`.
+- Receita total deve permitir separacao por fonte, como salario, freelance,
+  dividendos, cashback e outros.
+- Despesa total deve permitir separacao por tipo, como fixas, variaveis e
+  extraordinarias.
+- Indicadores usam faixas de leitura: excelente, saudavel, atencao e risco.
+- Valores devem respeitar o periodo filtrado e ignorar pagamentos de fatura para evitar dupla contagem.
+- Drill-down permite abrir receitas, despesas e pagamentos considerados no calculo.
+
+US-070: Como usuario, quero acompanhar comprometimento futuro do cartao para enxergar dividas invisiveis.
+
+Aceite:
+
+- Dashboard mostra fatura atual, gasto no cartao no periodo, parcelado futuro e recorrentes do cartao.
+- Parcelado futuro soma parcelas ainda nao vencidas quando houver informacao suficiente.
+- `% receita comprometida com cartao` compara fatura/compromisso do cartao com receita do periodo.
+- Indicador alerta quando o cartao ultrapassar limite configurado, inicialmente meta de referencia menor que 30% da receita.
+- A tela deve separar compra, fatura e pagamento para evitar dupla contagem.
+- Comprometimento futuro do cartao deve evidenciar divida invisivel gerada por
+  parcelas futuras e recorrencias do cartao.
+
+US-071: Como usuario, quero fluxo de caixa projetado para prever saldo nos proximos 30, 60 e 90 dias.
+
+Aceite:
+
+- Projecao considera receitas recorrentes, despesas recorrentes, parcelas futuras, assinaturas e faturas conhecidas.
+- Dashboard mostra saldo previsto em datas criticas, incluindo vencimento da fatura quando disponivel.
+- Sistema alerta quando houver risco de saldo negativo futuro.
+- Alerta de deficit futuro deve responder claramente quando o saldo pode ficar
+  negativo, em quantos dias e qual valor estimado.
+- Projecao deve indicar melhor cenario, pior cenario e premissas usadas quando houver dados suficientes.
+- Usuario consegue abrir os lancamentos ou recorrencias que sustentam a projecao.
+
+US-072: Como usuario, quero um score de saude financeira para resumir minha situacao sem esconder os detalhes.
+
+Aceite:
+
+- Score considera fluxo liquido, saving rate, comprometimento da receita, recorrencias, risco de deficit futuro, pendencias de categorizacao e qualidade dos dados.
+- Score deve ser explicavel, com os fatores positivos e negativos mais relevantes.
+- Score nao deve substituir os indicadores detalhados nem prometer resultado financeiro.
+- Interface deve permitir abrir os indicadores que explicam a nota.
+- Quando a qualidade dos dados for baixa, score deve aparecer como preliminar.
+
+US-073: Como usuario, quero uma visao de patrimonio e net worth para acompanhar ativos e passivos.
+
+Aceite:
+
+- Tela permite registrar ou importar saldos de contas, investimentos, previdencia, cripto, emprestimos, parcelas e outras dividas.
+- Net worth calcula `ativos - passivos`.
+- Evolucao patrimonial mostra tendencia mensal.
+- Dashboard diferencia fluxo de caixa operacional de patrimonio acumulado.
+- Dados patrimoniais devem ter auditoria de origem, data de referencia e ultima atualizacao.
+
+US-074: Como usuario, quero uma tela executiva de dashboard em formato de narrativa financeira para entender o mes rapidamente.
+
+Aceite:
+
+- Primeira visao conta a historia do periodo: recebeu, gastou, economizou, fatura atual e saldo projetado.
+- Linha principal prioriza saldo atual, fluxo liquido, burn rate, runway, saving rate e comprometimento.
+- Paineis abaixo mostram entradas x saidas, top categorias, cartoes, fluxo projetado e insights.
+- Layout deve seguir visual moderno, responsivo e focado em leitura rapida, inspirado nas referencias de tela fornecidas em 2026-05-23.
+- O dashboard deve permitir navegacao natural para telas dedicadas, como fluxo de
+  caixa, transacoes, cartoes, orcamentos, investimentos, metas, relatorios e
+  insights.
+- Mudancas visuais desse dashboard devem ser agrupadas em pacote unico de frontend e testadas localmente antes da subida.
+
+US-075: Como usuario, quero alertas premium com IA para receber recomendacoes acionaveis sobre minha saude financeira.
+
+Aceite:
+
+- Alertas detectam gasto acima da media historica, assinatura esquecida, queda de receita, risco de deficit futuro e recorrencia com aumento expressivo.
+- Alertas premium devem apoiar previsao de gasto do mes, risco de ficar negativo,
+  recomendacao automatica de corte e classificacao de saude financeira.
+- Cada alerta informa impacto financeiro, motivo e acao sugerida.
+- IA pode gerar recomendacao em linguagem natural, mas deve se apoiar em indicadores calculados e rastreaveis.
+- Usuario pode abrir as transacoes, categorias ou recorrencias que explicam o alerta.
+- Alertas devem respeitar minimizacao de dados sensiveis em prompts e logs.
 
 ## Epic 7.2: Copilot Financeiro Conversacional
 

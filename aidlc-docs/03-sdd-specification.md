@@ -373,6 +373,11 @@ Providers iniciais de IA:
 - Dashboard deve manter os indicadores principais primeiro, apresentar o fluxo
   mensal como grafico de contexto e exibir o storytelling logo abaixo desse
   grafico, antes dos paineis operacionais de detalhe.
+- A evolucao de UX deve prever uma suite de telas financeiras conectadas:
+  visao geral, fluxo de caixa, transacoes, cartoes, orcamentos, investimentos,
+  metas, relatorios, insights e configuracoes.
+- A visao geral deve ser um resumo executivo; telas dedicadas devem aprofundar o
+  tema sem duplicar todos os controles do dashboard.
 - Indicadores devem sempre respeitar `workspace_id` e filtros de periodo.
 - Despesas consideram transacoes com `direction = debit`.
 - Receitas consideram transacoes com `direction = credit`.
@@ -426,6 +431,31 @@ Providers iniciais de IA:
 - Indicadores acionaveis de qualidade de dados devem permitir navegar diretamente
   para a tela operacional relacionada quando houver pendencia, como revisao ou
   importacoes.
+- Evolucao do dashboard deve incluir indicadores de saude financeira: saldo
+  atual, fluxo liquido, burn rate, runway, saving rate, comprometimento da
+  receita, fatura atual, parcelado futuro, recorrencias, saldo projetado e risco
+  de deficit futuro.
+- A leitura de fluxo de caixa deve ser organizada em camadas: saude imediata,
+  controle operacional, cartao de credito, inteligencia de produto,
+  previsibilidade e patrimonio.
+- Os KPIs obrigatorios da experiencia principal sao fluxo liquido, saldo
+  projetado, parcelado futuro, burn rate e saving rate.
+- Burn rate deve representar gasto medio mensal e deixar claro se foi calculado
+  por recorrencias, por media historica ou por periodo filtrado.
+- Runway deve ser calculado como `saldo disponivel / burn rate`, apenas quando
+  houver saldo disponivel confiavel e burn rate positivo.
+- Comprometimento da receita deve comparar despesas totais contra receitas totais
+  do periodo, excluindo pagamentos de fatura para evitar dupla contagem.
+- Receita deve permitir leitura por fonte e despesa deve permitir leitura por
+  tipo operacional, como fixa, variavel ou extraordinaria.
+- Indicadores de cartao devem separar gasto do cartao, fatura, pagamento de
+  fatura, parcelado futuro e recorrencias do cartao.
+- Projecao de fluxo deve explicitar premissas, horizonte e dados usados, como
+  receitas recorrentes, despesas recorrentes, parcelas e faturas conhecidas.
+- Score de saude financeira deve ser explicavel e deve indicar quando a baixa
+  qualidade dos dados torna a leitura preliminar.
+- Evolucao patrimonial e net worth devem ficar separados do fluxo operacional,
+  com ativos, passivos, data de referencia e origem do saldo.
 - Ao navegar do dashboard para importacoes a partir de indicadores de erro ou
   duplicidade, a tela de importacoes deve abrir com o filtro correspondente ja
   aplicado.
