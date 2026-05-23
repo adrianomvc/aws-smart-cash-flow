@@ -85,7 +85,7 @@ def test_list_transactions_returns_workspace_transactions_with_filters(
     assert response.status_code == 200
     payload = response.json()
     assert payload["workspace_id"] == auth.workspace_id
-    assert [item["description"] for item in payload["items"]] == ["99APP 99APP"]
+    assert [item["description"] for item in payload["items"]] == ["99APP"]
     assert payload["items"][0]["amount"] == "26.06"
     assert payload["items"][0]["category"] is None
 
@@ -122,7 +122,7 @@ def test_list_transactions_defaults_to_latest_transaction_date(
     assert response.status_code == 200
     assert [item["description"] for item in response.json()["items"]] == [
         "PADARIA SAO JOSE",
-        "99APP 99APP",
+        "99APP",
     ]
 
 
@@ -138,7 +138,7 @@ def test_list_transactions_supports_sorting(
     assert response.status_code == 200
     assert [item["description"] for item in response.json()["items"]] == [
         "PADARIA SAO JOSE",
-        "99APP 99APP",
+        "99APP",
     ]
 
 
@@ -269,7 +269,7 @@ def test_rule_application_categorizes_matching_transactions(
     assert apply_response.status_code == 200
     assert apply_response.json()["applied_count"] == 1
     assert [item["description"] for item in transaction_response.json()["items"]] == [
-        "99APP 99APP"
+        "99APP"
     ]
     assert transaction_response.json()["items"][0]["category"]["source"] == "rule"
 

@@ -1,13 +1,22 @@
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.db.models import Category, ImportJob, Transaction, TransactionCategoryAssignment
 
 ZERO = Decimal("0.00")
+WEEKDAY_NAMES = [
+    "Segunda",
+    "Terca",
+    "Quarta",
+    "Quinta",
+    "Sexta",
+    "Sabado",
+    "Domingo",
+]
 
 
 class DashboardService:
@@ -139,11 +148,173 @@ class DashboardService:
             totals[key]["amount"] = Decimal(totals[key]["amount"]) + abs(transaction.amount)
             totals[key]["count"] = int(totals[key]["count"]) + 1
 
-        return sorted(
+        ranked = sorted(
             totals.values(),
             key=lambda item: (Decimal(item["amount"]), int(item["count"])),
             reverse=True,
+        )
+        total_amount = sum((Decimal(item["amount"]) for item in ranked), ZERO)
+        for item in ranked:
+            amount = Decimal(item["amount"])
+            count = int(item["count"])
+            item["share_ratio"] = (
+                (amount / total_amount).quantize(Decimal("0.0001"))
+                if total_amount > ZERO
+                else None
+            )
+            item["average_amount"] = (
+                (amount / Decimal(count)).quantize(Decimal("0.01")) if count else ZERO
+            )
+        return ranked[:limit]
+
+    def merchant_ranking(
+        self,
+        workspace_id: str,
+        date_from: date | None,
+        date_to: date | None,
+        limit: int,
+    ) -> list[dict[str, object]]:
+        rows = self.db.execute(
+            select(
+                Transaction.description,
+                func.sum(func.abs(Transaction.amount)),
+                func.count(),
+            )
+            .where(
+                *self._transaction_filters(
+                    workspace_id=workspace_id,
+                    date_from=date_from,
+                    date_to=date_to,
+                ),
+                Transaction.direction == "debit",
+            )
+            .group_by(Transaction.description)
+            .order_by(
+                desc(func.sum(func.abs(Transaction.amount))),
+                desc(func.count()),
+                Transaction.description,
+            )
+            .limit(limit)
+        ).all()
+        return [
+            {
+                "description": description,
+                "amount": Decimal(str(amount or ZERO)).quantize(Decimal("0.01")),
+                "count": count,
+            }
+            for description, amount, count in rows
+        ]
+
+    def category_growth_alerts(
+        self,
+        workspace_id: str,
+        date_from: date | None,
+        date_to: date | None,
+        limit: int,
+    ) -> list[dict[str, object]]:
+        if date_from is None or date_to is None or date_to < date_from:
+            return []
+
+        period_days = (date_to - date_from).days + 1
+        previous_to = date_from - timedelta(days=1)
+        previous_from = previous_to - timedelta(days=period_days - 1)
+        current_totals = self.category_ranking(
+            workspace_id=workspace_id,
+            date_from=date_from,
+            date_to=date_to,
+            limit=1000,
+        )
+        previous_totals = {
+            item["category_id"]: item
+            for item in self.category_ranking(
+                workspace_id=workspace_id,
+                date_from=previous_from,
+                date_to=previous_to,
+                limit=1000,
+            )
+        }
+
+        alerts: list[dict[str, object]] = []
+        for item in current_totals:
+            category_id = item["category_id"]
+            if category_id is None:
+                continue
+            previous = previous_totals.get(category_id)
+            previous_amount = Decimal(previous["amount"]) if previous else ZERO
+            current_amount = Decimal(item["amount"])
+            change_amount = current_amount - previous_amount
+            if previous_amount < Decimal("50.00") or current_amount < Decimal("100.00"):
+                continue
+            if change_amount < Decimal("50.00"):
+                continue
+            change_ratio = (change_amount / previous_amount).quantize(Decimal("0.0001"))
+            if change_ratio < Decimal("0.3000"):
+                continue
+            alerts.append(
+                {
+                    "category_id": category_id,
+                    "category_name": item["category_name"],
+                    "current_amount": current_amount.quantize(Decimal("0.01")),
+                    "previous_amount": previous_amount.quantize(Decimal("0.01")),
+                    "change_amount": change_amount.quantize(Decimal("0.01")),
+                    "change_ratio": change_ratio,
+                    "current_count": item["count"],
+                    "previous_count": previous["count"] if previous else 0,
+                    "previous_date_from": previous_from,
+                    "previous_date_to": previous_to,
+                }
+            )
+
+        return sorted(
+            alerts,
+            key=lambda item: (Decimal(item["change_amount"]), Decimal(item["change_ratio"])),
+            reverse=True,
         )[:limit]
+
+    def weekday_spending(
+        self,
+        workspace_id: str,
+        date_from: date | None,
+        date_to: date | None,
+    ) -> list[dict[str, object]]:
+        buckets = {
+            index: {
+                "weekday": index,
+                "weekday_name": WEEKDAY_NAMES[index],
+                "amount": ZERO,
+                "count": 0,
+                "average_amount": ZERO,
+                "share_ratio": None,
+            }
+            for index in range(7)
+        }
+        transactions = self._transactions(
+            workspace_id=workspace_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        for transaction in transactions:
+            if transaction.direction != "debit":
+                continue
+            bucket = buckets[transaction.transaction_date.weekday()]
+            bucket["amount"] = Decimal(bucket["amount"]) + abs(transaction.amount)
+            bucket["count"] = int(bucket["count"]) + 1
+
+        total_amount = sum((Decimal(bucket["amount"]) for bucket in buckets.values()), ZERO)
+        for bucket in buckets.values():
+            amount = Decimal(bucket["amount"])
+            count = int(bucket["count"])
+            bucket["amount"] = amount.quantize(Decimal("0.01"))
+            bucket["average_amount"] = (
+                (amount / Decimal(count)).quantize(Decimal("0.01")) if count else ZERO
+            )
+            bucket["share_ratio"] = (
+                (amount / total_amount).quantize(Decimal("0.0001"))
+                if total_amount > ZERO
+                else None
+            )
+
+        return list(buckets.values())
 
     def data_quality(
         self,
@@ -201,6 +372,64 @@ class DashboardService:
             "imports_with_errors": int(imports_with_errors or 0),
             "duplicate_imports": int(duplicate_imports or 0),
         }
+
+    def credit_card_payment_matches(
+        self,
+        workspace_id: str,
+        date_from: date | None,
+        date_to: date | None,
+        window_days: int,
+        limit: int,
+    ) -> list[dict[str, object]]:
+        transactions = self._transactions(
+            workspace_id=workspace_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        bank_payments = [
+            transaction
+            for transaction in transactions
+            if transaction.direction == "payment" and transaction.source_type == "bank_statement"
+        ]
+        card_payments = [
+            transaction
+            for transaction in transactions
+            if (
+                transaction.direction == "payment"
+                and transaction.source_type == "credit_card_statement"
+            )
+        ]
+        matches: list[dict[str, object]] = []
+        for bank_payment in bank_payments:
+            for card_payment in card_payments:
+                if abs(bank_payment.amount) != abs(card_payment.amount):
+                    continue
+                date_delta_days = abs(
+                    (bank_payment.transaction_date - card_payment.transaction_date).days
+                )
+                if date_delta_days > window_days:
+                    continue
+                matches.append(
+                    {
+                        "bank_transaction_id": bank_payment.id,
+                        "card_transaction_id": card_payment.id,
+                        "amount": abs(bank_payment.amount),
+                        "bank_date": bank_payment.transaction_date,
+                        "card_date": card_payment.transaction_date,
+                        "date_delta_days": date_delta_days,
+                        "bank_description": bank_payment.description,
+                        "card_description": card_payment.description,
+                    }
+                )
+        return sorted(
+            matches,
+            key=lambda item: (
+                int(item["date_delta_days"]),
+                item["bank_date"],
+                item["card_date"],
+                item["amount"],
+            ),
+        )[:limit]
 
     def _transactions(
         self,

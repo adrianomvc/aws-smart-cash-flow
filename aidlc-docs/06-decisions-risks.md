@@ -171,6 +171,19 @@ Motivo:
 - Groq oferece baixa latencia e custo controlavel para chamadas seletivas ao LLM.
 - Adaptadores preservam a possibilidade de troca futura.
 
+DEC-017A: Normalizacao de descricoes deve evoluir para uma estrategia hibrida, mas a base do MVP permanece deterministica e auditavel.
+
+Motivo:
+
+- Regras deterministicas tornam importacao, dedupe, busca e regras de categoria
+  previsiveis e testaveis no MVP.
+- Embeddings e LLM poderao sugerir aliases, nomes canonicos de estabelecimento,
+  categorias provaveis e excecoes de normalizacao em fase posterior.
+- Sugestoes por IA nao devem substituir `raw_description` nem alterar dados ja
+  persistidos sem revisao, confianca registrada e trilha de auditoria.
+- O caminho futuro deve permitir comparar estrategia deterministica, embedding e
+  LLM sem expor dados financeiros sensiveis em logs ou prompts desnecessarios.
+
 DEC-018: A infraestrutura AWS sera criada e evoluida com Terraform.
 
 Motivo:

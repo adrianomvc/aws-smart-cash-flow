@@ -1,4 +1,5 @@
 import csv
+import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from io import StringIO
@@ -11,6 +12,22 @@ from app.domain.imports import (
     SourceKind,
     TransactionDirection,
 )
+
+DESCRIPTION_TOKEN_ALIASES = {
+    "MERCADOLIVRE": ("MERCADO", "LIVRE"),
+    "MERCADOPAGO": ("MERCADO", "PAGO"),
+    "MERCADOPAG": ("MERCADO", "PAGO"),
+    "AMAZONMKTPLC": ("AMAZON",),
+    "IFD": ("IFOOD",),
+    "EBN": ("EBANX",),
+    "NUV": ("NUVEMSHOP",),
+}
+
+DROP_SUFFIX_AFTER_PREFIX = {
+    "AMAZONMKTPLC",
+    "MERCADOLIVRE",
+    "SHOPEE",
+}
 
 
 def parse_brazilian_decimal(raw_value: str) -> Decimal:
@@ -26,9 +43,44 @@ def normalize_transaction_description(raw_description: str) -> str:
         char
         for char in normalize("NFKD", raw_description)
         if char.encode("ascii", "ignore") != b""
-    )
-    cleaned = ascii_description.replace("*", " ").replace("_", " ").upper()
-    return " ".join(cleaned.split())
+    ).upper().strip()
+
+    prefix_match = re.match(r"^\s*([A-Z0-9]+)\s*\*", ascii_description)
+    if prefix_match:
+        prefix = prefix_match.group(1)
+        if prefix in DROP_SUFFIX_AFTER_PREFIX:
+            return " ".join(DESCRIPTION_TOKEN_ALIASES.get(prefix, (prefix,)))
+
+    cleaned = re.sub(r"[*_/\\|,.;:]+", " ", ascii_description)
+    tokens = cleaned.split()
+    normalized_tokens: list[str] = []
+    for token in tokens:
+        if token.isdigit() and len(token) >= 4:
+            continue
+        expanded_tokens = DESCRIPTION_TOKEN_ALIASES.get(token, (token,))
+        for expanded_token in expanded_tokens:
+            if normalized_tokens and normalized_tokens[-1] == expanded_token:
+                continue
+            normalized_tokens.append(expanded_token)
+    return " ".join(_collapse_repeated_sequences(normalized_tokens))
+
+
+def _collapse_repeated_sequences(tokens: list[str]) -> list[str]:
+    collapsed = list(tokens)
+    index = 0
+    while index < len(collapsed):
+        max_size = (len(collapsed) - index) // 2
+        removed = False
+        for size in range(max_size, 0, -1):
+            left = collapsed[index : index + size]
+            right = collapsed[index + size : index + (size * 2)]
+            if left == right:
+                del collapsed[index + size : index + (size * 2)]
+                removed = True
+                break
+        if not removed:
+            index += 1
+    return collapsed
 
 
 def is_credit_card_payment_description(description: str) -> bool:

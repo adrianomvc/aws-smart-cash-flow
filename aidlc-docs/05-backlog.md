@@ -155,6 +155,8 @@ Aceite:
 - Revisao cobre dashboard, importacao, transacoes, categorias, regras, revisao e configuracoes.
 - Mudancas de frontend devem ser agrupadas em uma entrega unica ou em fatias coesas por fluxo.
 - Design deve priorizar clareza operacional, leitura rapida de indicadores e reducao de ruido visual.
+- Dashboard deve manter os paineis operacionais primeiro e fechar a tela com uma
+  sintese em formato de storytelling financeiro.
 - Componentes devem manter responsividade em desktop e mobile.
 - Antes da subida, a interface deve ser testada localmente pelo usuario.
 
@@ -184,7 +186,42 @@ Aceite:
 
 - Categorias podem ser criadas por workspace.
 - Uma transacao pode receber categoria manual.
+- Uma transacao classificada pode voltar para `Sem categoria`.
 - Alteracoes ficam persistidas.
+
+US-008A: Como usuario, quero excluir uma transacao importada incorreta para corrigir minha base financeira.
+
+Aceite:
+
+- Tela de transacoes permite excluir uma transacao individual com confirmacao.
+- Exclusao remove classificacao vinculada e atualiza lista, dashboard e qualidade
+  dos dados.
+- API valida `workspace_id` e nao permite excluir transacao de outro workspace.
+- Evolucao futura deve substituir exclusao fisica por exclusao logica auditavel e
+  reversivel.
+
+US-008B: Como usuario, quero corrigir manualmente o tipo financeiro de uma transacao para separar despesa, receita e pagamento de fatura.
+
+Aceite:
+
+- Tela de transacoes permite alterar o tipo financeiro individual para despesa,
+  receita/credito ou pagamento de fatura.
+- API valida valores aceitos e respeita `workspace_id`.
+- Ajuste atualiza dashboard, fluxo mensal, rankings e conciliacao de fatura.
+- Evolucao futura deve auditar usuario, data e valor anterior da alteracao.
+
+US-008C: Como usuario, quero cadastrar uma transacao manual para registrar lancamentos que nao vieram nos arquivos importados.
+
+Aceite:
+
+- Usuario informa data, descricao, valor, tipo financeiro e categoria opcional.
+- Transacao manual fica vinculada ao workspace e marcada com origem `manual`.
+- Transacao manual entra nos dashboards, filtros e revisao como qualquer outra
+  transacao.
+- Sistema deve reduzir risco de duplicidade acidental com lancamentos importados
+  por data, descricao normalizada, valor e tipo financeiro.
+- Edicao, exclusao e auditoria de transacoes manuais devem seguir as mesmas
+  regras de controle das demais correcoes manuais.
 
 US-009: Como usuario, quero regras automaticas de categorizacao para reduzir trabalho manual.
 
@@ -282,6 +319,19 @@ Aceite:
 - Resultado registra fonte `llm`, confianca e justificativa.
 - Usuario pode aceitar ou corrigir a sugestao.
 
+US-011A: Como usuario, quero que IA ajude a evoluir a normalizacao de descricoes para melhorar busca, deduplicacao e classificacao sem perder auditoria.
+
+Aceite:
+
+- Sistema sugere aliases ou nomes canonicos de estabelecimentos a partir do
+  historico, sem alterar `raw_description`.
+- Sugestoes por IA registram fonte, confianca, versao da estrategia e motivo
+  resumido.
+- Usuario pode aceitar, rejeitar ou ajustar sugestoes antes de aplicar em lote.
+- Prompts e logs devem minimizar dados financeiros sensiveis e evitar valores,
+  nomes reais de arquivos ou payload bruto.
+- Estrategia deterministica continua sendo o fallback testavel e auditavel.
+
 US-028: Como administrador, quero que categorizacao e recategorizacao em lote processem transacoes em pequenos lotes para evitar timeouts.
 
 Aceite:
@@ -343,6 +393,8 @@ Aceite:
 - Sistema compara gasto da categoria com mes anterior.
 - Alerta mostra categoria, variacao absoluta e percentual.
 - Alerta ignora categorias com volume insuficiente conforme regra definida.
+- Comparacao deve permitir abrir as transacoes da categoria no mes atual e no mes anterior.
+- Interface deve destacar categorias com queda relevante, estabilidade e aumento relevante.
 
 US-033: Como usuario, quero orcamento por categoria para acompanhar limites de gasto.
 
@@ -359,7 +411,15 @@ Aceite:
 - Sistema sugere recorrencias por descricao, valor e periodicidade.
 - Usuario pode recalcular recorrencias sob demanda.
 - Dashboard mostra comprometimento recorrente estimado.
+- Dashboard alerta quando uma recorrencia identificada tiver aumento percentual
+  expressivo contra a media historica ou contra a ocorrencia anterior.
 - Marcacao de recorrencia deve ser reversivel.
+- Relatorio de custos fixos mensais recorrentes mostra descricao normalizada,
+  categoria, valor medio, ultimo valor, quantidade de meses encontrados e
+  variacao contra a media.
+- Relatorio separa recorrencias provaveis de recorrencias confirmadas pelo
+  usuario.
+- Usuario consegue abrir as transacoes que sustentam cada recorrencia.
 
 ## Epic 7.1: Indicadores de Controle Financeiro
 
@@ -406,6 +466,21 @@ Aceite:
 - Categoria pode expandir para subcategorias quando existirem.
 - Indicador mostra variacao absoluta e percentual contra mes anterior.
 - Usuario consegue abrir transacoes daquela categoria/subcategoria.
+- Resumo da categoria deve mostrar valor total, quantidade de transacoes,
+  participacao percentual no total de despesas do periodo, ticket medio e
+  variacao contra o mes anterior.
+- Resumo deve diferenciar categoria pai e subcategorias quando aplicavel.
+- Resumo deve permitir abrir transacoes filtradas pela categoria e periodo.
+
+US-041A: Como usuario, quero analisar gastos por dia da semana para entender padroes de consumo.
+
+Aceite:
+
+- Relatorio mostra despesas agregadas por dia da semana no periodo filtrado.
+- Indicador mostra valor total, quantidade de transacoes e ticket medio por dia.
+- Visual deve permitir comparar dias uteis e fim de semana.
+- Usuario consegue abrir transacoes de um dia da semana dentro do periodo.
+- Pagamentos de fatura devem ficar fora da analise de gastos.
 
 US-042: Como usuario, quero identificar estabelecimentos ou descricoes que mais impactam meus gastos.
 
@@ -437,7 +512,9 @@ US-045: Como usuario, quero alertas financeiros acionaveis para focar no que pre
 
 Aceite:
 
-- Alertas cobrem aumento relevante por categoria, gasto acima do orcamento, queda de receita e excesso de pendencias de categorizacao.
+- Alertas cobrem aumento relevante por categoria, aumento expressivo em gastos
+  recorrentes, gasto acima do orcamento, queda de receita e excesso de pendencias
+  de categorizacao.
 - Cada alerta mostra motivo, valor envolvido e atalho para revisar transacoes.
 - Alertas devem evitar ruído quando o volume de dados for insuficiente.
 

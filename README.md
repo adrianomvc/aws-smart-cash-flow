@@ -26,13 +26,13 @@ aws-smart-cash-flow/
 
 Fluxo de branches:
 
-- `feature/*`: desenvolvimento de funcionalidades.
+- `feature/*` ou `codex/*`: desenvolvimento de funcionalidades.
 - `develop`: integracao e deploy de desenvolvimento.
 - `main`: producao.
 
 GitHub Actions:
 
-- CI roda em `feature/*`, `develop`, `main` e pull requests para `develop`/`main`.
+- CI roda em `feature/*`, `codex/*`, `develop`, `main` e pull requests para `develop`/`main`.
 - CI tambem roda em tags `v*` para validar releases versionados.
 - Deploy roda em push para `develop` e `main`.
 - Frontend: deploy via AWS Amplify quando `AWS_ROLE_TO_ASSUME`, `AWS_REGION` e

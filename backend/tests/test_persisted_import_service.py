@@ -166,6 +166,35 @@ def test_import_dedupes_overlapping_transactions_from_new_file(db_session: Sessi
     assert second_job.error_rows == 0
 
 
+def test_import_natural_dedupe_ignores_noisy_numeric_description_tokens(
+    db_session: Session,
+) -> None:
+    auth = AuthContext(user_id=str(uuid4()), workspace_id=str(uuid4()))
+    service = ImportService(db_session)
+
+    first = service.import_bytes(
+        auth=auth,
+        filename="cartao-a.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/cartao-a.csv",
+        content=b"data,lan\xc3\xa7amento,valor\n2026-05-08,BKI PM SAO PAU 626400399,26.06\n",
+    )
+    second = service.import_bytes(
+        auth=auth,
+        filename="cartao-b.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/cartao-b.csv",
+        content=b"data,lan\xc3\xa7amento,valor\n2026-05-08,BKI PM SAO PAU 123456789,26.06\n",
+    )
+
+    assert first.valid_rows == 1
+    assert second.valid_rows == 0
+    assert second.duplicate_rows == 1
+    assert db_session.scalar(select(func.count()).select_from(Transaction)) == 1
+
+
 def test_import_dedupe_is_scoped_by_workspace(db_session: Session) -> None:
     service = ImportService(db_session)
     user_id = str(uuid4())
