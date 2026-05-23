@@ -11,6 +11,8 @@ on:
       - develop
       - "feature/**"
       - "codex/**"
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       deploy_backend:
