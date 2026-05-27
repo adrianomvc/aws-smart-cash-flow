@@ -28,11 +28,19 @@ async def get_auth_context(authorization: str | None = Header(default=None)) -> 
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
+    # Local auth is only allowed in development environment
     if settings.app_env == "local" and not settings.supabase_jwt_secret:
         return AuthContext(
             user_id=LOCAL_USER_ID,
             workspace_id=LOCAL_WORKSPACE_ID,
             email="local@example.invalid",
+        )
+
+    # Block local auth in production environments
+    if settings.app_env != "local" and settings.allow_local_auth:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Local authentication is not allowed in production environment",
         )
 
     if settings.allow_local_auth and token == "local-dev":
@@ -42,17 +50,27 @@ async def get_auth_context(authorization: str | None = Header(default=None)) -> 
             email="local@example.invalid",
         )
 
+    if not settings.supabase_jwt_secret:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Supabase JWT secret not configured",
+        )
+
     try:
         claims = jwt.decode(
             token,
             settings.supabase_jwt_secret,
             algorithms=["HS256"],
             audience="authenticated",
+            options={
+                "verify_exp": True,
+                "verify_aud": True,
+            }
         )
     except JWTError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
+            detail="Invalid or expired token",
         ) from exc
 
     user_id = claims.get("sub")
@@ -62,10 +80,17 @@ async def get_auth_context(authorization: str | None = Header(default=None)) -> 
             detail="Invalid token subject",
         )
 
+    email = claims.get("email")
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token: missing email",
+        )
+
     return AuthContext(
         user_id=user_id,
         workspace_id=None,
-        email=claims.get("email"),
+        email=email,
     )
 
 

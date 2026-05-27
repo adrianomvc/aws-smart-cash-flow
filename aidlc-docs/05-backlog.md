@@ -7,6 +7,249 @@
 - Correcoes que bloqueiam a validacao do MVP em teste devem ser tratadas na fatia
   atual antes do commit de aprovacao.
 
+## Controle Operacional de Entrega
+
+Modo de trabalho: seguir `aidlc-docs/10-working-agreement.md` para iniciar,
+executar, validar, commitar e publicar pacotes.
+
+Status usados:
+
+- `Todo`: ainda nao iniciado.
+- `Em andamento`: em implementacao ou ajuste local.
+- `Feito local`: implementado e com validacao automatizada local concluida.
+- `Validacao usuario`: aguardando teste/aprovacao no localhost.
+- `Validado usuario`: aprovado pelo usuario no fluxo testado.
+- `Commitado`: commit criado no repositorio.
+- `Publicado`: disponivel no ambiente online.
+- `Backlog evolucao`: registrado para fase futura, fora do pacote atual.
+
+### Pacote Atual: Qualidade da Base e Duplicidades
+
+Objetivo: permitir que o usuario encontre, entenda e limpe possiveis duplicidades
+sem inflar indicadores financeiros e sem excluir dados por acidente.
+
+Status: `Validado usuario`
+
+Itens do pacote:
+
+- `Feito local` Separar normalizacao visual da normalizacao usada para
+  duplicidade, preservando parcela atual/total na chave natural.
+- `Feito local` Recalcular possiveis duplicados pela regra atual mesmo quando a
+  chave gravada no banco for antiga.
+- `Feito local` Evitar que parcelas diferentes da mesma compra, como `02/10`,
+  `03/10` e `04/10`, aparecam no mesmo grupo de duplicidade.
+- `Feito local` Manter mesma parcela repetida, como dois `04/10`, como possivel
+  duplicidade real.
+- `Feito local` Permitir filtrar um grupo de possiveis duplicados por IDs para
+  mostrar tambem registros antigos com chave nula ou divergente.
+- `Feito local` Mostrar `Principal`, `Principal sugerido` e `Revisar` na
+  interface, evitando termos tecnicos para o usuario final.
+- `Feito local` Permitir acao de limpeza do grupo: manter o principal real ou
+  sugerido e excluir os demais somente apos confirmacao explicita.
+- `Feito local` Exibir parcela na lista e no detalhe da transacao.
+- `Feito local` Atualizar especificacao de comportamento e testes automatizados
+  para normalizacao, parcelas, reprocessamento e grupos de duplicidade.
+- `Validado usuario` Testar no localhost grupos reais como `ANGLO`,
+  `BALACOBACO FESTA`, `99`, `99FOOD`, `MERCADOLIVRE` e pagamentos vindos de
+  arquivos diferentes.
+
+Rastreabilidade do pacote atual:
+
+| Pacote | US relacionada | Status | Observacao |
+| --- | --- | --- | --- |
+| Qualidade da Base e Duplicidades | US-005 | `Validado usuario` | Reprocessamento sem recriar duplicidades e chave natural revisada. |
+| Qualidade da Base e Duplicidades | US-005A | `Validado usuario` | Possiveis duplicados historicos, grupos por chave atual e revisao manual. |
+| Qualidade da Base e Duplicidades | US-007 | `Feito local` | Lista de transacoes filtra grupo por IDs e preserva paginacao/ordenacao. |
+| Qualidade da Base e Duplicidades | US-008A | `Validado usuario` | Exclusao individual e limpeza de duplicados com confirmacao explicita. |
+| Qualidade da Base e Duplicidades | US-035 | `Feito local` | Parcela de cartao exibida e usada para evitar falso duplicado entre parcelas. |
+| Qualidade da Base e Duplicidades | US-056A | `Feito local` | UX writing aplicado ao fluxo para evitar termos tecnicos na revisao. |
+
+Validacoes automatizadas executadas no pacote:
+
+- Backend: `python -m pytest tests/test_parsers.py tests/test_persisted_import_service.py tests/test_transaction_routes.py`
+- Backend: `python -m ruff check .`
+- Frontend: `npm run lint`
+- Frontend: `npm run build`
+
+Pendencias antes de commit/publicacao:
+
+- `Validado usuario` Confirmar no localhost que os grupos de duplicidade estao
+  corretos apos recarregar a tela ou clicar em atualizar.
+- `Validado usuario` Confirmar que o texto "Principal sugerido" e a acao
+  "Excluir duplicados" estao claros.
+- `Validado usuario` Confirmar que a exclusao de duplicados atualiza listas e
+  indicadores como esperado.
+
+### Mapa de Pacotes
+
+P0, validacao atual:
+
+- `Validado usuario` Qualidade da base e duplicidades: confirmar no localhost
+  que os grupos estao corretos, que a linguagem esta clara e que a acao de
+  excluir duplicados atualiza listas e indicadores.
+
+P1, validado:
+
+- `Validado usuario` Normalizacao e reprocessamento: validar casos reais de descricoes
+  genericas ou truncadas (`99`, `99FOOD`, `MERCADOLIVRE`, `PAYPAL`, `SHELL`,
+  `UBER`) e separar regra deterministica atual do uso futuro de IA.
+- `Validado usuario` Normalizacao segura para canais `99`: unir `99 FOOD`, `99 APP`
+  e `99 TAXI` quando houver complemento claro, mantendo `99` isolado sem
+  enriquecimento deterministico.
+- `Validado usuario` Normalizacao segura para `MP`, `SHELL BOX` e variantes de
+  `UBERBR`, preservando abreviacoes isoladas quando nao houver contexto
+  suficiente.
+- `Validado usuario` Reprocessamento ajustado para trocar chaves naturais em duas
+  fases, evitando erro de unicidade quando descricoes antigas passam a convergir
+  para a mesma normalizacao.
+- `Validado usuario` Casos reais validados: `99APP` com `99APP *99App` e
+  `MERCADO PAGO RONALDODESOUZ` com `MP*RONALDODESOUZ`.
+- `Validado usuario` Cobertura consolidada para `MERCADOLIVRE`, `PAYPAL`, `SHELL` e
+  `UBER`, preservando complementos uteis e removendo repeticoes/ruidos seguros.
+
+P2, pacotes seguintes:
+
+- `Feito local` Importacao em lote e performance: melhorar feedback de progresso,
+  investigar lentidao/timeouts em producao e preparar caminho assincrono futuro.
+  MVP agora avisa quando o lote passa de 20 arquivos, recomenda dividir em
+  blocos menores e reforca que previa/importacao processam um arquivo por vez.
+  Quando a previa nao tem nenhum arquivo importavel, a tela mostra mensagem
+  explicita em vez de manter um botao de confirmacao sem efeito.
+  A confirmacao da previa fica disponivel no topo do resumo, e a lista de
+  arquivos usa rolagem interna para evitar que o usuario precise descer ate o
+  fim do lote.
+- `Feito local` Transacoes operacionais: revisar filtros, ordenacao, paginacao,
+  edicao manual/importada, exclusao individual e estados vazios/erro.
+  Ajuste atual: mudancas de categoria agora exibem mensagem clara, incluindo
+  remocao para `Sem categoria` e saida da fila de revisao apos classificacao.
+- `Feito local` Dashboard e indicadores: continuar indicadores de saude financeira,
+  revisar eixos/graficos, narrativa final e drill-down.
+  Ajuste atual: resumo do dashboard calcula e exibe comprometimento da receita
+  (`despesas / receitas`) com faixas de leitura saudavel, atencao e risco.
+  Alertas do dashboard agora tambem destacam recorrencias em alta quando o
+  ultimo valor subir pelo menos 30% contra a media detectada e passar de R$ 50,
+  permitindo abrir as transacoes da recorrencia.
+
+P3, experiencia e produto:
+
+- `Em andamento` Alinhamento com prototipo de telas: usar
+  `aidlc-docs/prototipo de telas/smartcashflow_full_product_spec_v3.md` e os
+  PNGs da pasta como referencia visual e de produto, sem trocar o MVP para mock.
+  O proximo pacote de front deve adaptar o que ja existe para a linha visual do
+  prototipo em fatias agrupadas: AppShell/sidebar/header, Dashboard, Transacoes,
+  Fluxo de Caixa, Cartoes, Importacao/Configuracoes. Primeiro recorte aplicado:
+  AppShell com sidebar escura, navegacao alinhada ao mapa do prototipo, itens
+  futuros marcados como em breve, secoes de menu por jornada e header por
+  contexto da tela. Dashboard recebeu trilha executiva no topo para contar
+  rapidamente entrada, saida, saldo, pagamento de fatura e burn rate com dados
+  reais. Big numbers abaixo da trilha agora focam em indicadores de controle
+  complementares: comprometimento, taxa de poupanca, burn rate, pagamento de
+  fatura e qualidade dos dados. Valores financeiros grandes nos KPIs usam
+  formato compacto (`mil`/`mi`) e mantem valor completo em tooltip para evitar
+  quebra de linha em desktop e mobile. O indicador de periodo no topo agora
+  reflete o periodo real do dashboard e fica marcado como informativo, em vez de
+  parecer uma acao global ainda nao implementada. Notificacoes no topo ficam
+  desabilitadas como `em breve` ate existir central/contrato de notificacao.
+  Rotulos de mes usam inicial maiuscula em resumo, graficos, tooltips e
+  drilldowns (`Mai/26`).
+  Marca visual aplicada no frontend com icone na navegacao/favicon e logo na
+  tela de login, usando os assets do prototipo. Assets de marca foram
+  otimizados para uso no app, reduzindo o logo para cerca de 43 KB e o icone
+  para cerca de 9 KB no build. O icone do app usa a versao com borda do
+  prototipo para a area logada e favicon, evitando fundo artificial duplicado
+  no CSS.
+  Tela de transacoes iniciou alinhamento ao prototipo com tabs de tipo
+  financeiro, resumo da pagina atual e filtros com hierarquia mais clara antes
+  da tabela paginada. Dashboard e Transacoes removeram o segundo cabecalho
+  interno para evitar titulo/descricao duplicados com o topo global da aplicacao.
+  Importacoes tambem removeu cabecalho interno duplicado e recebeu resumo
+  operacional da pagina atual com arquivos, linhas novas, duplicadas, erros e
+  falhas antes do upload/historico.
+  Categorias, Regras e Configuracoes tambem tiveram cabecalho interno removido;
+  a acao principal de Regras ficou como toolbar da tela. Textos do topo global
+  foram ajustados para linguagem mais orientada a tarefa.
+  Categorias recebeu resumo visual com total, categorias principais,
+  subcategorias e modo atual de cadastro/edicao.
+  Regras recebeu resumo visual com total de regras, ativas, regras de categoria
+  e regras de tipo financeiro antes do formulario/tabela.
+  Configuracoes recebeu resumo visual do workspace, modo de sessao, API e estado
+  da manutencao antes dos paineis operacionais.
+  Configuracoes tambem recebeu hub visual baseado no v3, com atalhos disponiveis
+  para Categorias, Regras/Normalizacao e Importacao de Dados, e demais subtelas
+  marcadas como `Em breve`.
+  Configuracoes passou a mostrar uma previa de Preferencias Financeiras v3 com
+  janela de burn rate, metodo de runway, reserva protegida, politica de gasto
+  seguro, perfil de risco e sensibilidade do score.
+  Configuracoes recebeu painel temporario de Seguranca e Sobre o App com
+  privacidade, backup futuro e versao/escopo atual do MVP.
+  Revisao recebeu resumo visual da fila com pendencias, despesas, receitas e
+  total da pagina, reaproveitando o explorador de transacoes sem duplicar
+  cabecalho.
+  Fluxo de Caixa saiu de `em breve` e ganhou primeira tela dedicada com filtro
+  proprio, historia do periodo, grafico mensal ampliado, resumo operacional,
+  ranking de categorias e recorrencias clicaveis para transacoes filtradas.
+  Cartoes saiu de `em breve` e ganhou primeira tela dedicada com filtro proprio,
+  resumo de compras, creditos, fatura, parcelado futuro estimado, lancamentos,
+  parcelas identificadas e conciliacao de pagamento de fatura com drill-down
+  para transacoes filtradas por origem. Ajuste atual: parcelas identificadas no
+  mes filtrado passam a ser projetadas por mes/ano entre a primeira fatura da
+  compra e o mes alvo, considerando `closing_day` do cartao; parcelado futuro
+  mostra a parcela prevista para a proxima competencia.
+  Build do frontend passou a separar chunks de React, Recharts e TanStack Query
+  para reduzir o bundle principal e remover o aviso recorrente de
+  chunk grande do Vite.
+- `Backlog evolucao` Configuracoes v3: detalhar a tela de Configuracoes como
+  hub com subtelas de Perfil, Seguranca, Preferencias, Categorias, Contas e
+  Bancos, Importacao de Dados, Notificacoes, Backup e Sincronizacao, Assinatura
+  e Plano, e Sobre o App, seguindo
+  `aidlc-docs/prototipo de telas/smartcashflow_full_product_spec_v3.md`.
+- `Backlog evolucao` Preferencias Financeiras: permitir configurar moeda,
+  idioma/regiao, meta de poupanca, limite de comprometimento, perfil de risco,
+  categorias prioritarias e canais de alerta, para alimentar indicadores,
+  alertas e Copilot.
+- `Backlog evolucao` Cadastro de cartoes e fatura: permitir cadastrar cartoes
+  com nome, bandeira, fechamento da fatura (`closing_day`) e vencimento
+  (`due_day`) por workspace/usuario. No MVP o usuario deve poder informar esses
+  dias manualmente em Configuracoes ou na tela de Cartoes; evolucao futura pode
+  sugerir fechamento/vencimento automaticamente a partir de padroes das faturas,
+  mas sempre com confirmacao manual antes de alterar calculos.
+- `Backlog evolucao` AI Copilot / Chat Financeiro: usar a tela
+  `aidlc-docs/prototipo de telas/AI COpilot.png` como referencia para uma
+  experiencia propria de chat financeiro, com conversas recentes, novo chat,
+  perguntas rapidas, resumo financeiro lateral, simulacao de compra e respostas
+  rastreaveis por ferramentas internas. A navegacao do produto deve manter a
+  area como `Insights IA`, com Copilot como experiencia/subvisao conversacional
+  dentro dela. Entra depois do MVP visual/base de dados, pois depende de
+  contratos de IA, seguranca, custo, auditoria e tool calling.
+- `Backlog evolucao` Tela publica / logout: usar
+  `aidlc-docs/prototipo de telas/tela logout.png` como referencia para a
+  experiencia fora da sessao, com proposta de valor, CTAs de entrar/criar conta,
+  sinais de seguranca/LGPD, preview do produto e foco em familias. Deve ficar
+  separada do app autenticado do MVP e entrar junto do pacote de login,
+  onboarding e cadastro.
+- `Feito local` Revisao transversal UX/UI/Product Design/UX Research/UX Writing:
+  aplicar em todos os fluxos ja implementados, em pacotes agrupados de front.
+  Primeiro recorte: dashboard reorganizado em secoes de saude imediata,
+  tendencia, controle, padroes, operacao e fechamento narrativo para reduzir
+  sensacao de paineis soltos. Big numbers principais reduzidos para uma linha
+  com menos indicadores; qualidade e pagamento de fatura ficam na area
+  operacional. Resumo narrativo passa a fechar com resultado, saude, maior
+  pressao de gasto, confianca dos dados e proxima acao sugerida.
+- `Feito local` Burn rate do MVP: calcular gasto medio mensal estimado dos
+  ultimos 12 meses ate a data final do filtro, usando os meses disponiveis
+  quando ainda nao houver 12 meses de historico, e exibir no resumo narrativo
+  com origem do calculo.
+- `Feito local` Formatacao numerica de percentuais: quando percentuais
+  passarem de 1.000%, usar separador de milhar no padrao pt-BR, por exemplo
+  `1.250%`, para melhorar leitura em alertas, comparacoes e narrativas.
+- `Todo` Login/autenticacao: entregar tela real de login/cadastro e fluxo de
+  sessao para producao.
+
+Backlog evolucao:
+
+- `Backlog evolucao` Infra/arquitetura: avaliar S3 + CloudFront, hardening AWS,
+  lifecycle S3 e migracao serverless completa.
+
 ## Epic 1: Fundacao do Projeto
 
 US-001: Como Tech Lead, quero uma estrutura de projeto com backend, frontend, testes e migracoes para permitir evolucao segura.
@@ -170,6 +413,28 @@ Aceite:
 - Textos e controles nao estouram em resolucoes comuns.
 - A experiencia evita visual de landing page e prioriza uso recorrente.
 
+US-056A: Como usuario, quero uma revisao transversal de UX, UI, Product Design, UX Research e UX Writing em tudo que ja foi feito para deixar o produto coerente, claro e seguro.
+
+Aceite:
+
+- Revisao cobre fluxos ja implementados: login/autenticacao, workspace, dashboard,
+  importacao, preview, importacoes, transacoes, duplicidades, categorias, regras,
+  configuracoes, indicadores e estados de erro/loading/vazio.
+- UX Research identifica em cada fluxo qual decisao ou tarefa o usuario precisa
+  concluir e quais duvidas aparecem durante o uso.
+- Product Design organiza cada tela dentro da jornada financeira: carregar dados,
+  limpar base, classificar, analisar saude financeira e agir.
+- UX revisa a ergonomia de filtros, ordenacao, drill-down, confirmacoes,
+  paginacao, acoes destrutivas, revisao em lote e recuperacao de erro.
+- UI revisa hierarquia visual, densidade, responsividade, tabelas, cards,
+  badges, graficos, espacamentos, contraste e consistencia entre telas.
+- UX Writing substitui termos tecnicos por linguagem clara, explica impacto das
+  acoes e melhora mensagens de erro, sucesso, vazio, carregamento e confirmacao.
+- Itens encontrados devem virar ajustes pequenos agrupados por pacote de front,
+  respeitando a regra de testar localmente antes da subida.
+- A revisao deve preservar a confianca operacional: nenhuma acao destrutiva pode
+  acontecer sem confirmacao explicita e contexto suficiente.
+
 US-076: Como usuario, quero uma estrutura de telas moderna e consistente para navegar por toda a minha vida financeira.
 
 Aceite:
@@ -185,6 +450,14 @@ Aceite:
   tabela paginada, ordenacao e drill-down recebido de graficos.
 - A tela de cartoes deve consolidar fatura atual, limite, fechamento,
   vencimento, parcelado futuro, recorrencias e distribuicao por categoria.
+- `Feito local parcial` Primeira tela de Cartoes usa os dados ja disponiveis de
+  fatura importada para exibir compras, creditos/devolucoes, pagamentos de
+  fatura, parcelado futuro estimado, parcelas identificadas e conciliacao com
+  extrato. Parcelas identificadas do mes filtrado calculam a parcela atual a
+  partir da primeira fatura da compra, considerando fechamento do cartao
+  configuravel, e escondem parcelamentos vencidos. Parcelado futuro estima a
+  parcela da proxima competencia. Limite, vencimento e cadastro de cartoes
+  continuam para evolucao futura.
 - A tela de orcamentos deve comparar realizado, orcado, restante e percentual
   consumido por categoria.
 - A tela de investimentos deve mostrar patrimonio total, rentabilidade,
@@ -491,6 +764,9 @@ US-038: Como usuario, quero acompanhar fluxo de caixa por mes para identificar t
 Aceite:
 
 - Grafico mensal mostra receitas, despesas e saldo.
+- `Feito local parcial` Primeira tela dedicada de Fluxo de Caixa mostra grafico
+  mensal ampliado, fatura separada, resumo do periodo e drill-down para
+  transacoes por mes, tipo financeiro, categoria e recorrencia.
 - Usuario consegue alternar entre visao de competencia e caixa quando os dados permitirem.
 - Mes atual mostra projecao de fechamento apenas quando houver base suficiente.
 - Drill-down leva para as transacoes que compoem cada valor.
@@ -552,6 +828,25 @@ Aceite:
 - Quando houver data de fatura/vencimento, indicador mostra previsao por fatura.
 - Pagamentos de fatura aparecem separados de despesas do cartao.
 - Indicador sinaliza possiveis faturas sem pagamento conciliado quando a conciliacao existir.
+- `Backlog evolucao` Usuario pode cadastrar fechamento e vencimento por cartao
+  para que parcelas identificadas, parcelado futuro e previsao de fatura usem a
+  competencia correta. Enquanto nao houver cadastro, o sistema usa fallback
+  configuravel e deve indicar essa premissa quando relevante.
+
+US-043A: Como usuario, quero cadastrar dados basicos do meu cartao para melhorar a previsao de fatura.
+
+Aceite:
+
+- Cadastro permite informar nome/apelido do cartao, bandeira opcional, dia de
+  fechamento da fatura e dia de vencimento.
+- Fechamento e vencimento sao validados como dias de 1 a 31.
+- Usuario pode editar esses dados sem reimportar arquivos.
+- Projecao de parcelas e parcelado futuro passam a usar `closing_day` do cartao
+  quando o cartao da transacao for conhecido.
+- Quando nao houver cartao identificado, o sistema usa configuracao padrao do
+  workspace e mostra a premissa.
+- Evolucao futura pode sugerir fechamento/vencimento por analise das faturas,
+  mas a sugestao precisa de confirmacao manual antes de afetar indicadores.
 
 US-044: Como usuario, quero comparar gasto real contra orcamento para agir antes de estourar limites.
 
@@ -693,6 +988,11 @@ Aceite:
 - Resposta informa periodo analisado, filtros usados e principais numeros considerados.
 - Copilot destaca saldo, despesas, receitas, taxa de poupanca, pendencias de categorizacao e qualidade dos dados.
 - Quando a qualidade dos dados for baixa, resposta deve avisar que a analise pode estar incompleta.
+- Interface segue a referencia `AI COpilot.png`, com lista de conversas,
+  mensagens, perguntas rapidas, campo de pergunta e painel lateral de resumo
+  financeiro.
+- Conversas e mensagens devem ser persistidas por workspace/familia quando o
+  backend de IA estiver ativo.
 
 US-049: Como usuario, quero perguntar se posso fazer um gasto especifico para decidir com mais seguranca.
 
@@ -703,6 +1003,8 @@ Aceite:
 - Resposta classifica a recomendacao como `seguro`, `atenção` ou `nao recomendado`.
 - Resposta explica os motivos e mostra quais dados sustentam a recomendacao.
 - Copilot deve deixar claro que e apoio de planejamento, nao consultoria financeira profissional.
+- Fluxo deve suportar `simular compra`, mostrando impacto no saldo projetado,
+  risco de saldo negativo, atraso em metas e recomendacao acionavel.
 
 US-050: Como usuario, quero receber sugestoes de como gastar melhor para melhorar minha saude financeira.
 
@@ -730,6 +1032,10 @@ Aceite:
 - Quando citar uma categoria ou gasto, deve permitir navegar para as transacoes relacionadas.
 - Copilot nao deve expor dados financeiros em logs.
 - Prompt, resposta, modelo e versao de estrategia podem ser auditados sem armazenar dados sensiveis desnecessarios.
+- Respostas devem registrar quais ferramentas internas foram usadas, como
+  `get_cashflow_summary`, `get_projection`, `get_credit_cards`,
+  `get_budgets`, `get_goals`, `get_investments`, `get_subscriptions`,
+  `simulate_purchase`, `simulate_scenario` e `calculate_safe_spend`.
 
 US-053: Como administrador, quero limites de seguranca para o copilot financeiro para evitar respostas perigosas ou caras.
 
@@ -740,6 +1046,9 @@ Aceite:
 - Chamadas ao LLM devem ter limite de custo, timeout e fallback.
 - Respostas devem preferir dados agregados e minimizacao de dados sensiveis.
 - Chat completo fica fora do caminho critico de importacao e categorizacao.
+- APIs planejadas incluem `POST /api/ai/chat`, `POST /api/ai/simulate-purchase`,
+  `POST /api/ai/safe-spend`, `POST /api/ai/financial-health`,
+  `POST /api/ai/optimize-budget` e `GET /api/ai/conversations`.
 
 ## Epic 8: Conciliacao
 
@@ -839,6 +1148,9 @@ Aceite:
 - Cada arquivo deve gerar job rastreavel com status, contadores, erros e
   reprocessamento idempotente.
 - Falha em uma importacao nao deve bloquear outras importacoes do mesmo lote.
+- Lotes grandes, como dezenas de arquivos historicos, devem ser enfileirados e
+  processados com progresso consultavel, sem estourar timeout do API Gateway ou
+  da Lambda sincrona.
 - Logs nao devem conter descricoes completas, valores financeiros reais ou
   conteudo bruto de arquivos.
 

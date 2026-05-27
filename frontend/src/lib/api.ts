@@ -81,7 +81,16 @@ export type TransactionRead = {
   installment_current: number | null;
   installment_total: number | null;
   source_line: number | null;
+  natural_dedupe_key: string | null;
   category: CategoryAssignmentRead | null;
+};
+
+export type ManualTransactionPayload = {
+  transaction_date: string;
+  description: string;
+  amount: string;
+  direction: string;
+  category_id: string | null;
 };
 
 export type CategorizationRuleRead = {
@@ -159,6 +168,10 @@ export type DashboardSummary = {
   payments: string;
   balance: string;
   savings_rate: string | null;
+  commitment_rate: string | null;
+  burn_rate: string;
+  burn_rate_months: number;
+  burn_rate_basis: string;
   transaction_count: number;
 };
 
@@ -195,6 +208,19 @@ export type MerchantRankingItem = {
   count: number;
 };
 
+export type RecurringExpenseItem = {
+  description: string;
+  category_id: string | null;
+  category_name: string | null;
+  average_amount: string;
+  last_amount: string;
+  transaction_count: number;
+  month_count: number;
+  last_transaction_date: string;
+  change_ratio: string | null;
+  status: string;
+};
+
 export type CategoryGrowthAlertItem = {
   category_id: string;
   category_name: string;
@@ -219,6 +245,27 @@ export type CreditCardPaymentMatchItem = {
   card_description: string;
 };
 
+export type CreditCardInstallmentItem = {
+  description: string;
+  amount: string;
+  installment_current: number;
+  installment_total: number;
+  remaining_installments: number;
+  future_amount: string;
+  first_invoice_month: string;
+  last_transaction_date: string;
+  transaction_count: number;
+};
+
+export type CreditCardInstallmentsResponse = {
+  workspace_id: string;
+  active_count: number;
+  closing_day: number;
+  due_day: number;
+  total_future_amount: string;
+  items: CreditCardInstallmentItem[];
+};
+
 export type DataQuality = {
   workspace_id: string;
   transaction_count: number;
@@ -233,6 +280,39 @@ export type DescriptionNormalizationResult = {
   workspace_id: string;
   scanned_count: number;
   changed_count: number;
+  natural_key_changed_count: number;
+  duplicate_key_conflict_count: number;
+};
+
+export type DuplicateTransactionRead = {
+  id: string;
+  source_file_id: string;
+  import_job_id: string;
+  source_filename: string | null;
+  source_type: string;
+  transaction_date: string;
+  description: string;
+  raw_description: string;
+  amount: string;
+  direction: string;
+  source_line: number | null;
+  natural_dedupe_key: string | null;
+  current_natural_dedupe_key: string;
+};
+
+export type DuplicateTransactionGroup = {
+  current_natural_dedupe_key: string;
+  count: number;
+  items: DuplicateTransactionRead[];
+};
+
+export type DuplicateTransactionListResponse = {
+  workspace_id: string;
+  groups: DuplicateTransactionGroup[];
+  total_groups: number;
+  total_transactions: number;
+  limit: number;
+  offset: number;
 };
 
 export type ListResponse<T> = {
@@ -261,14 +341,20 @@ async function apiRequest<T>(path: string, session: ApiSession, options: ApiOpti
     body = JSON.stringify(options.body);
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const url = `${API_BASE_URL}${path}`;
+  console.log(`Fazendo requisição para: ${url}`);
+
+  const response = await fetch(url, {
     method: options.method ?? "GET",
     headers,
     body,
   });
 
+  console.log(`Resposta status: ${response.status}`);
+
   if (!response.ok) {
     const detail = await response.text();
+    console.error(`Erro na requisição: ${detail}`);
     throw new Error(detail || `API request failed: ${response.status}`);
   }
 
@@ -280,6 +366,8 @@ async function apiRequest<T>(path: string, session: ApiSession, options: ApiOpti
 }
 
 export function getCurrentWorkspace(session: ApiSession) {
+  console.log("getCurrentWorkspace chamado com token:", session.token);
+  console.log("API_BASE_URL:", API_BASE_URL);
   return apiRequest<WorkspaceCurrent>("/workspaces/current", session);
 }
 
@@ -303,12 +391,20 @@ export function getMerchantRanking(session: ApiSession, query: string) {
   return apiRequest<ListResponse<MerchantRankingItem>>(`/dashboard/merchant-ranking${query}`, session);
 }
 
+export function getRecurringExpenses(session: ApiSession, query: string) {
+  return apiRequest<ListResponse<RecurringExpenseItem>>(`/dashboard/recurring-expenses${query}`, session);
+}
+
 export function getCategoryGrowthAlerts(session: ApiSession, query: string) {
   return apiRequest<ListResponse<CategoryGrowthAlertItem>>(`/dashboard/category-growth-alerts${query}`, session);
 }
 
 export function getCreditCardPaymentMatches(session: ApiSession, query: string) {
   return apiRequest<ListResponse<CreditCardPaymentMatchItem>>(`/dashboard/credit-card-payment-matches${query}`, session);
+}
+
+export function getCreditCardInstallments(session: ApiSession, query: string) {
+  return apiRequest<CreditCardInstallmentsResponse>(`/dashboard/credit-card-installments${query}`, session);
 }
 
 export function getDataQuality(session: ApiSession, query: string) {
@@ -321,6 +417,10 @@ export function getImports(session: ApiSession, query = "?limit=20") {
 
 export function getImportErrors(session: ApiSession, importId: string) {
   return apiRequest<ListResponse<ImportErrorRead>>(`/imports/${importId}/errors`, session);
+}
+
+export function deleteImport(session: ApiSession, importId: string) {
+  return apiRequest<void>(`/imports/${importId}`, session, { method: "DELETE" });
 }
 
 export function previewImport(session: ApiSession, file: File, sourceKind = "auto") {
@@ -347,6 +447,17 @@ export function uploadImport(session: ApiSession, file: File, sourceKind = "auto
 
 export function getTransactions(session: ApiSession, query: string) {
   return apiRequest<ListResponse<TransactionRead>>(`/transactions${query}`, session);
+}
+
+export function getTransactionDuplicates(session: ApiSession, query = "?limit=20") {
+  return apiRequest<DuplicateTransactionListResponse>(`/transactions/duplicates${query}`, session);
+}
+
+export function createManualTransaction(session: ApiSession, payload: ManualTransactionPayload) {
+  return apiRequest<TransactionRead>("/transactions", session, {
+    method: "POST",
+    body: payload,
+  });
 }
 
 export function updateTransactionCategory(
@@ -462,4 +573,80 @@ export function applyRules(session: ApiSession) {
 
 export function getRulePreview(session: ApiSession, ruleId: string) {
   return apiRequest<RulePreview>(`/categorization-rules/${ruleId}/preview`, session);
+}
+
+// Auth endpoints
+export async function signup(payload: { email: string; password: string; display_name?: string }) {
+  const response = await fetch(`${API_BASE_URL}/auth/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || "Signup failed");
+  }
+
+  return response.json() as Promise<{
+    user_id: string;
+    email: string;
+    display_name: string | null;
+    created_at: string;
+  }>;
+}
+
+export async function login(payload: { email: string; password: string }) {
+  const response = await fetch(`${API_BASE_URL}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || "Login failed");
+  }
+
+  return response.json() as Promise<{
+    access_token: string;
+    refresh_token: string | null;
+    user_id: string;
+    email: string;
+    display_name: string | null;
+  }>;
+}
+
+export async function refreshToken(refreshToken: string) {
+  const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  });
+
+  if (!response.ok) {
+    throw new Error("Token refresh failed");
+  }
+
+  return response.json() as Promise<{
+    access_token: string;
+    refresh_token: string | null;
+    user_id: string;
+    email: string;
+    display_name: string | null;
+  }>;
+}
+
+export async function resetPassword(email: string) {
+  const response = await fetch(`${API_BASE_URL}/auth/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+
+  if (!response.ok) {
+    throw new Error("Password reset failed");
+  }
+
+  return response.json() as Promise<{ message: string }>;
 }

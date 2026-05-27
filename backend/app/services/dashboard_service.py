@@ -5,7 +5,14 @@ from decimal import Decimal
 from sqlalchemy import and_, desc, func, select
 from sqlalchemy.orm import Session
 
-from app.db.models import Category, ImportJob, Transaction, TransactionCategoryAssignment
+from app.core.config import settings
+from app.db.models import (
+    Category,
+    ImportJob,
+    Transaction,
+    TransactionCategoryAssignment,
+)
+from app.services.parsers import extract_installment, normalize_transaction_description
 
 ZERO = Decimal("0.00")
 WEEKDAY_NAMES = [
@@ -39,6 +46,8 @@ class DashboardService:
         payments = self._sum(transactions, "payment")
         balance = income - expenses
         savings_rate = (balance / income).quantize(Decimal("0.0001")) if income > ZERO else None
+        commitment_rate = (expenses / income).quantize(Decimal("0.0001")) if income > ZERO else None
+        burn_rate, burn_rate_months = self._burn_rate(workspace_id=workspace_id, date_to=date_to)
 
         return {
             "workspace_id": workspace_id,
@@ -49,6 +58,10 @@ class DashboardService:
             "payments": payments,
             "balance": balance,
             "savings_rate": savings_rate,
+            "commitment_rate": commitment_rate,
+            "burn_rate": burn_rate,
+            "burn_rate_months": burn_rate_months,
+            "burn_rate_basis": "trailing_12_month_average",
             "transaction_count": len(transactions),
         }
 
@@ -204,6 +217,118 @@ class DashboardService:
             }
             for description, amount, count in rows
         ]
+
+    def recurring_expenses(
+        self,
+        workspace_id: str,
+        date_from: date | None,
+        date_to: date | None,
+        min_months: int,
+        limit: int,
+    ) -> list[dict[str, object]]:
+        rows = self.db.execute(
+            select(Transaction, Category)
+            .outerjoin(
+                TransactionCategoryAssignment,
+                and_(
+                    TransactionCategoryAssignment.transaction_id == Transaction.id,
+                    TransactionCategoryAssignment.workspace_id == workspace_id,
+                ),
+            )
+            .outerjoin(
+                Category,
+                and_(
+                    Category.id == TransactionCategoryAssignment.category_id,
+                    Category.workspace_id == workspace_id,
+                ),
+            )
+            .where(
+                *self._transaction_filters(
+                    workspace_id=workspace_id,
+                    date_from=date_from,
+                    date_to=date_to,
+                ),
+                Transaction.direction == "debit",
+            )
+            .order_by(Transaction.description, Transaction.transaction_date, Transaction.id)
+        ).all()
+        categories_by_id = {
+            category.id: category
+            for category in self.db.scalars(
+                select(Category).where(Category.workspace_id == workspace_id)
+            ).all()
+        }
+        grouped: dict[str, dict[str, object]] = {}
+        for transaction, category in rows:
+            item = grouped.setdefault(
+                transaction.description,
+                {
+                    "description": transaction.description,
+                    "amounts": [],
+                    "months": set(),
+                    "last_amount": ZERO,
+                    "last_transaction_date": transaction.transaction_date,
+                    "category_id": None,
+                    "category_name": None,
+                },
+            )
+            amounts = item["amounts"]
+            months = item["months"]
+            assert isinstance(amounts, list)
+            assert isinstance(months, set)
+            amounts.append(abs(transaction.amount))
+            months.add(transaction.transaction_date.strftime("%Y-%m"))
+            item["last_amount"] = abs(transaction.amount)
+            item["last_transaction_date"] = transaction.transaction_date
+            display_category = (
+                categories_by_id.get(category.parent_category_id)
+                if category is not None and category.parent_category_id is not None
+                else category
+            )
+            if display_category is not None:
+                item["category_id"] = display_category.id
+                item["category_name"] = display_category.name
+
+        recurring: list[dict[str, object]] = []
+        for item in grouped.values():
+            amounts = item["amounts"]
+            months = item["months"]
+            assert isinstance(amounts, list)
+            assert isinstance(months, set)
+            month_count = len(months)
+            if month_count < min_months:
+                continue
+            average_amount = (sum(amounts, ZERO) / Decimal(len(amounts))).quantize(Decimal("0.01"))
+            last_amount = Decimal(item["last_amount"]).quantize(Decimal("0.01"))
+            change_ratio = (
+                ((last_amount - average_amount) / average_amount).quantize(Decimal("0.0001"))
+                if average_amount > ZERO
+                else None
+            )
+            recurring.append(
+                {
+                    "description": item["description"],
+                    "category_id": item["category_id"],
+                    "category_name": item["category_name"],
+                    "average_amount": average_amount,
+                    "last_amount": last_amount,
+                    "transaction_count": len(amounts),
+                    "month_count": month_count,
+                    "last_transaction_date": item["last_transaction_date"],
+                    "change_ratio": change_ratio,
+                    "status": "probable",
+                }
+            )
+
+        return sorted(
+            recurring,
+            key=lambda item: (
+                Decimal(item["average_amount"]),
+                int(item["month_count"]),
+                str(item["description"]),
+            ),
+            reverse=True,
+        )[:limit]
 
     def category_growth_alerts(
         self,
@@ -431,6 +556,201 @@ class DashboardService:
             ),
         )[:limit]
 
+    def credit_card_installments(
+        self,
+        workspace_id: str,
+        date_from: date | None,
+        date_to: date | None,
+        limit: int,
+    ) -> dict[str, object]:
+        if date_from is not None and date_to is not None:
+            return self._credit_card_installments_due(
+                workspace_id=workspace_id,
+                date_from=date_from,
+                date_to=date_to,
+                limit=limit,
+            )
+
+        filters = [
+            Transaction.workspace_id == workspace_id,
+            Transaction.natural_dedupe_key.is_not(None),
+            Transaction.source_type == "credit_card_statement",
+            Transaction.direction == "debit",
+        ]
+        if date_to is not None:
+            filters.append(Transaction.transaction_date <= date_to)
+
+        transactions = self.db.scalars(
+            select(Transaction)
+            .where(*filters)
+            .order_by(desc(Transaction.transaction_date), Transaction.description, Transaction.id)
+        ).all()
+        grouped: dict[tuple[str, Decimal, int], dict[str, object]] = {}
+        for transaction in transactions:
+            installment_current = transaction.installment_current
+            installment_total = transaction.installment_total
+            if installment_current is None or installment_total is None:
+                installment_current, installment_total = extract_installment(
+                    transaction.raw_description
+                )
+            if not installment_current or not installment_total:
+                continue
+            if installment_current > installment_total:
+                continue
+            amount = abs(transaction.amount)
+            description = normalize_transaction_description(transaction.raw_description)
+            key = (description, amount, installment_total)
+            current = grouped.get(key)
+            if current is None:
+                grouped[key] = {
+                    "description": description,
+                    "amount": amount,
+                    "installment_total": installment_total,
+                    "purchase_date": transaction.transaction_date,
+                    "last_transaction_date": transaction.transaction_date,
+                    "transaction_count": 1,
+                }
+            else:
+                current["transaction_count"] = int(current["transaction_count"]) + 1
+                if transaction.transaction_date < current["purchase_date"]:
+                    current["purchase_date"] = transaction.transaction_date
+                if transaction.transaction_date > current["last_transaction_date"]:
+                    current["last_transaction_date"] = transaction.transaction_date
+
+        items: list[dict[str, object]] = []
+        total_future_amount = ZERO
+        active_count = 0
+        reference_date = self._next_month_reference(date_to) if date_to is not None else None
+        for item in grouped.values():
+            purchase_date = item["purchase_date"]
+            target_year = reference_date.year if reference_date is not None else purchase_date.year
+            target_month = (
+                reference_date.month if reference_date is not None else purchase_date.month
+            )
+            current_installment = get_installment_for_target_month(
+                purchase_date=purchase_date,
+                total_installments=int(item["installment_total"]),
+                target_year=target_year,
+                target_month=target_month,
+                closing_day=settings.default_credit_card_closing_day,
+            )
+            if current_installment is None:
+                continue
+            item["installment_current"] = current_installment
+            item["first_invoice_month"] = get_first_invoice_month(
+                purchase_date,
+                settings.default_credit_card_closing_day,
+            )
+            del item["purchase_date"]
+            remaining = max(int(item["installment_total"]) - current_installment, 0)
+            future_amount = Decimal(item["amount"])
+            item["remaining_installments"] = remaining
+            item["future_amount"] = future_amount
+            active_count += 1
+            total_future_amount += future_amount
+            items.append(item)
+
+        items = sorted(
+            items,
+            key=lambda item: (
+                -int(item["remaining_installments"]),
+                -Decimal(item["future_amount"]),
+                str(item["description"]),
+            ),
+        )
+        return {
+            "workspace_id": workspace_id,
+            "active_count": active_count,
+            "closing_day": settings.default_credit_card_closing_day,
+            "due_day": settings.default_credit_card_due_day,
+            "total_future_amount": total_future_amount,
+            "items": items[:limit],
+        }
+
+    def _next_month_reference(self, date_to: date) -> date:
+        if date_to.month == 12:
+            return date(date_to.year + 1, 1, 1)
+        return date(date_to.year, date_to.month + 1, 1)
+
+    def _credit_card_installments_due(
+        self,
+        workspace_id: str,
+        date_from: date,
+        date_to: date,
+        limit: int,
+    ) -> dict[str, object]:
+        rows = self.db.scalars(
+            select(Transaction)
+            .where(
+                Transaction.workspace_id == workspace_id,
+                Transaction.natural_dedupe_key.is_not(None),
+                Transaction.source_type == "credit_card_statement",
+                Transaction.direction == "debit",
+            )
+            .order_by(Transaction.description, Transaction.id)
+        ).all()
+        target_year = date_from.year
+        target_month = date_from.month
+        grouped: dict[tuple[str, Decimal, int, date], dict[str, object]] = {}
+        for transaction in rows:
+            current = transaction.installment_current
+            total = transaction.installment_total
+            if current is None or total is None:
+                current, total = extract_installment(transaction.raw_description)
+            if current is None or total is None or current > total:
+                continue
+
+            purchase_date = transaction.transaction_date
+            installment_number = get_installment_for_target_month(
+                purchase_date=purchase_date,
+                total_installments=total,
+                target_year=target_year,
+                target_month=target_month,
+                closing_day=settings.default_credit_card_closing_day,
+            )
+            if installment_number is None:
+                continue
+
+            amount = abs(transaction.amount)
+            description = normalize_transaction_description(transaction.raw_description)
+            key = (description, amount, int(total), purchase_date)
+            first_invoice_month = get_first_invoice_month(
+                purchase_date,
+                settings.default_credit_card_closing_day,
+            )
+            if key not in grouped:
+                grouped[key] = {
+                    "description": description,
+                    "amount": amount,
+                    "installment_current": installment_number,
+                    "installment_total": total,
+                    "remaining_installments": max(total - installment_number, 0),
+                    "future_amount": amount,
+                    "first_invoice_month": first_invoice_month,
+                    "last_transaction_date": purchase_date,
+                    "transaction_count": 1,
+                }
+            else:
+                grouped[key]["transaction_count"] = int(grouped[key]["transaction_count"]) + 1
+
+        items = sorted(
+            grouped.values(),
+            key=lambda item: (
+                str(item["description"]),
+                item["last_transaction_date"],
+                int(item["installment_total"]),
+            ),
+        )
+        total_amount = sum((Decimal(item["future_amount"]) for item in items), ZERO)
+        return {
+            "workspace_id": workspace_id,
+            "active_count": len(items),
+            "closing_day": settings.default_credit_card_closing_day,
+            "due_day": settings.default_credit_card_due_day,
+            "total_future_amount": total_amount,
+            "items": items[:limit],
+        }
+
     def _transactions(
         self,
         workspace_id: str,
@@ -474,3 +794,73 @@ class DashboardService:
             ),
             ZERO,
         )
+
+    def _burn_rate(self, workspace_id: str, date_to: date | None) -> tuple[Decimal, int]:
+        anchor = date_to or self._latest_transaction_date(workspace_id)
+        if anchor is None:
+            return ZERO, 0
+        window_start = _add_months(date(anchor.year, anchor.month, 1), -11)
+        debits = self._transactions(
+            workspace_id=workspace_id,
+            date_from=window_start,
+            date_to=anchor,
+        )
+        expenses = self._sum(debits, "debit")
+        debit_months = [
+            transaction.transaction_date
+            for transaction in debits
+            if transaction.direction == "debit"
+        ]
+        if not debit_months:
+            return ZERO, 0
+        first_month = date(min(debit_months).year, min(debit_months).month, 1)
+        months = min(12, _inclusive_months(first_month, anchor))
+        burn_rate = (expenses / Decimal(months)).quantize(Decimal("0.01")) if months else ZERO
+        return burn_rate, months
+
+    def _latest_transaction_date(self, workspace_id: str) -> date | None:
+        return self.db.scalar(
+            select(func.max(Transaction.transaction_date)).where(
+                Transaction.workspace_id == workspace_id,
+                Transaction.natural_dedupe_key.is_not(None),
+            )
+        )
+
+
+def _inclusive_months(date_from: date, date_to: date) -> int:
+    if date_to < date_from:
+        return 0
+    return (date_to.year - date_from.year) * 12 + date_to.month - date_from.month + 1
+
+
+def _add_months(value: date, months: int) -> date:
+    month_index = value.year * 12 + value.month - 1 + months
+    year = month_index // 12
+    month = month_index % 12 + 1
+    return date(year, month, 1)
+
+
+def get_first_invoice_month(purchase_date: date, closing_day: int) -> date:
+    if purchase_date.day <= closing_day:
+        return date(purchase_date.year, purchase_date.month, 1)
+    return _add_months(date(purchase_date.year, purchase_date.month, 1), 1)
+
+
+def get_installment_for_target_month(
+    purchase_date: date,
+    total_installments: int,
+    target_year: int,
+    target_month: int,
+    closing_day: int,
+) -> int | None:
+    first_invoice_month = get_first_invoice_month(purchase_date, closing_day)
+    target_invoice_month = date(target_year, target_month, 1)
+    months_diff = (
+        (target_invoice_month.year - first_invoice_month.year) * 12
+        + target_invoice_month.month
+        - first_invoice_month.month
+    )
+    installment_number = months_diff + 1
+    if installment_number < 1 or installment_number > total_installments:
+        return None
+    return installment_number

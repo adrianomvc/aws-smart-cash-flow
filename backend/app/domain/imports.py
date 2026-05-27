@@ -33,6 +33,8 @@ class ParsedTransaction(BaseModel):
     amount: Decimal
     direction: TransactionDirection
     source_line: int
+    installment_current: int | None = None
+    installment_total: int | None = None
 
 
 class ParseError(BaseModel):

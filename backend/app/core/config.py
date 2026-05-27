@@ -18,14 +18,26 @@ class Settings(BaseSettings):
     database_url: str = ""
     supabase_url: str = ""
     supabase_jwt_secret: str = ""
+    supabase_anon_key: str = ""
     supabase_service_role_key: str = ""
     supabase_storage_bucket: str = "financial-files"
     allow_local_auth: bool = Field(default=False, alias="ALLOW_LOCAL_AUTH")
     database_pool_size: int = 1
     database_max_overflow: int = 2
     database_pool_recycle_seconds: int = 300
+    default_credit_card_closing_day: int = Field(default=23, ge=1, le=31)
+    default_credit_card_due_day: int = Field(default=30, ge=1, le=31)
     cors_origins_raw: str = Field(
-        default="http://localhost:5173,http://127.0.0.1:5173",
+        default=(
+            "http://localhost:5173,http://127.0.0.1:5173,"
+            "http://localhost:5174,http://127.0.0.1:5174,"
+            "http://localhost:5175,http://127.0.0.1:5175,"
+            "http://localhost:5176,http://127.0.0.1:5176,"
+            "http://localhost:5177,http://127.0.0.1:5177,"
+            "http://localhost:5178,http://127.0.0.1:5178,"
+            "http://localhost:5179,http://127.0.0.1:5179,"
+            "http://localhost:5180,http://127.0.0.1:5180"
+        ),
         alias="CORS_ORIGINS",
     )
 

@@ -26,7 +26,7 @@ from app.domain.imports import (
 from app.services.categorization_service import CategorizationService
 from app.services.file_classifier import classify_file
 from app.services.parsers import (
-    normalize_transaction_description,
+    normalize_transaction_description_for_dedupe,
     parse_credit_card_csv,
     parse_txt_bank_statement,
 )
@@ -131,12 +131,19 @@ class ImportService:
         parse_result = self._parse(parsed_source_kind, text_content)
         _, workspace, _ = WorkspaceService(self.db).get_or_create_current_workspace(auth)
         content_hash = sha256(content).hexdigest()
-        duplicate_file = self.db.scalar(
-            select(SourceFile.id).where(
+        duplicate_source_file = self.db.scalar(
+            select(SourceFile).where(
                 SourceFile.workspace_id == workspace.id,
                 SourceFile.content_hash == content_hash,
             )
-        ) is not None
+        )
+        duplicate_file = (
+            duplicate_source_file is not None
+            and self._source_file_has_transactions(
+                workspace_id=workspace.id,
+                source_file_id=duplicate_source_file.id,
+            )
+        )
         source_type = self._source_type(parsed_source_kind.value)
         duplicate_rows = 0
         preview_items: list[PreviewTransaction] = []
@@ -145,9 +152,11 @@ class ImportService:
                 workspace_id=workspace.id,
                 source_type=source_type,
                 transaction_date=transaction.transaction_date.isoformat(),
-                raw_description=transaction.raw_description,
-                amount=self._normalize_amount(transaction.amount),
-                direction=transaction.direction.value,
+            raw_description=transaction.raw_description,
+            amount=self._normalize_amount(transaction.amount),
+            direction=transaction.direction.value,
+            installment_current=transaction.installment_current,
+            installment_total=transaction.installment_total,
             )
             duplicate = self.db.scalar(
                 select(Transaction.id).where(
@@ -224,7 +233,10 @@ class ImportService:
                 SourceFile.content_hash == content_hash,
             )
         )
-        if existing_source_file is not None:
+        if existing_source_file is not None and self._source_file_has_transactions(
+            workspace_id=workspace_id,
+            source_file_id=existing_source_file.id,
+        ):
             import_job = self._create_import_job(
                 workspace_id=workspace_id,
                 source_file_id=existing_source_file.id,
@@ -246,21 +258,24 @@ class ImportService:
                 duplicate_rows=0,
             )
 
+        source_file = existing_source_file
         status_value = (
             ImportStatus.COMPLETED_WITH_ERRORS if parse_result.errors else ImportStatus.COMPLETED
         )
-        source_file = SourceFile(
-            id=source_file_id or str(uuid4()),
-            workspace_id=workspace_id,
-            original_filename=filename,
-            content_hash=content_hash,
-            mime_type=mime_type,
-            size_bytes=len(content),
-            storage_bucket=storage_bucket,
-            storage_path=storage_path,
-            source_kind=parsed_source_kind.value,
-            created_by_user_id=auth.user_id,
-        )
+        if source_file is None:
+            source_file = SourceFile(
+                id=source_file_id or str(uuid4()),
+                workspace_id=workspace_id,
+                original_filename=filename,
+                content_hash=content_hash,
+                mime_type=mime_type,
+                size_bytes=len(content),
+                storage_bucket=storage_bucket,
+                storage_path=storage_path,
+                source_kind=parsed_source_kind.value,
+                created_by_user_id=auth.user_id,
+            )
+            self.db.add(source_file)
         import_job = self._create_import_job(
             workspace_id=workspace_id,
             source_file_id=source_file.id,
@@ -269,7 +284,6 @@ class ImportService:
             valid_rows=0,
             error_rows=len(parse_result.errors),
         )
-        self.db.add(source_file)
         self.db.add(import_job)
         self.db.flush()
 
@@ -325,6 +339,20 @@ class ImportService:
             duplicate_rows=duplicate_transactions,
         )
 
+    def _source_file_has_transactions(self, workspace_id: str, source_file_id: str) -> bool:
+        return (
+            self.db.scalar(
+                select(Transaction.id)
+                .where(
+                    Transaction.workspace_id == workspace_id,
+                    Transaction.source_file_id == source_file_id,
+                    Transaction.natural_dedupe_key.is_not(None),
+                )
+                .limit(1)
+            )
+            is not None
+        )
+
     def persist_transaction(
         self,
         workspace_id: str,
@@ -349,6 +377,8 @@ class ImportService:
             raw_description=parsed_transaction.raw_description,
             amount=self._normalize_amount(parsed_transaction.amount),
             direction=parsed_transaction.direction.value,
+            installment_current=parsed_transaction.installment_current,
+            installment_total=parsed_transaction.installment_total,
         )
         existing_transaction = self.db.scalar(
             select(Transaction).where(
@@ -383,8 +413,8 @@ class ImportService:
             amount=parsed_transaction.amount,
             currency="BRL",
             direction=parsed_transaction.direction.value,
-            installment_current=None,
-            installment_total=None,
+            installment_current=parsed_transaction.installment_current,
+            installment_total=parsed_transaction.installment_total,
             source_line=parsed_transaction.source_line,
             dedupe_key=dedupe_key,
             natural_dedupe_key=natural_dedupe_key,
@@ -519,7 +549,14 @@ class ImportService:
         raw_description: str,
         amount: str,
         direction: str,
+        installment_current: int | None = None,
+        installment_total: int | None = None,
     ) -> str:
+        installment_key = (
+            f"{installment_current}/{installment_total}"
+            if installment_current is not None and installment_total is not None
+            else ""
+        )
         raw_key = "|".join(
             [
                 workspace_id,
@@ -528,12 +565,13 @@ class ImportService:
                 self._normalize_description(raw_description),
                 amount,
                 direction,
+                installment_key,
             ]
         )
         return sha256(raw_key.encode("utf-8")).hexdigest()
 
     def _normalize_description(self, value: str) -> str:
-        return normalize_transaction_description(value)
+        return normalize_transaction_description_for_dedupe(value)
 
     def _normalize_amount(self, value: Decimal) -> str:
         return str(value.quantize(Decimal("0.01")))

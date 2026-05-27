@@ -217,6 +217,20 @@ jobs:
             zip -qr ../backend-lambda.zip .
           )
 
+      - name: Validate Lambda package imports
+        run: |
+          set -euo pipefail
+
+          PYTHONPATH="build/lambda" python - <<'PY'
+          import app.main
+          import fastapi
+          import mangum
+
+          assert app.main.handler is not None
+          assert mangum.Mangum is not None
+          print("Lambda package imports OK", fastapi.__version__)
+          PY
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:

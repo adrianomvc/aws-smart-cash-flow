@@ -33,9 +33,10 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
-    supabase_user_id: Mapped[str] = mapped_column(UUID_TYPE, unique=True, nullable=False)
+    supabase_user_id: Mapped[str | None] = mapped_column(UUID_TYPE, unique=True, nullable=True)
     email: Mapped[str] = mapped_column(Text, nullable=False)
     display_name: Mapped[str | None] = mapped_column(Text)
+    password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)  # Local auth only - dev only
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

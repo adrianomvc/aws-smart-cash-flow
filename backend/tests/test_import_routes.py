@@ -3,12 +3,12 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.auth import AuthContext, get_auth_context
-from app.db.models import Base
+from app.db.models import Base, ImportError, ImportJob, RawTransactionLine, SourceFile, Transaction
 from app.db.session import get_db
 from app.main import create_app
 from app.services.import_service import ImportService
@@ -274,6 +274,30 @@ def test_get_import_returns_404_for_other_workspace(
     response = client.get(f"/v1/imports/{result.import_job_id}")
 
     assert response.status_code == 404
+
+
+def test_delete_import_removes_job_transactions_raw_lines_and_errors(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    result = ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="extrato.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato.txt",
+        content=b"01/07/2025;PIX MERCADO;-20,00\nlinha invalida\n",
+    )
+
+    response = client.delete(f"/v1/imports/{result.import_job_id}")
+
+    assert response.status_code == 204
+    assert db_session.scalar(select(func.count()).select_from(ImportJob)) == 0
+    assert db_session.scalar(select(func.count()).select_from(Transaction)) == 0
+    assert db_session.scalar(select(func.count()).select_from(RawTransactionLine)) == 0
+    assert db_session.scalar(select(func.count()).select_from(ImportError)) == 0
+    assert db_session.scalar(select(func.count()).select_from(SourceFile)) == 1
 
 
 def test_list_import_errors_returns_line_errors(

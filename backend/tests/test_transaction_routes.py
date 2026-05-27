@@ -9,7 +9,14 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.auth import AuthContext, get_auth_context
-from app.db.models import Base, Category, Transaction, TransactionCategoryAssignment
+from app.db.models import (
+    Base,
+    Category,
+    ImportJob,
+    SourceFile,
+    Transaction,
+    TransactionCategoryAssignment,
+)
 from app.db.session import get_db
 from app.main import create_app
 from app.services.import_service import ImportService
@@ -51,6 +58,104 @@ def client(db_session: Session, auth: AuthContext) -> Iterator[TestClient]:
         yield test_client
 
     app.dependency_overrides.clear()
+
+
+def test_create_manual_transaction_persists_auditable_transaction(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    category = Category(id=str(uuid4()), workspace_id=auth.workspace_id, name="Saude")
+    db_session.add(category)
+    db_session.commit()
+
+    response = client.post(
+        "/v1/transactions",
+        json={
+            "transaction_date": "2026-05-23",
+            "description": "Consulta medica",
+            "amount": "180.00",
+            "direction": "debit",
+            "category_id": category.id,
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["source_type"] == "unknown"
+    assert payload["source_name"] == "manual"
+    assert payload["description"] == "CONSULTA MEDICA"
+    assert payload["raw_description"] == "Consulta medica"
+    assert payload["amount"] == "180.00"
+    assert payload["direction"] == "debit"
+    assert payload["category_id"] == category.id
+    assert payload["category_source"] == "manual"
+
+    transaction = db_session.scalars(select(Transaction)).one()
+    source_file = db_session.scalars(select(SourceFile)).one()
+    import_job = db_session.scalars(select(ImportJob)).one()
+    assignment = db_session.scalars(select(TransactionCategoryAssignment)).one()
+    assert transaction.source_file_id == source_file.id
+    assert transaction.import_job_id == import_job.id
+    assert source_file.original_filename == "manual-entry"
+    assert source_file.source_kind == "unknown"
+    assert import_job.total_rows == 1
+    assert import_job.valid_rows == 1
+    assert assignment.source == "manual"
+
+
+def test_create_manual_transaction_rejects_duplicate_signature(
+    client: TestClient,
+) -> None:
+    payload = {
+        "transaction_date": "2026-05-23",
+        "description": "Mercado",
+        "amount": "90.50",
+        "direction": "debit",
+    }
+
+    first = client.post("/v1/transactions", json=payload)
+    second = client.post("/v1/transactions", json=payload)
+
+    assert first.status_code == 201
+    assert second.status_code == 409
+
+
+def test_create_manual_transaction_validates_direction_amount_and_category(
+    client: TestClient,
+) -> None:
+    invalid_direction = client.post(
+        "/v1/transactions",
+        json={
+            "transaction_date": "2026-05-23",
+            "description": "Ajuste",
+            "amount": "10.00",
+            "direction": "transfer",
+        },
+    )
+    invalid_amount = client.post(
+        "/v1/transactions",
+        json={
+            "transaction_date": "2026-05-23",
+            "description": "Ajuste",
+            "amount": "0.00",
+            "direction": "credit",
+        },
+    )
+    missing_category = client.post(
+        "/v1/transactions",
+        json={
+            "transaction_date": "2026-05-23",
+            "description": "Ajuste",
+            "amount": "10.00",
+            "direction": "credit",
+            "category_id": str(uuid4()),
+        },
+    )
+
+    assert invalid_direction.status_code == 400
+    assert invalid_amount.status_code == 400
+    assert missing_category.status_code == 404
 
 
 def test_list_transactions_returns_current_workspace_transactions(
@@ -640,3 +745,341 @@ def test_normalize_transaction_descriptions_updates_current_workspace_only(
     assert transaction.description == "99APP"
     assert transaction.raw_description == "99APP       *99App"
     assert other_transaction.description == "MERCADOLIVRE LOJA EXEMPLO"
+
+
+def test_normalize_transaction_descriptions_updates_installment_metadata(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="fatura.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/fatura.csv",
+        content=b"data,lan\xc3\xa7amento,valor\n2026-02-23,ANGLO 03/10,6536.76\n",
+    )
+    transaction = db_session.scalars(
+        select(Transaction).where(Transaction.workspace_id == auth.workspace_id)
+    ).one()
+    transaction.installment_current = None
+    transaction.installment_total = None
+    db_session.commit()
+
+    response = client.post("/v1/transactions/normalize-descriptions")
+
+    assert response.status_code == 200
+    assert response.json()["changed_count"] == 1
+
+    db_session.refresh(transaction)
+    assert transaction.description == "ANGLO"
+    assert transaction.installment_current == 3
+    assert transaction.installment_total == 10
+
+
+def test_normalize_transaction_descriptions_clears_bank_statement_installment_metadata(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="extrato.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato.txt",
+        content=b"01/04/2026;PIX TRANSF FLAVIA 01/04;-100,00\n",
+    )
+    transaction = db_session.scalars(
+        select(Transaction).where(Transaction.workspace_id == auth.workspace_id)
+    ).one()
+    transaction.installment_current = 1
+    transaction.installment_total = 4
+    db_session.commit()
+
+    response = client.post("/v1/transactions/normalize-descriptions")
+
+    assert response.status_code == 200
+    assert response.json()["changed_count"] == 1
+
+    db_session.refresh(transaction)
+    assert transaction.description == "PIX TRANSF FLAVIA"
+    assert transaction.installment_current is None
+    assert transaction.installment_total is None
+
+
+def test_normalize_transaction_descriptions_updates_legacy_natural_dedupe_key(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    service = ImportService(db_session)
+    service.import_bytes(
+        auth=auth,
+        filename="extrato.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato.txt",
+        content=b"01/04/2026;PIX TRANSF FLAVIA 01/04;-225,00\n",
+    )
+    transaction = db_session.scalars(
+        select(Transaction).where(Transaction.workspace_id == auth.workspace_id)
+    ).one()
+    transaction.natural_dedupe_key = "legacy-key"
+    db_session.commit()
+
+    expected_key = service._natural_transaction_dedupe_key(
+        workspace_id=auth.workspace_id,
+        source_type=transaction.source_type,
+        transaction_date=transaction.transaction_date.isoformat(),
+        raw_description=transaction.raw_description,
+        amount=service._normalize_amount(transaction.amount),
+        direction=transaction.direction,
+    )
+
+    response = client.post("/v1/transactions/normalize-descriptions")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["changed_count"] == 1
+    assert payload["natural_key_changed_count"] == 1
+    assert payload["duplicate_key_conflict_count"] == 0
+
+    db_session.refresh(transaction)
+    assert transaction.natural_dedupe_key == expected_key
+
+
+def test_normalize_transaction_descriptions_reports_historical_duplicate_key_conflicts(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    service = ImportService(db_session)
+    content = b"01/04/2026;PIX TRANSF FLAVIA 01/04;-225,00\n"
+    first = service.import_bytes(
+        auth=auth,
+        filename="extrato-antigo.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato-antigo.txt",
+        content=content,
+    )
+    first_transaction = db_session.scalars(
+        select(Transaction).where(Transaction.import_job_id == first.import_job_id)
+    ).one()
+    first_transaction.natural_dedupe_key = "legacy-key"
+    db_session.commit()
+
+    second = service.import_bytes(
+        auth=auth,
+        filename="extrato-novo.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato-novo.txt",
+        content=content + b"\n",
+    )
+    second_transaction = db_session.scalars(
+        select(Transaction).where(Transaction.import_job_id == second.import_job_id)
+    ).one()
+
+    response = client.post("/v1/transactions/normalize-descriptions")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["duplicate_key_conflict_count"] == 1
+    assert payload["natural_key_changed_count"] == 0
+
+    db_session.refresh(first_transaction)
+    db_session.refresh(second_transaction)
+    assert first_transaction.natural_dedupe_key == "legacy-key"
+    assert second_transaction.natural_dedupe_key != "legacy-key"
+
+
+def test_list_duplicate_transaction_candidates_groups_by_current_natural_key(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    service = ImportService(db_session)
+    content = b"01/04/2026;PIX TRANSF FLAVIA 01/04;-225,00\n"
+    first = service.import_bytes(
+        auth=auth,
+        filename="extrato-antigo.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato-antigo.txt",
+        content=content,
+    )
+    first_transaction = db_session.scalars(
+        select(Transaction).where(Transaction.import_job_id == first.import_job_id)
+    ).one()
+    first_transaction.natural_dedupe_key = "legacy-key"
+    db_session.commit()
+    second = service.import_bytes(
+        auth=auth,
+        filename="extrato-novo.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato-novo.txt",
+        content=content + b"\n",
+    )
+    second_transaction = db_session.scalars(
+        select(Transaction).where(Transaction.import_job_id == second.import_job_id)
+    ).one()
+
+    response = client.get("/v1/transactions/duplicates")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["workspace_id"] == auth.workspace_id
+    assert payload["total_groups"] == 1
+    assert payload["total_transactions"] == 2
+    assert payload["groups"][0]["count"] == 2
+    ids = {item["id"] for item in payload["groups"][0]["items"]}
+    assert ids == {first_transaction.id, second_transaction.id}
+    source_filenames = {item["source_filename"] for item in payload["groups"][0]["items"]}
+    assert source_filenames == {"extrato-antigo.txt", "extrato-novo.txt"}
+
+
+def test_list_duplicate_transaction_candidates_does_not_group_different_installments(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="fatura.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/fatura.csv",
+        content=b"data,lan\xc3\xa7amento,valor\n"
+        b"2026-02-24,ANGLO 02/10,6536.76\n"
+        b"2026-02-24,ANGLO 03/10,6536.76\n"
+        b"2026-02-24,ANGLO 04/10,6536.76\n",
+    )
+
+    response = client.get("/v1/transactions/duplicates")
+
+    assert response.status_code == 200
+    assert response.json()["total_groups"] == 0
+
+
+def test_list_duplicate_transaction_candidates_groups_same_installment_only(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    service = ImportService(db_session)
+    first = service.import_bytes(
+        auth=auth,
+        filename="fatura-antiga.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/fatura-antiga.csv",
+        content=b"data,lan\xc3\xa7amento,valor\n2026-01-29,BALACOBACO FESTA 04/04,921.49\n",
+    )
+    first_transaction = db_session.scalars(
+        select(Transaction).where(Transaction.import_job_id == first.import_job_id)
+    ).one()
+    first_transaction.natural_dedupe_key = "legacy-key"
+    db_session.commit()
+    service.import_bytes(
+        auth=auth,
+        filename="fatura-nova.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/fatura-nova.csv",
+        content=b"data,lan\xc3\xa7amento,valor\n2026-01-29,BALACOBACO FESTA 04/04,921.49\n\n",
+    )
+    service.import_bytes(
+        auth=auth,
+        filename="fatura-outra-parcela.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/fatura-outra-parcela.csv",
+        content=b"data,lan\xc3\xa7amento,valor\n2026-01-29,BALACOBACO FESTA 03/04,921.49\n",
+    )
+
+    response = client.get("/v1/transactions/duplicates")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_groups"] == 1
+    assert payload["groups"][0]["count"] == 2
+    assert {item["raw_description"] for item in payload["groups"][0]["items"]} == {
+        "BALACOBACO FESTA 04/04"
+    }
+
+
+def test_list_duplicate_transaction_candidates_is_scoped_by_workspace(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    other_auth = AuthContext(user_id=auth.user_id, workspace_id=str(uuid4()))
+    service = ImportService(db_session)
+    service.import_bytes(
+        auth=auth,
+        filename="extrato.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato.txt",
+        content=b"01/04/2026;PIX TRANSF FLAVIA 01/04;-225,00\n",
+    )
+    service.import_bytes(
+        auth=other_auth,
+        filename="extrato-outro.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{other_auth.workspace_id}/extrato-outro.txt",
+        content=b"01/04/2026;PIX TRANSF FLAVIA 01/04;-225,00\n",
+    )
+
+    response = client.get("/v1/transactions/duplicates")
+
+    assert response.status_code == 200
+    assert response.json()["total_groups"] == 0
+
+
+def test_list_transactions_can_filter_duplicate_conflict_rows_by_ids(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    service = ImportService(db_session)
+    content = b"01/04/2026;PIX TRANSF FLAVIA 01/04;-225,00\n"
+    first = service.import_bytes(
+        auth=auth,
+        filename="extrato-antigo.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato-antigo.txt",
+        content=content,
+    )
+    first_transaction = db_session.scalars(
+        select(Transaction).where(Transaction.import_job_id == first.import_job_id)
+    ).one()
+    first_transaction.natural_dedupe_key = None
+    db_session.commit()
+    second = service.import_bytes(
+        auth=auth,
+        filename="extrato-novo.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato-novo.txt",
+        content=content + b"\n",
+    )
+    second_transaction = db_session.scalars(
+        select(Transaction).where(Transaction.import_job_id == second.import_job_id)
+    ).one()
+
+    response = client.get(
+        f"/v1/transactions?ids={first_transaction.id},{second_transaction.id}"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 2
+    ids = {item["id"] for item in payload["items"]}
+    assert ids == {first_transaction.id, second_transaction.id}

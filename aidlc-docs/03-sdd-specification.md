@@ -30,18 +30,61 @@ Transaction:
   normalizacao deve preservar os dois lados quando forem semanticamente uteis
   para classificacao, por exemplo delivery, marketplace, posto de combustivel
   ou intermediador de pagamento.
-- Para marketplaces configurados como agregadores, como Mercado Livre, Shopee e
-  Amazon Marketplace no MVP, a normalizacao pode descartar o vendedor apos `*`
-  para agrupar o gasto pelo canal principal.
+- Para marketplaces, como Mercado Livre, Shopee e Amazon Marketplace, a
+  normalizacao deve preservar o complemento apos `*` quando ele diferenciar loja,
+  produto ou vendedor; o complemento so deve ser removido quando for repeticao
+  ou variacao truncada do proprio marketplace.
 - Aliases conhecidos de marcas/canais podem ser expandidos para melhorar busca
   e regras, por exemplo `MERCADOLIVRE` para `MERCADO LIVRE`.
 - Quando a expansao de aliases ou o separador do cartao gerar sequencias
   repetidas, a normalizacao deve manter uma unica ocorrencia da sequencia sem
   perder o estabelecimento complementar.
+- Quando intermediadores de pagamento trouxerem o proprio intermediador repetido
+  e um complemento curto truncado, como `PAYPAL*PAYPAL *SH`, a normalizacao pode
+  expandir a sigla apenas em contexto seguro do intermediador, preservando o
+  estabelecimento provavel sem aplicar a sigla globalmente.
+- Canais numericos conhecidos podem ser unidos apenas quando o complemento
+  tornar o significado seguro, por exemplo `99 FOOD` para `99FOOD` e `99 APP`
+  para `99APP`; descricoes genericas como `99` nao devem ser enriquecidas por
+  suposicao deterministica.
+- Abreviacoes seguras no inicio da descricao podem ser expandidas quando houver
+  complemento, por exemplo `MP*LOJA` para `MERCADO PAGO LOJA`; a abreviacao
+  isolada deve ser preservada.
+- Sequencias truncadas recorrentes de adquirente ou descricao podem ser
+  consolidadas por contexto, como `UBER DO BRASI` para `UBER BR`, sem aplicar
+  tokens truncados globalmente a outros estabelecimentos.
+- Quando a descricao terminar com dois tokens numericos curtos que representem
+  parcela atual e total de parcelas, como `ANGLO 03 10`, a normalizacao deve
+  remover esses tokens de parcela para agrupar a compra pelo estabelecimento,
+  preservando `raw_description`.
 - O sistema deve permitir reprocessar as descricoes normalizadas das transacoes
   existentes do workspace quando a estrategia de normalizacao evoluir.
 - O reprocessamento de descricoes existentes deve informar quantas transacoes
   foram avaliadas e quantas foram alteradas, preservando `raw_description`.
+- O reprocessamento deve recalcular tambem metadados derivados da descricao
+  bruta, incluindo `installment_current` e `installment_total`, para atualizar
+  transacoes antigas quando a regra de parcelas evoluir.
+- O reprocessamento deve recalcular a `natural_dedupe_key` com a regra atual
+  para transacoes antigas. Quando a chave recalculada ja pertencer a outra
+  transacao do workspace, o sistema nao deve sobrescrever a chave por causa da
+  restricao unica; deve reportar o conflito para revisao de duplicidade
+  historica.
+- O sistema deve disponibilizar uma consulta de possiveis duplicados historicos,
+  agrupando transacoes pela chave natural recalculada com a regra atual. A
+  consulta deve respeitar `workspace_id`, retornar arquivo/importacao/linha de
+  origem e nao deve excluir nem ocultar transacoes automaticamente.
+- A interface deve permitir navegar de um grupo de possiveis duplicados para a
+  lista de transacoes filtrada por periodo, descricao e tipo financeiro do grupo,
+  facilitando revisao manual antes de qualquer exclusao.
+- Quando nenhum item do grupo possuir a chave natural atual gravada, a interface
+  deve indicar o primeiro lancamento carregado como principal sugerido, mantendo
+  os demais para revisao manual.
+- A interface pode oferecer uma acao de limpeza do grupo para manter o principal
+  real ou sugerido e excluir os demais lancamentos revisados somente apos
+  confirmacao explicita do usuario.
+- A linguagem da interface deve evitar termos tecnicos como `dedupe` na jornada
+  do usuario final, preferindo termos como duplicidade, principal, principal
+  sugerido e revisar.
 - A limpeza de duplicidades historicas geradas por estrategia antiga de
   normalizacao deve ser tratada como fluxo separado com auditoria antes de
   alterar ou ocultar transacoes ja persistidas.
@@ -50,10 +93,26 @@ Transaction:
 - `direction`: `debit`, `credit` ou `payment`.
 - `installment_current`: parcela atual, quando identificada.
 - `installment_total`: total de parcelas, quando identificado.
+- Em faturas de cartao, quando a descricao bruta indicar parcelamento no fim do
+  texto, como `03/10` ou `03 10`, o parser deve gravar
+  `installment_current` e `installment_total`, mantendo `raw_description`
+  original e usando a descricao normalizada sem os tokens de parcela para
+  agrupar a compra.
+- Em extratos bancarios, sufixos como `01/04` em descricoes de PIX,
+  transferencia, TED, DOC ou TBI devem ser tratados como parte da descricao
+  original ou referencia operacional, nao como parcelamento.
+- Quando houver dados de parcela, a interface deve exibir a parcela atual,
+  total de parcelas e quantas parcelas ainda faltam quando aplicavel.
 - `source_line`: linha do arquivo, quando aplicavel.
 - `dedupe_key`: chave deterministica de deduplicacao.
 - `natural_dedupe_key`: chave de deduplicacao por assinatura natural entre
   arquivos diferentes ou quase iguais.
+- A `natural_dedupe_key` deve usar uma descricao canonica propria para
+  deduplicacao derivada de `raw_description`, sem depender apenas da
+  `description` exibida na tela. Essa descricao canonica deve remover ruidos
+  como codigos numericos longos, mas preservar diferenciadores financeiros
+  relevantes, como parcela atual/total, para nao agrupar parcelas distintas da
+  mesma compra como duplicadas.
 - `created_at`: data de criacao.
 
 SourceFile:
@@ -211,6 +270,9 @@ PDFs ficam fora do MVP inicial. A arquitetura deve permitir adicionar parser de 
 Arquivo:
 
 - `content_hash` deve ser unico para evitar reimportacao identica.
+- Se o usuario excluir manualmente todas as transacoes persistidas de um arquivo,
+  uma nova importacao do mesmo arquivo deve ser permitida, reutilizando a origem
+  auditavel existente e criando novo `ImportJob`.
 
 Transacao:
 
@@ -259,6 +321,18 @@ Transacao:
 - Antes de confirmar a gravacao, a interface deve mostrar uma previa por arquivo
   com parser detectado/escolhido, linhas validas, erros e duplicidades. Arquivos
   duplicados ou sem linhas validas nao devem ser enviados na confirmacao.
+- Quando todos os arquivos da previa forem duplicados, com erro ou sem linhas
+  validas, a interface deve mostrar uma mensagem explicita de que nao ha arquivo
+  novo para importar, em vez de deixar uma acao de confirmacao sem efeito.
+- Em lotes com muitos arquivos, a acao principal da previa deve continuar
+  visivel sem exigir rolagem ate o fim da lista completa de arquivos.
+- Para lotes com muitos arquivos, a interface deve mostrar progresso durante a
+  geracao da previa e durante a importacao, mantendo um resumo final por arquivo
+  depois que o processamento terminar.
+- Para lotes grandes, a interface deve avisar que o MVP processa os arquivos um
+  a um, recomendar divisao em blocos menores quando houver dezenas de arquivos e
+  permitir que o usuario prossiga conscientemente. Esse aviso nao substitui o
+  caminho futuro de processamento assincrono.
 
 ## Consulta de Importacoes
 
@@ -273,6 +347,13 @@ Transacao:
 - O detalhe da importacao deve exibir metadados operacionais do arquivo, parser
   utilizado, status, contadores de linhas e erros por linha sem expor payload
   bruto desnecessario.
+- O MVP deve permitir excluir uma importacao operacionalmente quando o usuario
+  precisar limpar um arquivo e reimportar. A exclusao deve remover o `ImportJob`,
+  suas linhas brutas, erros, transacoes persistidas e classificacoes vinculadas,
+  sempre escopada por `workspace_id`.
+- A exclusao operacional de importacao deve manter o `SourceFile` como origem
+  auditavel; se nao houver transacoes restantes para esse arquivo, uma nova
+  importacao do mesmo conteudo deve ser permitida.
 
 ## Multiusuario
 
@@ -294,6 +375,9 @@ Transacao:
 - O MVP deve permitir categoria manual.
 - O usuario deve conseguir remover uma categoria manual ou automatica de uma
   transacao, voltando-a para o estado sem classificacao.
+- A interface deve informar o resultado de uma alteracao de categoria; quando a
+  alteracao remover a transacao da fila de revisao, a mensagem deve explicar que
+  ela saiu da lista por nao estar mais pendente.
 - O usuario deve conseguir corrigir manualmente o tipo financeiro de uma
   transacao entre `debit`, `credit` e `payment`, especialmente para ajustes
   pontuais de pagamento de fatura.
@@ -371,8 +455,14 @@ Providers iniciais de IA:
 ## Dashboard e Indicadores
 
 - Dashboard deve manter os indicadores principais primeiro, apresentar o fluxo
-  mensal como grafico de contexto e exibir o storytelling logo abaixo desse
-  grafico, antes dos paineis operacionais de detalhe.
+  mensal como grafico de contexto, agrupar paineis operacionais por finalidade e
+  fechar a pagina com storytelling financeiro.
+- O topo do dashboard pode exibir uma trilha executiva curta no formato
+  `entrou -> saiu -> saldo -> compromissos`, inspirada no prototipo, usando
+  dados reais ja disponiveis e sem substituir o storytelling de fechamento.
+- O storytelling financeiro deve sintetizar resultado do periodo, saude do
+  fluxo, principal pressao de gasto, confianca dos dados e uma proxima acao
+  sugerida com base nos indicadores disponiveis.
 - A evolucao de UX deve prever uma suite de telas financeiras conectadas:
   visao geral, fluxo de caixa, transacoes, cartoes, orcamentos, investimentos,
   metas, relatorios, insights e configuracoes.
@@ -386,6 +476,8 @@ Providers iniciais de IA:
 - Saldo do periodo deve ser calculado como `receitas - despesas`.
 - Taxa de poupanca deve ser calculada como `(receitas - despesas) / receitas`
   quando houver receita positiva; caso contrario deve ser nula.
+- Comprometimento da receita deve ser calculado como `despesas / receitas`
+  quando houver receita positiva; caso contrario deve ser nulo.
 - Ranking por categoria deve considerar despesas e agrupar transacoes sem categoria
   como `Sem categoria`.
 - Resumo de categorias no dashboard deve exibir valor total, quantidade de
@@ -423,6 +515,9 @@ Providers iniciais de IA:
 - Evolucao dos alertas deve incluir crescimento relevante de gastos por categoria
   e aumento percentual expressivo em gastos recorrentes quando houver historico
   suficiente.
+- No MVP, uma recorrencia em alta deve aparecer como alerta quando tiver pelo
+  menos 3 meses de historico, ultimo valor acima de R$ 50 e aumento igual ou
+  superior a 30% contra a media detectada.
 - Alerta de crescimento por categoria deve comparar o periodo atual contra o
   periodo anterior de mesmo tamanho, ignorando categorias com volume insuficiente
   e exibindo variacao absoluta e percentual.
@@ -442,14 +537,33 @@ Providers iniciais de IA:
   projetado, parcelado futuro, burn rate e saving rate.
 - Burn rate deve representar gasto medio mensal e deixar claro se foi calculado
   por recorrencias, por media historica ou por periodo filtrado.
+- No MVP, enquanto recorrencias confirmadas e saldo real ainda nao existirem, o
+  burn rate exibido no dashboard deve ser uma estimativa pela media mensal de
+  despesas dos ultimos 12 meses ate a data final do filtro. Quando ainda nao
+  houver 12 meses de historico, deve usar os meses disponiveis e informar a
+  quantidade de meses considerada.
 - Runway deve ser calculado como `saldo disponivel / burn rate`, apenas quando
   houver saldo disponivel confiavel e burn rate positivo.
 - Comprometimento da receita deve comparar despesas totais contra receitas totais
   do periodo, excluindo pagamentos de fatura para evitar dupla contagem.
+- O comprometimento da receita deve ser classificado visualmente em faixas de
+  leitura: saudavel abaixo de 70%, atencao entre 70% e 85%, risco acima de 85%.
 - Receita deve permitir leitura por fonte e despesa deve permitir leitura por
   tipo operacional, como fixa, variavel ou extraordinaria.
 - Indicadores de cartao devem separar gasto do cartao, fatura, pagamento de
   fatura, parcelado futuro e recorrencias do cartao.
+- Parcelas identificadas no mes filtrado devem ser projetadas pela diferenca de
+  mes/ano entre o mes alvo e a primeira fatura da compra. A primeira fatura deve
+  ser o mes da compra quando `dia_compra <= closing_day`; se `dia_compra >
+  closing_day`, deve ser o mes seguinte. A parcela so deve aparecer quando o
+  numero projetado estiver entre `1` e o total de parcelas, evitando off-by-one
+  e parcelas ja vencidas.
+- Enquanto nao houver cadastro completo de cartoes, o MVP pode usar
+  `default_credit_card_closing_day` e `default_credit_card_due_day`
+  configuraveis; a evolucao deve persistir `closing_day` e `due_day` por cartao.
+- Parcelado futuro de cartao deve considerar a proxima competencia a partir da
+  data final do filtro e somar apenas a parcela prevista para esse proximo mes
+  quando a compra ainda estiver dentro do prazo do parcelamento.
 - Projecao de fluxo deve explicitar premissas, horizonte e dados usados, como
   receitas recorrentes, despesas recorrentes, parcelas e faturas conhecidas.
 - Score de saude financeira deve ser explicavel e deve indicar quando a baixa
@@ -462,6 +576,66 @@ Providers iniciais de IA:
 - Alertas acionaveis do dashboard devem permitir clique no proprio alerta,
   evitando botoes redundantes quando o destino for evidente.
 - Indicadores nao devem expor descricoes completas ou valores sensiveis em logs.
+
+## AI Copilot / Chat Financeiro
+
+- O AI Copilot deve ser tratado como uma tela/conversa propria, conectada aos
+  indicadores financeiros, e nao apenas como uma lista estatica de insights.
+- A tela deve permitir conversas recentes, novo chat, perguntas sugeridas,
+  mensagens do usuario/assistente e um resumo financeiro lateral com saude
+  financeira, saldo, receitas, despesas, risco, metas e cartao quando esses
+  dados existirem.
+- O Copilot deve responder perguntas como saude financeira, possibilidade de
+  gasto, onde economizar, quanto sobra e simulacao de compra.
+- Respostas devem se apoiar em ferramentas internas rastreaveis, por exemplo
+  resumo de fluxo de caixa, projecao, cartoes, orcamentos, metas, investimentos,
+  assinaturas, simulacao de compra, simulacao de cenario e calculo de gasto
+  seguro.
+- O backend deve separar entidades de conversa, mensagens e snapshot de saude
+  financeira para permitir auditoria e continuidade sem armazenar dados
+  sensiveis desnecessarios.
+- O Copilot deve informar premissas, periodo considerado, principais numeros e
+  limites da recomendacao; nao deve prometer retorno financeiro nem substituir
+  consultoria profissional.
+- Antes de usar LLM em producao, devem existir limites de custo, timeout,
+  minimizacao de prompt, logs sem payload financeiro sensivel e fallback quando
+  o provider estiver indisponivel.
+
+## Tela Publica / Logout
+
+A experiencia fora da sessao deve evoluir para uma tela publica inspirada em
+`aidlc-docs/prototipo de telas/tela logout.png`, separada do app autenticado.
+
+- Mostrar proposta de valor do SmartCashFlow para controle financeiro familiar.
+- Ter CTAs claros para entrar e criar conta.
+- Reforcar seguranca, privacidade e LGPD sem expor dados reais.
+- Exibir preview visual do produto, usando dados demonstrativos.
+- Conectar com os fluxos futuros de login, cadastro, onboarding e recuperacao
+  de sessao.
+
+## Configuracoes e Preferencias
+
+A area de configuracoes deve evoluir conforme
+`aidlc-docs/prototipo de telas/smartcashflow_full_product_spec_v3.md`, tratando
+Configuracoes como hub de subtelas e nao apenas como tela operacional.
+
+Subareas previstas:
+
+- Perfil.
+- Seguranca.
+- Preferencias.
+- Categorias.
+- Contas e Bancos.
+- Importacao de Dados.
+- Notificacoes.
+- Backup e Sincronizacao.
+- Assinatura e Plano.
+- Sobre o App.
+
+Preferencias financeiras devem permitir configurar moeda, idioma/regiao, meta de
+poupanca, limite de comprometimento, perfil de risco, categorias prioritarias e
+canais de alerta. Esses dados devem alimentar indicadores, alertas, simulacoes e
+futuras respostas do Copilot.
 
 ## Internacionalizacao
 

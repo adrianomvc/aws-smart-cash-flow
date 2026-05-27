@@ -2,11 +2,18 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
-from sqlalchemy import desc, func, select
+from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import AuthContext, AuthDependency
-from app.db.models import ImportError, ImportJob, SourceFile
+from app.db.models import (
+    ImportError,
+    ImportJob,
+    RawTransactionLine,
+    SourceFile,
+    Transaction,
+    TransactionCategoryAssignment,
+)
 from app.db.session import get_db
 from app.domain.imports import ImportPreviewResult
 from app.services.import_service import ImportService
@@ -152,6 +159,53 @@ async def get_import(
 
     import_job, source_file = row
     return _import_job_read(import_job=import_job, source_file=source_file)
+
+
+@router.delete("/{import_job_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_import(
+    import_job_id: str,
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> None:
+    import_job = db.scalar(
+        select(ImportJob).where(
+            ImportJob.id == import_job_id,
+            ImportJob.workspace_id == auth.workspace_id,
+        )
+    )
+    if import_job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import not found")
+
+    transaction_ids = select(Transaction.id).where(
+        Transaction.workspace_id == auth.workspace_id,
+        Transaction.import_job_id == import_job_id,
+    )
+    db.execute(
+        delete(TransactionCategoryAssignment).where(
+            TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+            TransactionCategoryAssignment.transaction_id.in_(transaction_ids),
+        )
+    )
+    db.execute(
+        delete(Transaction).where(
+            Transaction.workspace_id == auth.workspace_id,
+            Transaction.import_job_id == import_job_id,
+        )
+    )
+    db.execute(
+        delete(ImportError).where(
+            ImportError.workspace_id == auth.workspace_id,
+            ImportError.import_job_id == import_job_id,
+        )
+    )
+    db.execute(
+        delete(RawTransactionLine).where(
+            RawTransactionLine.workspace_id == auth.workspace_id,
+            RawTransactionLine.import_job_id == import_job_id,
+        )
+    )
+    db.delete(import_job)
+    db.commit()
 
 
 @router.get("/{import_job_id}/errors")

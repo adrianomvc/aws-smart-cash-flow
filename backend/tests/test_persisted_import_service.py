@@ -126,6 +126,88 @@ def test_import_dedupes_same_file_in_same_workspace(db_session: Session) -> None
     assert db_session.scalar(select(func.count()).select_from(ImportJob)) == 2
 
 
+def test_import_allows_same_file_after_transactions_are_deleted(db_session: Session) -> None:
+    auth = AuthContext(user_id=str(uuid4()), workspace_id=str(uuid4()))
+    service = ImportService(db_session)
+    content = b"01/07/2025;PIX TRANSF DANIELL01/07;-10,00\n"
+
+    first = service.import_bytes(
+        auth=auth,
+        filename="extrato.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/first/extrato.txt",
+        content=content,
+    )
+    db_session.query(Transaction).filter(
+        Transaction.source_file_id == first.source_file_id
+    ).delete()
+    db_session.commit()
+
+    preview = service.preview_bytes(
+        auth=auth,
+        filename="extrato.txt",
+        content=content,
+    )
+    second = service.import_bytes(
+        auth=auth,
+        filename="extrato.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/second/extrato.txt",
+        content=content,
+    )
+
+    assert preview.duplicate_file is False
+    assert second.status == ImportStatus.COMPLETED
+    assert second.source_file_id == first.source_file_id
+    assert second.valid_rows == 1
+    assert second.duplicate_rows == 0
+    assert db_session.scalar(select(func.count()).select_from(SourceFile)) == 1
+    assert db_session.scalar(select(func.count()).select_from(Transaction)) == 1
+    assert db_session.scalar(select(func.count()).select_from(ImportJob)) == 2
+
+
+def test_import_does_not_mark_file_duplicate_when_only_hidden_legacy_transactions_remain(
+    db_session: Session,
+) -> None:
+    auth = AuthContext(user_id=str(uuid4()), workspace_id=str(uuid4()))
+    service = ImportService(db_session)
+    content = b"01/07/2025;PIX TRANSF DANIELL01/07;-10,00\n"
+
+    first = service.import_bytes(
+        auth=auth,
+        filename="extrato.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/first/extrato.txt",
+        content=content,
+    )
+    transaction = db_session.scalars(select(Transaction)).one()
+    transaction.natural_dedupe_key = None
+    db_session.commit()
+
+    preview = service.preview_bytes(
+        auth=auth,
+        filename="extrato.txt",
+        content=content,
+    )
+    second = service.import_bytes(
+        auth=auth,
+        filename="extrato.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/second/extrato.txt",
+        content=content,
+    )
+
+    assert preview.duplicate_file is False
+    assert second.status == ImportStatus.COMPLETED
+    assert second.source_file_id == first.source_file_id
+    assert second.valid_rows == 0
+    assert second.duplicate_rows == 1
+
+
 def test_import_dedupes_overlapping_transactions_from_new_file(db_session: Session) -> None:
     auth = AuthContext(user_id=str(uuid4()), workspace_id=str(uuid4()))
     service = ImportService(db_session)
@@ -293,6 +375,59 @@ def test_persist_transaction_reuses_same_source_file_and_line(db_session: Sessio
     assert duplicate.id == db_session.scalars(select(Transaction)).one().id
     assert db_session.scalar(select(func.count()).select_from(SourceFile)) == 1
     assert db_session.scalar(select(func.count()).select_from(Transaction)) == 1
+
+
+def test_import_persists_credit_card_installment_metadata(db_session: Session) -> None:
+    auth = AuthContext(user_id=str(uuid4()), workspace_id=str(uuid4()))
+
+    result = ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="fatura.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/fatura.csv",
+        content=b"data,lan\xc3\xa7amento,valor\n2026-02-23,ANGLO 03/10,6536.76\n",
+    )
+
+    transaction = db_session.scalars(select(Transaction)).one()
+
+    assert result.status == ImportStatus.COMPLETED
+    assert transaction.description == "ANGLO"
+    assert transaction.raw_description == "ANGLO 03/10"
+    assert transaction.installment_current == 3
+    assert transaction.installment_total == 10
+
+
+def test_import_keeps_different_installments_as_distinct_transactions(
+    db_session: Session,
+) -> None:
+    auth = AuthContext(user_id=str(uuid4()), workspace_id=str(uuid4()))
+
+    result = ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="fatura.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/fatura.csv",
+        content=b"data,lan\xc3\xa7amento,valor\n"
+        b"2026-02-24,ANGLO 02/10,6536.76\n"
+        b"2026-02-24,ANGLO 03/10,6536.76\n"
+        b"2026-02-24,ANGLO 04/10,6536.76\n",
+    )
+
+    transactions = db_session.scalars(
+        select(Transaction).order_by(Transaction.installment_current)
+    ).all()
+
+    assert result.status == ImportStatus.COMPLETED
+    assert result.valid_rows == 3
+    assert result.duplicate_rows == 0
+    assert [(item.installment_current, item.installment_total) for item in transactions] == [
+        (2, 10),
+        (3, 10),
+        (4, 10),
+    ]
+    assert len({item.natural_dedupe_key for item in transactions}) == 3
 
 
 class FakeStorage:
