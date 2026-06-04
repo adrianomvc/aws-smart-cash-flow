@@ -85,6 +85,7 @@ import {
   type ImportJobRead,
   type ImportPreviewResult,
   type PlanningProjection,
+  type ProjectionFeed,
   type ReportCardRead,
   type RecurringExpenseItem,
   type RulePreview,
@@ -123,6 +124,7 @@ import {
   getImports,
   getMonthlyCashflow,
   getPlanningProjection,
+  getProjectionFeed,
   getRecurringExpenses,
   getRecurringIncomes,
   getReports,
@@ -295,6 +297,41 @@ const RECOMMENDED_BATCH_FILE_LIMIT = 20;
 type BatchPreviewResult =
   | { file: File; fileName: string; preview: ImportPreviewResult; status: "success" }
   | { errorMessage: string; file: File; fileName: string; status: "error" };
+
+function projectionFeedToInputs(feed: ProjectionFeed) {
+  return {
+    currentBalance: feed.current_balance !== null ? Number(feed.current_balance) : 0,
+    knownEvents: feed.known_events.map((ev) => ({
+      amount: ev.amount,
+      date: ev.date,
+      description: ev.description,
+      source: ev.source as import("./lib/cashflowProjection").ProjectionEventSource,
+      type: ev.type,
+    })),
+    recurringItems: feed.recurring_items.map((item) => ({
+      amount: item.amount,
+      categoryId: item.category_id,
+      description: item.description,
+      frequency: item.frequency,
+      lastDate: item.last_date,
+      monthCount: item.month_count,
+      transactionCount: item.transaction_count,
+      type: item.type,
+    })),
+    creditCardInstallments: feed.credit_card_installments.map((inst) => ({
+      amount: inst.amount,
+      description: inst.description,
+      dueDate: inst.due_date,
+    })),
+    variableCategories: feed.variable_categories.map((cat) => ({
+      categoryId: cat.category_id,
+      categoryName: cat.category_name,
+      currentMonthSpent: cat.current_month_spent,
+      historicalMonthlyAmounts: cat.historical_monthly_amounts,
+      monthlyAverage: cat.monthly_average,
+    })),
+  };
+}
 
 function App() {
   const [session, setSession] = useState<ApiSession | null>(() => {
@@ -845,6 +882,12 @@ function DashboardPage({
     queryKey: ["dashboard-evolution-projection-calendar-events", session.token, evolutionProjectionQuery],
     queryFn: () => getCalendarEvents(session, evolutionProjectionQuery),
   });
+  const projectionFeed = useQuery({
+    queryKey: ["dashboard-projection-feed", session.token],
+    queryFn: () => getProjectionFeed(session, 90),
+    staleTime: 5 * 60 * 1000,
+  });
+  const feedInputs = projectionFeed.data ? projectionFeedToInputs(projectionFeed.data) : null;
   const recentTransactions = useQuery({
     queryKey: ["dashboard-recent-transactions", session.token, period.query],
     queryFn: () => getTransactions(session, withQueryParams(period.query, { limit: "6", sort_by: "transaction_date", sort_dir: "desc" })),
@@ -872,134 +915,31 @@ function DashboardPage({
   const projection30Result = useMemo(
     () =>
       buildRollingCashFlowProjection({
-        currentBalance: currentBalanceValue ?? balance,
-        creditCardInstallments: (projection30Installments.data?.items ?? []).map((item) => ({
-          amount: item.amount,
-          description: `Parcela cartão: ${item.description}`,
-          dueDate: creditCardDueDateInRange(
-            projection30Range.dateFrom,
-            projection30Range.dateTo,
-            projection30Installments.data?.due_day,
-          ),
-        })),
+        currentBalance: feedInputs?.currentBalance ?? currentBalanceValue ?? balance,
+        creditCardInstallments: feedInputs?.creditCardInstallments,
         horizonDays: 30,
-        knownEvents: (projection30PersistedEvents.data?.items ?? []).map((event) => ({
-          amount: event.amount ?? 0,
-          date: event.due_date,
-          description: event.title,
-          source: event.event_type === "subscription" ? "subscription" : "calendar",
-          type: event.event_type === "income" ? "income" : "expense",
-        })),
-        recurringItems: [
-          ...(recurringIncome.data?.items ?? []).map((item) => ({
-            amount: item.average_amount,
-            categoryId: item.category_id,
-            description: item.description,
-            lastDate: item.last_transaction_date,
-            monthCount: item.month_count,
-            transactionCount: item.transaction_count,
-            type: "income" as const,
-          })),
-          ...(recurring.data?.items ?? []).map((item) => ({
-            amount: item.average_amount,
-            categoryId: item.category_id,
-            description: item.description,
-            lastDate: item.last_transaction_date,
-            monthCount: item.month_count,
-            transactionCount: item.transaction_count,
-            type: "expense" as const,
-          })),
-        ],
+        knownEvents: feedInputs?.knownEvents,
+        recurringItems: feedInputs?.recurringItems,
         startDate: projection30Range.dateFrom,
-        variableCategories: categoryItems.map((item) => {
-          const spent = Math.abs(Number(item.amount ?? 0));
-          return {
-            categoryId: item.category_id,
-            categoryName: item.category_name,
-            currentMonthSpent: spent,
-            monthlyAverage: spent * 1.15,
-          };
-        }),
+        variableCategories: feedInputs?.variableCategories,
       }),
-    [
-      balance,
-      categoryItems,
-      currentBalanceValue,
-      projection30Installments.data?.due_day,
-      projection30Installments.data?.items,
-      projection30PersistedEvents.data?.items,
-      projection30Range.dateFrom,
-      projection30Range.dateTo,
-      recurring.data?.items,
-      recurringIncome.data?.items,
-    ],
+    [balance, currentBalanceValue, feedInputs, projection30Range.dateFrom],
   );
   const projection30Cashflow = projection30Result.chartPoints;
   const evolutionProjectionResult = useMemo(
     () =>
       evolutionProjectionRange
         ? buildRollingCashFlowProjection({
-            currentBalance: currentBalanceValue ?? balance,
-            creditCardInstallments: (evolutionProjectionInstallments.data?.items ?? []).map((item) => ({
-              amount: item.amount,
-              description: `Parcela cartão: ${item.description}`,
-              dueDate: creditCardDueDateInRange(
-                evolutionProjectionRange.dateFrom,
-                evolutionProjectionRange.dateTo,
-                evolutionProjectionInstallments.data?.due_day,
-              ),
-            })),
+            currentBalance: feedInputs?.currentBalance ?? currentBalanceValue ?? balance,
+            creditCardInstallments: feedInputs?.creditCardInstallments,
             horizonDays: evolutionProjectionRange.horizonDays,
-            knownEvents: (evolutionProjectionPersistedEvents.data?.items ?? []).map((event) => ({
-              amount: event.amount ?? 0,
-              date: event.due_date,
-              description: event.title,
-              source: event.event_type === "subscription" ? "subscription" : "calendar",
-              type: event.event_type === "income" ? "income" : "expense",
-            })),
-            recurringItems: [
-              ...(recurringIncome.data?.items ?? []).map((item) => ({
-                amount: item.average_amount,
-                categoryId: item.category_id,
-                description: item.description,
-                lastDate: item.last_transaction_date,
-                monthCount: item.month_count,
-                transactionCount: item.transaction_count,
-                type: "income" as const,
-              })),
-              ...(recurring.data?.items ?? []).map((item) => ({
-                amount: item.average_amount,
-                categoryId: item.category_id,
-                description: item.description,
-                lastDate: item.last_transaction_date,
-                monthCount: item.month_count,
-                transactionCount: item.transaction_count,
-                type: "expense" as const,
-              })),
-            ],
+            knownEvents: feedInputs?.knownEvents,
+            recurringItems: feedInputs?.recurringItems,
             startDate: evolutionProjectionRange.dateFrom,
-            variableCategories: categoryItems.map((item) => {
-              const spent = Math.abs(Number(item.amount ?? 0));
-              return {
-                categoryId: item.category_id,
-                categoryName: item.category_name,
-                currentMonthSpent: spent,
-                monthlyAverage: spent * 1.15,
-              };
-            }),
+            variableCategories: feedInputs?.variableCategories,
           })
         : null,
-    [
-      balance,
-      categoryItems,
-      currentBalanceValue,
-      evolutionProjectionInstallments.data?.due_day,
-      evolutionProjectionInstallments.data?.items,
-      evolutionProjectionPersistedEvents.data?.items,
-      evolutionProjectionRange,
-      recurring.data?.items,
-      recurringIncome.data?.items,
-    ],
+    [balance, currentBalanceValue, evolutionProjectionRange, feedInputs],
   );
   const evolutionProjectionCashflow = evolutionProjectionResult?.chartPoints ?? [];
   const dailyCashflow = useMemo(
@@ -1496,16 +1436,12 @@ function CashflowPage({
     queryKey: ["cashflow-recurring-incomes", session.token, period.recurringQuery],
     queryFn: () => getRecurringIncomes(session, withQueryParams(period.recurringQuery, { limit: "6", min_months: "3" })),
   });
-  const evolutionProjectionInstallments = useQuery({
-    enabled: Boolean(evolutionProjectionRange),
-    queryKey: ["cashflow-evolution-projection-credit-card-installments", session.token, evolutionProjectionQuery],
-    queryFn: () => getCreditCardInstallments(session, withQueryParams(evolutionProjectionQuery, { limit: "100" })),
+  const projectionFeed = useQuery({
+    queryKey: ["cashflow-projection-feed", session.token],
+    queryFn: () => getProjectionFeed(session, 90),
+    staleTime: 5 * 60 * 1000,
   });
-  const evolutionProjectionPersistedEvents = useQuery({
-    enabled: Boolean(evolutionProjectionRange),
-    queryKey: ["cashflow-evolution-projection-calendar-events", session.token, evolutionProjectionQuery],
-    queryFn: () => getCalendarEvents(session, evolutionProjectionQuery),
-  });
+  const feedInputs = projectionFeed.data ? projectionFeedToInputs(projectionFeed.data) : null;
   const incomeTransactions = useQuery({
     queryKey: ["cashflow-income-transactions", session.token, period.query],
     queryFn: () => getTransactions(session, withQueryParams(period.query, { direction: "credit", limit: "100", sort_by: "amount", sort_dir: "desc" })),
@@ -1542,67 +1478,16 @@ function CashflowPage({
     () =>
       evolutionProjectionRange
         ? buildRollingCashFlowProjection({
-            currentBalance: currentBalanceValue ?? balance,
-            creditCardInstallments: (evolutionProjectionInstallments.data?.items ?? []).map((item) => ({
-              amount: item.amount,
-              description: `Parcela cartão: ${item.description}`,
-              dueDate: creditCardDueDateInRange(
-                evolutionProjectionRange.dateFrom,
-                evolutionProjectionRange.dateTo,
-                evolutionProjectionInstallments.data?.due_day,
-              ),
-            })),
+            currentBalance: feedInputs?.currentBalance ?? currentBalanceValue ?? balance,
+            creditCardInstallments: feedInputs?.creditCardInstallments,
             horizonDays: evolutionProjectionRange.horizonDays,
-            knownEvents: (evolutionProjectionPersistedEvents.data?.items ?? []).map((event) => ({
-              amount: event.amount ?? 0,
-              date: event.due_date,
-              description: event.title,
-              source: event.event_type === "subscription" ? "subscription" : "calendar",
-              type: event.event_type === "income" ? "income" : "expense",
-            })),
-            recurringItems: [
-              ...(recurringIncome.data?.items ?? []).map((item) => ({
-                amount: item.average_amount,
-                categoryId: item.category_id,
-                description: item.description,
-                lastDate: item.last_transaction_date,
-                monthCount: item.month_count,
-                transactionCount: item.transaction_count,
-                type: "income" as const,
-              })),
-              ...(recurring.data?.items ?? []).map((item) => ({
-                amount: item.average_amount,
-                categoryId: item.category_id,
-                description: item.description,
-                lastDate: item.last_transaction_date,
-                monthCount: item.month_count,
-                transactionCount: item.transaction_count,
-                type: "expense" as const,
-              })),
-            ],
+            knownEvents: feedInputs?.knownEvents,
+            recurringItems: feedInputs?.recurringItems,
             startDate: evolutionProjectionRange.dateFrom,
-            variableCategories: categoryItems.map((item) => {
-              const spent = Math.abs(Number(item.amount ?? 0));
-              return {
-                categoryId: item.category_id,
-                categoryName: item.category_name,
-                currentMonthSpent: spent,
-                monthlyAverage: spent * 1.15,
-              };
-            }),
+            variableCategories: feedInputs?.variableCategories,
           })
         : null,
-    [
-      balance,
-      categoryItems,
-      currentBalanceValue,
-      evolutionProjectionInstallments.data?.due_day,
-      evolutionProjectionInstallments.data?.items,
-      evolutionProjectionPersistedEvents.data?.items,
-      evolutionProjectionRange,
-      recurring.data?.items,
-      recurringIncome.data?.items,
-    ],
+    [balance, currentBalanceValue, evolutionProjectionRange, feedInputs],
   );
   const evolutionProjectionCashflow = evolutionProjectionResult?.chartPoints ?? [];
   const dailyCashflow = useMemo(

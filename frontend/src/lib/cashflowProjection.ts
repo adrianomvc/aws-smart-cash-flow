@@ -279,7 +279,14 @@ function confidenceForEvents(events: CashFlowProjectionEvent[]): ProjectionConfi
 }
 
 function isReliableRecurring(recurring: RecurringProjectionInput) {
-  return (recurring.monthCount ?? 0) >= 3 || (recurring.transactionCount ?? 0) >= 3;
+  const hasEnoughHistory =
+    (recurring.monthCount ?? 0) >= 3 || (recurring.transactionCount ?? 0) >= 3;
+  if (!hasEnoughHistory) return false;
+  const lastDate = parseIsoDate(recurring.lastDate);
+  if (!lastDate) return false;
+  const today = new Date();
+  const daysSinceLast = Math.floor((today.getTime() - lastDate.getTime()) / 86_400_000);
+  return daysSinceLast <= 60;
 }
 
 function recurringSource(description: string): ProjectionEventSource {

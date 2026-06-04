@@ -228,6 +228,50 @@ class CreditCardInstallmentsResponse(BaseModel):
     items: list[CreditCardInstallmentItem]
 
 
+class ProjectionFeedKnownEventItem(BaseModel):
+    amount: Decimal
+    date: date
+    description: str
+    source: str
+    type: str
+
+
+class ProjectionFeedRecurringItem(BaseModel):
+    description: str
+    amount: Decimal
+    type: str
+    last_date: str
+    month_count: int
+    transaction_count: int
+    category_id: str | None
+    frequency: str
+
+
+class ProjectionFeedCreditCardInstallmentItem(BaseModel):
+    amount: Decimal
+    description: str
+    due_date: str
+
+
+class ProjectionFeedVariableCategoryItem(BaseModel):
+    category_id: str | None
+    category_name: str
+    current_month_spent: Decimal
+    historical_monthly_amounts: list[Decimal]
+    monthly_average: Decimal
+
+
+class ProjectionFeedResponse(BaseModel):
+    workspace_id: str
+    current_balance: Decimal | None
+    current_balance_date: date | None
+    current_balance_account: str | None
+    known_events: list[ProjectionFeedKnownEventItem]
+    recurring_items: list[ProjectionFeedRecurringItem]
+    credit_card_installments: list[ProjectionFeedCreditCardInstallmentItem]
+    variable_categories: list[ProjectionFeedVariableCategoryItem]
+
+
 @router.get("/summary")
 def get_summary(
     auth: AuthContext = AuthDependency,
@@ -445,6 +489,20 @@ def get_credit_card_payment_matches(
         limit=limit,
     )
     return CreditCardPaymentMatchesResponse(workspace_id=auth.workspace_id, items=items)
+
+
+@router.get("/projection-feed")
+def get_projection_feed(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+    horizon_days: int = Query(default=90, ge=7, le=365),
+) -> ProjectionFeedResponse:
+    return ProjectionFeedResponse(
+        **DashboardService(db).projection_feed(
+            workspace_id=auth.workspace_id,
+            horizon_days=horizon_days,
+        )
+    )
 
 
 @router.get("/credit-card-installments")

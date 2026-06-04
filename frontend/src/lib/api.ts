@@ -461,6 +461,42 @@ export type PlanningProjection = {
   assumptions: string[];
 };
 
+export type ProjectionFeed = {
+  workspace_id: string;
+  current_balance: string | null;
+  current_balance_date: string | null;
+  current_balance_account: string | null;
+  known_events: Array<{
+    amount: string;
+    date: string;
+    description: string;
+    source: string;
+    type: "income" | "expense";
+  }>;
+  recurring_items: Array<{
+    description: string;
+    amount: string;
+    type: "income" | "expense";
+    last_date: string;
+    month_count: number;
+    transaction_count: number;
+    category_id: string | null;
+    frequency: "monthly" | "weekly";
+  }>;
+  credit_card_installments: Array<{
+    amount: string;
+    description: string;
+    due_date: string;
+  }>;
+  variable_categories: Array<{
+    category_id: string | null;
+    category_name: string;
+    current_month_spent: string;
+    historical_monthly_amounts: string[];
+    monthly_average: string;
+  }>;
+};
+
 export type ReportCardRead = {
   id: string;
   title: string;
@@ -636,6 +672,10 @@ export function getCreditCardPaymentMatches(session: ApiSession, query: string) 
 
 export function getCreditCardInstallments(session: ApiSession, query: string) {
   return apiRequest<CreditCardInstallmentsResponse>(`/dashboard/credit-card-installments${query}`, session);
+}
+
+export function getProjectionFeed(session: ApiSession, horizonDays = 90) {
+  return apiRequest<ProjectionFeed>(`/dashboard/projection-feed?horizon_days=${horizonDays}`, session);
 }
 
 export function getCreditCards(session: ApiSession) {
