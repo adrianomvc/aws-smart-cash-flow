@@ -279,7 +279,14 @@ function confidenceForEvents(events: CashFlowProjectionEvent[]): ProjectionConfi
 }
 
 function isReliableRecurring(recurring: RecurringProjectionInput) {
-  return (recurring.monthCount ?? 0) >= 3 || (recurring.transactionCount ?? 0) >= 3;
+  const hasEnoughHistory =
+    (recurring.monthCount ?? 0) >= 3 || (recurring.transactionCount ?? 0) >= 3;
+  if (!hasEnoughHistory) return false;
+  const lastDate = parseIsoDate(recurring.lastDate);
+  if (!lastDate) return false;
+  const today = new Date();
+  const daysSinceLast = Math.floor((today.getTime() - lastDate.getTime()) / 86_400_000);
+  return daysSinceLast <= 60;
 }
 
 function recurringSource(description: string): ProjectionEventSource {
@@ -289,7 +296,12 @@ function recurringSource(description: string): ProjectionEventSource {
 }
 
 function addEvent(byDate: Map<string, CashFlowProjectionEvent[]>, date: string, event: CashFlowProjectionEvent) {
-  byDate.set(date, [...(byDate.get(date) ?? []), event]);
+  const existing = byDate.get(date);
+  if (existing) {
+    existing.push(event);
+  } else {
+    byDate.set(date, [event]);
+  }
 }
 
 function sumEvents(events: CashFlowProjectionEvent[], type: "income" | "expense") {

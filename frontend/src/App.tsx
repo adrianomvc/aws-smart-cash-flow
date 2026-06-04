@@ -85,6 +85,7 @@ import {
   type ImportJobRead,
   type ImportPreviewResult,
   type PlanningProjection,
+  type ProjectionFeed,
   type ReportCardRead,
   type RecurringExpenseItem,
   type RulePreview,
@@ -123,6 +124,7 @@ import {
   getImports,
   getMonthlyCashflow,
   getPlanningProjection,
+  getProjectionFeed,
   getRecurringExpenses,
   getRecurringIncomes,
   getReports,
@@ -295,6 +297,41 @@ const RECOMMENDED_BATCH_FILE_LIMIT = 20;
 type BatchPreviewResult =
   | { file: File; fileName: string; preview: ImportPreviewResult; status: "success" }
   | { errorMessage: string; file: File; fileName: string; status: "error" };
+
+function projectionFeedToInputs(feed: ProjectionFeed) {
+  return {
+    currentBalance: feed.current_balance !== null ? Number(feed.current_balance) : undefined,
+    knownEvents: feed.known_events.map((ev) => ({
+      amount: ev.amount,
+      date: ev.date,
+      description: ev.description,
+      source: ev.source as import("./lib/cashflowProjection").ProjectionEventSource,
+      type: ev.type,
+    })),
+    recurringItems: feed.recurring_items.map((item) => ({
+      amount: item.amount,
+      categoryId: item.category_id,
+      description: item.description,
+      frequency: item.frequency,
+      lastDate: item.last_date,
+      monthCount: item.month_count,
+      transactionCount: item.transaction_count,
+      type: item.type,
+    })),
+    creditCardInstallments: feed.credit_card_installments.map((inst) => ({
+      amount: inst.amount,
+      description: inst.description,
+      dueDate: inst.due_date,
+    })),
+    variableCategories: feed.variable_categories.map((cat) => ({
+      categoryId: cat.category_id,
+      categoryName: cat.category_name,
+      currentMonthSpent: cat.current_month_spent,
+      historicalMonthlyAmounts: cat.historical_monthly_amounts,
+      monthlyAverage: cat.monthly_average,
+    })),
+  };
+}
 
 function App() {
   const [session, setSession] = useState<ApiSession | null>(() => {
@@ -617,13 +654,6 @@ function ProtectedApp({
     queryFn: () => getCurrentWorkspace(session),
   });
 
-  console.log("Workspace query state:", {
-    isLoading: workspaceQuery.isLoading,
-    isError: workspaceQuery.isError,
-    error: workspaceQuery.error,
-    data: workspaceQuery.data,
-  });
-
   if (workspaceQuery.isLoading) {
     return <PageState icon={Loader2} title="Carregando workspace" description="Preparando seu ambiente." spin />;
   }
@@ -751,16 +781,6 @@ function DashboardPage({
     () => projectionRangeFromPeriod(period.dateFrom, period.dateTo),
     [period.dateFrom, period.dateTo],
   );
-  const evolutionProjectionQuery = useMemo(
-    () =>
-      evolutionProjectionRange
-        ? withQueryParams("", {
-            date_from: evolutionProjectionRange.dateFrom,
-            date_to: evolutionProjectionRange.dateTo,
-          })
-        : "",
-    [evolutionProjectionRange],
-  );
   const projection30Range = useMemo(() => nextDaysRange(30), []);
   const projection30Query = useMemo(
     () =>
@@ -814,11 +834,6 @@ function DashboardPage({
     queryKey: ["dashboard-projection-30-credit-card-installments", session.token, projection30Range.dateTo],
     queryFn: () => getCreditCardInstallments(session, withQueryParams(projection30Query, { limit: "100" })),
   });
-  const evolutionProjectionInstallments = useQuery({
-    enabled: Boolean(evolutionProjectionRange),
-    queryKey: ["dashboard-evolution-projection-credit-card-installments", session.token, evolutionProjectionQuery],
-    queryFn: () => getCreditCardInstallments(session, withQueryParams(evolutionProjectionQuery, { limit: "100" })),
-  });
   const statements = useQuery({
     queryKey: ["dashboard-credit-card-statements", session.token, period.query],
     queryFn: () => getCreditCardStatements(session, period.query),
@@ -831,32 +846,36 @@ function DashboardPage({
   const goals = useQuery({
     queryKey: ["dashboard-goals", session.token],
     queryFn: () => getGoals(session),
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
   });
   const persistedEvents = useQuery({
     queryKey: ["dashboard-calendar-events", session.token, period.query],
     queryFn: () => getCalendarEvents(session, period.query),
+    staleTime: 2 * 60 * 1000,
   });
   const projection30PersistedEvents = useQuery({
     queryKey: ["dashboard-projection-30-calendar-events", session.token, projection30Query],
     queryFn: () => getCalendarEvents(session, projection30Query),
   });
-  const evolutionProjectionPersistedEvents = useQuery({
-    enabled: Boolean(evolutionProjectionRange),
-    queryKey: ["dashboard-evolution-projection-calendar-events", session.token, evolutionProjectionQuery],
-    queryFn: () => getCalendarEvents(session, evolutionProjectionQuery),
+  const projectionFeed = useQuery({
+    queryKey: ["projection-feed", session.token],
+    queryFn: () => getProjectionFeed(session, 90),
+    staleTime: 5 * 60 * 1000,
   });
+  const feedInputs = projectionFeed.data ? projectionFeedToInputs(projectionFeed.data) : null;
   const recentTransactions = useQuery({
     queryKey: ["dashboard-recent-transactions", session.token, period.query],
     queryFn: () => getTransactions(session, withQueryParams(period.query, { limit: "6", sort_by: "transaction_date", sort_dir: "desc" })),
   });
   const balance = Number(summary.data?.balance ?? 0);
   const categoryItems = ranking.data?.items ?? [];
-  const calendarEvents = buildCalendarEvents({
+  const calendarEvents = useMemo(() => buildCalendarEvents({
     apiEvents: persistedEvents.data?.items,
     installments: installments.data?.items ?? [],
     recurring: recurring.data?.items ?? [],
     transactions: recentTransactions.data?.items ?? [],
-  });
+  }), [installments.data?.items, persistedEvents.data?.items, recurring.data?.items, recentTransactions.data?.items]);
   const currentBalance = summary.data?.current_balance;
   const currentBalanceValue = currentBalance === null || currentBalance === undefined ? null : Number(currentBalance);
   const monthlyBurnRate = Number(summary.data?.burn_rate ?? 0);
@@ -872,134 +891,31 @@ function DashboardPage({
   const projection30Result = useMemo(
     () =>
       buildRollingCashFlowProjection({
-        currentBalance: currentBalanceValue ?? balance,
-        creditCardInstallments: (projection30Installments.data?.items ?? []).map((item) => ({
-          amount: item.amount,
-          description: `Parcela cartão: ${item.description}`,
-          dueDate: creditCardDueDateInRange(
-            projection30Range.dateFrom,
-            projection30Range.dateTo,
-            projection30Installments.data?.due_day,
-          ),
-        })),
+        currentBalance: feedInputs?.currentBalance ?? currentBalanceValue ?? balance,
+        creditCardInstallments: feedInputs?.creditCardInstallments,
         horizonDays: 30,
-        knownEvents: (projection30PersistedEvents.data?.items ?? []).map((event) => ({
-          amount: event.amount ?? 0,
-          date: event.due_date,
-          description: event.title,
-          source: event.event_type === "subscription" ? "subscription" : "calendar",
-          type: event.event_type === "income" ? "income" : "expense",
-        })),
-        recurringItems: [
-          ...(recurringIncome.data?.items ?? []).map((item) => ({
-            amount: item.average_amount,
-            categoryId: item.category_id,
-            description: item.description,
-            lastDate: item.last_transaction_date,
-            monthCount: item.month_count,
-            transactionCount: item.transaction_count,
-            type: "income" as const,
-          })),
-          ...(recurring.data?.items ?? []).map((item) => ({
-            amount: item.average_amount,
-            categoryId: item.category_id,
-            description: item.description,
-            lastDate: item.last_transaction_date,
-            monthCount: item.month_count,
-            transactionCount: item.transaction_count,
-            type: "expense" as const,
-          })),
-        ],
+        knownEvents: feedInputs?.knownEvents,
+        recurringItems: feedInputs?.recurringItems,
         startDate: projection30Range.dateFrom,
-        variableCategories: categoryItems.map((item) => {
-          const spent = Math.abs(Number(item.amount ?? 0));
-          return {
-            categoryId: item.category_id,
-            categoryName: item.category_name,
-            currentMonthSpent: spent,
-            monthlyAverage: spent * 1.15,
-          };
-        }),
+        variableCategories: feedInputs?.variableCategories,
       }),
-    [
-      balance,
-      categoryItems,
-      currentBalanceValue,
-      projection30Installments.data?.due_day,
-      projection30Installments.data?.items,
-      projection30PersistedEvents.data?.items,
-      projection30Range.dateFrom,
-      projection30Range.dateTo,
-      recurring.data?.items,
-      recurringIncome.data?.items,
-    ],
+    [balance, currentBalanceValue, feedInputs, projection30Range.dateFrom],
   );
   const projection30Cashflow = projection30Result.chartPoints;
   const evolutionProjectionResult = useMemo(
     () =>
       evolutionProjectionRange
         ? buildRollingCashFlowProjection({
-            currentBalance: currentBalanceValue ?? balance,
-            creditCardInstallments: (evolutionProjectionInstallments.data?.items ?? []).map((item) => ({
-              amount: item.amount,
-              description: `Parcela cartão: ${item.description}`,
-              dueDate: creditCardDueDateInRange(
-                evolutionProjectionRange.dateFrom,
-                evolutionProjectionRange.dateTo,
-                evolutionProjectionInstallments.data?.due_day,
-              ),
-            })),
+            currentBalance: feedInputs?.currentBalance ?? currentBalanceValue ?? balance,
+            creditCardInstallments: feedInputs?.creditCardInstallments,
             horizonDays: evolutionProjectionRange.horizonDays,
-            knownEvents: (evolutionProjectionPersistedEvents.data?.items ?? []).map((event) => ({
-              amount: event.amount ?? 0,
-              date: event.due_date,
-              description: event.title,
-              source: event.event_type === "subscription" ? "subscription" : "calendar",
-              type: event.event_type === "income" ? "income" : "expense",
-            })),
-            recurringItems: [
-              ...(recurringIncome.data?.items ?? []).map((item) => ({
-                amount: item.average_amount,
-                categoryId: item.category_id,
-                description: item.description,
-                lastDate: item.last_transaction_date,
-                monthCount: item.month_count,
-                transactionCount: item.transaction_count,
-                type: "income" as const,
-              })),
-              ...(recurring.data?.items ?? []).map((item) => ({
-                amount: item.average_amount,
-                categoryId: item.category_id,
-                description: item.description,
-                lastDate: item.last_transaction_date,
-                monthCount: item.month_count,
-                transactionCount: item.transaction_count,
-                type: "expense" as const,
-              })),
-            ],
+            knownEvents: feedInputs?.knownEvents,
+            recurringItems: feedInputs?.recurringItems,
             startDate: evolutionProjectionRange.dateFrom,
-            variableCategories: categoryItems.map((item) => {
-              const spent = Math.abs(Number(item.amount ?? 0));
-              return {
-                categoryId: item.category_id,
-                categoryName: item.category_name,
-                currentMonthSpent: spent,
-                monthlyAverage: spent * 1.15,
-              };
-            }),
+            variableCategories: feedInputs?.variableCategories,
           })
         : null,
-    [
-      balance,
-      categoryItems,
-      currentBalanceValue,
-      evolutionProjectionInstallments.data?.due_day,
-      evolutionProjectionInstallments.data?.items,
-      evolutionProjectionPersistedEvents.data?.items,
-      evolutionProjectionRange,
-      recurring.data?.items,
-      recurringIncome.data?.items,
-    ],
+    [balance, currentBalanceValue, evolutionProjectionRange, feedInputs],
   );
   const evolutionProjectionCashflow = evolutionProjectionResult?.chartPoints ?? [];
   const dailyCashflow = useMemo(
@@ -1462,16 +1378,6 @@ function CashflowPage({
     () => projectionRangeFromPeriod(period.dateFrom, period.dateTo),
     [period.dateFrom, period.dateTo],
   );
-  const evolutionProjectionQuery = useMemo(
-    () =>
-      evolutionProjectionRange
-        ? withQueryParams("", {
-            date_from: evolutionProjectionRange.dateFrom,
-            date_to: evolutionProjectionRange.dateTo,
-          })
-        : "",
-    [evolutionProjectionRange],
-  );
   const summary = useQuery({
     queryKey: ["cashflow-summary", session.token, period.query],
     queryFn: () => getDashboardSummary(session, period.query),
@@ -1492,20 +1398,12 @@ function CashflowPage({
     queryKey: ["cashflow-recurring-expenses", session.token, period.recurringQuery],
     queryFn: () => getRecurringExpenses(session, withQueryParams(period.recurringQuery, { limit: "6", min_months: "3" })),
   });
-  const recurringIncome = useQuery({
-    queryKey: ["cashflow-recurring-incomes", session.token, period.recurringQuery],
-    queryFn: () => getRecurringIncomes(session, withQueryParams(period.recurringQuery, { limit: "6", min_months: "3" })),
+  const projectionFeed = useQuery({
+    queryKey: ["projection-feed", session.token],
+    queryFn: () => getProjectionFeed(session, 90),
+    staleTime: 5 * 60 * 1000,
   });
-  const evolutionProjectionInstallments = useQuery({
-    enabled: Boolean(evolutionProjectionRange),
-    queryKey: ["cashflow-evolution-projection-credit-card-installments", session.token, evolutionProjectionQuery],
-    queryFn: () => getCreditCardInstallments(session, withQueryParams(evolutionProjectionQuery, { limit: "100" })),
-  });
-  const evolutionProjectionPersistedEvents = useQuery({
-    enabled: Boolean(evolutionProjectionRange),
-    queryKey: ["cashflow-evolution-projection-calendar-events", session.token, evolutionProjectionQuery],
-    queryFn: () => getCalendarEvents(session, evolutionProjectionQuery),
-  });
+  const feedInputs = projectionFeed.data ? projectionFeedToInputs(projectionFeed.data) : null;
   const incomeTransactions = useQuery({
     queryKey: ["cashflow-income-transactions", session.token, period.query],
     queryFn: () => getTransactions(session, withQueryParams(period.query, { direction: "credit", limit: "100", sort_by: "amount", sort_dir: "desc" })),
@@ -1525,7 +1423,7 @@ function CashflowPage({
   const categories = useCategories(session);
   const subcategoryQuery = useMemo(
     () =>
-      selectedExpenseCategoryId
+      selectedExpenseCategoryId && selectedExpenseCategoryId !== "__uncategorized__"
         ? withQueryParams(period.query, { category_id: selectedExpenseCategoryId, limit: "10" })
         : withQueryParams(period.query, { limit: "10" }),
     [period.query, selectedExpenseCategoryId],
@@ -1542,67 +1440,16 @@ function CashflowPage({
     () =>
       evolutionProjectionRange
         ? buildRollingCashFlowProjection({
-            currentBalance: currentBalanceValue ?? balance,
-            creditCardInstallments: (evolutionProjectionInstallments.data?.items ?? []).map((item) => ({
-              amount: item.amount,
-              description: `Parcela cartão: ${item.description}`,
-              dueDate: creditCardDueDateInRange(
-                evolutionProjectionRange.dateFrom,
-                evolutionProjectionRange.dateTo,
-                evolutionProjectionInstallments.data?.due_day,
-              ),
-            })),
+            currentBalance: feedInputs?.currentBalance ?? currentBalanceValue ?? balance,
+            creditCardInstallments: feedInputs?.creditCardInstallments,
             horizonDays: evolutionProjectionRange.horizonDays,
-            knownEvents: (evolutionProjectionPersistedEvents.data?.items ?? []).map((event) => ({
-              amount: event.amount ?? 0,
-              date: event.due_date,
-              description: event.title,
-              source: event.event_type === "subscription" ? "subscription" : "calendar",
-              type: event.event_type === "income" ? "income" : "expense",
-            })),
-            recurringItems: [
-              ...(recurringIncome.data?.items ?? []).map((item) => ({
-                amount: item.average_amount,
-                categoryId: item.category_id,
-                description: item.description,
-                lastDate: item.last_transaction_date,
-                monthCount: item.month_count,
-                transactionCount: item.transaction_count,
-                type: "income" as const,
-              })),
-              ...(recurring.data?.items ?? []).map((item) => ({
-                amount: item.average_amount,
-                categoryId: item.category_id,
-                description: item.description,
-                lastDate: item.last_transaction_date,
-                monthCount: item.month_count,
-                transactionCount: item.transaction_count,
-                type: "expense" as const,
-              })),
-            ],
+            knownEvents: feedInputs?.knownEvents,
+            recurringItems: feedInputs?.recurringItems,
             startDate: evolutionProjectionRange.dateFrom,
-            variableCategories: categoryItems.map((item) => {
-              const spent = Math.abs(Number(item.amount ?? 0));
-              return {
-                categoryId: item.category_id,
-                categoryName: item.category_name,
-                currentMonthSpent: spent,
-                monthlyAverage: spent * 1.15,
-              };
-            }),
+            variableCategories: feedInputs?.variableCategories,
           })
         : null,
-    [
-      balance,
-      categoryItems,
-      currentBalanceValue,
-      evolutionProjectionInstallments.data?.due_day,
-      evolutionProjectionInstallments.data?.items,
-      evolutionProjectionPersistedEvents.data?.items,
-      evolutionProjectionRange,
-      recurring.data?.items,
-      recurringIncome.data?.items,
-    ],
+    [balance, currentBalanceValue, evolutionProjectionRange, feedInputs],
   );
   const evolutionProjectionCashflow = evolutionProjectionResult?.chartPoints ?? [];
   const dailyCashflow = useMemo(
@@ -1646,14 +1493,32 @@ function CashflowPage({
     () => buildExpenseSizeProfile(expenseSizeProfileQuery.data?.items ?? []),
     [expenseSizeProfileQuery.data?.items],
   );
-  const expenseCategoryOptions = useMemo(
-    () => buildExpenseCategoryOptions(expenseTransactions.data?.items ?? [], categories.data?.items ?? []),
-    [categories.data?.items, expenseTransactions.data?.items],
+  const subcategoryFilterOptions = useMemo(
+    () => categoryItems.map((item) => ({
+      id: item.category_id ?? "__uncategorized__",
+      label: item.category_name,
+    })),
+    [categoryItems],
   );
-  const selectedExpenseCategory = expenseCategoryOptions.find((item) => item.id === selectedExpenseCategoryId) ?? null;
-  const subcategoryRows = useMemo(
-    () => buildSubcategoryRows(subcategoryRanking.data?.items ?? []),
-    [subcategoryRanking.data?.items],
+  const selectedExpenseCategory = subcategoryFilterOptions.find((item) => item.id === selectedExpenseCategoryId) ?? null;
+  const categoriesById = useMemo(
+    () => new Map((categories.data?.items ?? []).map((c) => [c.id, c])),
+    [categories.data?.items],
+  );
+  const subcategoryRows = useMemo(() => {
+    const raw = subcategoryRanking.data?.items ?? [];
+    const filtered = selectedExpenseCategoryId === "__uncategorized__"
+      ? raw.filter((item) => item.category_id === null)
+      : raw;
+    return buildSubcategoryRows(filtered, categoriesById);
+  }, [categoriesById, selectedExpenseCategoryId, subcategoryRanking.data?.items]);
+  const subcategoryColorMap = useMemo(
+    () => new Map(categoryItems.map((item, index) => [item.category_id, chartPalette[index % chartPalette.length]])),
+    [categoryItems],
+  );
+  const subcategoryLabelMap = useMemo(
+    () => new Map(subcategoryFilterOptions.map((item) => [item.id, item.label])),
+    [subcategoryFilterOptions],
   );
 
   function openCashflowPointTransactions(data: { activeLabel?: string } | null) {
@@ -1838,14 +1703,17 @@ function CashflowPage({
               Categoria
               <select value={selectedExpenseCategoryId} onChange={(event) => setSelectedExpenseCategoryId(event.target.value)}>
                 <option value="">Todas</option>
-                {expenseCategoryOptions.map((item) => (
+                {subcategoryFilterOptions.map((item) => (
                   <option key={item.id} value={item.id}>{item.label}</option>
                 ))}
               </select>
             </label>
             <SubcategoryBreakdown
+              categoryColorMap={subcategoryColorMap}
+              categoryLabelMap={subcategoryLabelMap}
               items={subcategoryRows}
               loading={subcategoryRanking.isLoading}
+              showCategoryLabel={!selectedExpenseCategoryId}
               onOpen={(item) => {
                 onOpenTransactions({
                   categoryId: item.categoryId ?? selectedExpenseCategory?.id,
@@ -1926,14 +1794,10 @@ type ExpenseSizeSegment = {
   total: number;
 };
 
-type ExpenseCategoryOption = {
-  id: string;
-  label: string;
-};
-
 type SubcategorySummary = {
   averageTicket: number;
   categoryId: string | null;
+  parentCategoryId: string | null;
   direction: string;
   percentageOfCategory: number;
   subcategory: string;
@@ -2148,13 +2012,19 @@ function ExpenseSizeProfile({
 }
 
 function SubcategoryBreakdown({
+  categoryColorMap,
+  categoryLabelMap,
   items,
   loading,
   onOpen,
+  showCategoryLabel,
 }: {
+  categoryColorMap?: Map<string | null, string>;
+  categoryLabelMap?: Map<string, string>;
   items: SubcategorySummary[];
   loading: boolean;
   onOpen: (item: SubcategorySummary) => void;
+  showCategoryLabel?: boolean;
 }) {
   if (loading) return <PageState icon={Loader2} title="Carregando subcategorias" description="Aguarde um momento." spin compact />;
   if (!items.length) return <EmptyInline message="Sem subcategorias no período." />;
@@ -2163,23 +2033,29 @@ function SubcategoryBreakdown({
   const hiddenCount = Math.max(items.length - visibleItems.length, 0);
   return (
     <div className="subcategory-list">
-      {visibleItems.map((item) => (
+      {visibleItems.map((item) => {
+        const color = categoryColorMap?.get(item.parentCategoryId) ?? "#64748b";
+        const lookupId = item.parentCategoryId ?? "__uncategorized__";
+        const categoryLabel = showCategoryLabel ? (categoryLabelMap?.get(lookupId) ?? null) : null;
+        return (
         <button className="subcategory-row" key={`${item.subcategory}-${item.categoryId ?? "none"}`} onClick={() => onOpen(item)} type="button">
           <span>
             <strong>{item.subcategory}</strong>
             <small>
+              {categoryLabel ? <>{categoryLabel} · </> : null}
               {formatPercentNumber(item.percentageOfCategory * 100)}% da categoria · {item.transactionCount} transaç{item.transactionCount === 1 ? "ão" : "ões"}
             </small>
           </span>
           <div className="subcategory-track" aria-hidden="true">
-            <i style={{ width: `${Math.max((item.total / maxTotal) * 100, 5)}%` }} />
+            <i style={{ background: color, width: `${Math.max((item.total / maxTotal) * 100, 5)}%` }} />
           </div>
           <b>
             <strong>{moneyAbs(item.total)}</strong>
             <small>Ticket médio {moneyAbs(item.averageTicket)}</small>
           </b>
         </button>
-      ))}
+        );
+      })}
       {hiddenCount > 0 ? <small className="subcategory-more">+{hiddenCount} subcategoria{hiddenCount === 1 ? "" : "s"} no período</small> : null}
     </div>
   );
@@ -2420,9 +2296,11 @@ function buildIncomeCategoryRows(transactions: TransactionRead[], categories: Ca
 
 function buildExpenseSizeProfile(items: ExpenseSizeProfileItem[]): ExpenseSizeSegment[] {
   const toneByKey = new Map([
-    ["small", "info" as const],
-    ["medium", "warning" as const],
-    ["large", "negative" as const],
+    ["cotidiana", "info" as const],
+    ["pequena", "info" as const],
+    ["media", "warning" as const],
+    ["alta", "negative" as const],
+    ["premium", "negative" as const],
   ]);
   return items.map((item) => ({
     average: Number(item.average_amount ?? 0),
@@ -2435,67 +2313,26 @@ function buildExpenseSizeProfile(items: ExpenseSizeProfileItem[]): ExpenseSizeSe
   }));
 }
 
-function buildExpenseCategoryOptions(transactions: TransactionRead[], categories: CategoryRead[]): ExpenseCategoryOption[] {
-  const grouped = new Map<string, ExpenseCategoryOption>();
-  transactions
-    .filter(isCategorizedExpenseTransaction)
-    .forEach((transaction) => {
-      const parts = transactionCategoryParts(transaction, categories);
-      grouped.set(parts.categoryId ?? "__uncategorized__", {
-        id: parts.categoryId ?? "__uncategorized__",
-        label: parts.category,
-      });
-    });
-  return Array.from(grouped.values()).sort((left, right) => left.label.localeCompare(right.label, "pt-BR"));
-}
 
-function buildSubcategoryRows(items: SubcategoryRankingItem[]): SubcategorySummary[] {
-  return items.map((item) => ({
-    averageTicket: Number(item.average_amount ?? 0),
-    categoryId: item.category_id,
-    direction: "debit",
-    percentageOfCategory: Number(item.share_ratio ?? 0),
-    subcategory: item.subcategory_name,
-    total: Number(item.amount ?? 0),
-    transactionCount: item.count,
-  }));
-}
-
-function transactionCategoryParts(transaction: TransactionRead, categories: CategoryRead[]) {
-  const assignedCategory = transaction.category?.category_id
-    ? categories.find((category) => category.id === transaction.category?.category_id)
-    : null;
-  if (!assignedCategory) {
+function buildSubcategoryRows(items: SubcategoryRankingItem[], categoriesById: Map<string, CategoryRead>): SubcategorySummary[] {
+  return items.map((item) => {
+    const cat = item.category_id ? categoriesById.get(item.category_id) : null;
+    const parentCategoryId = cat?.parent_category_id ?? item.category_id;
     return {
-      category: "Sem categoria",
-      categoryId: null,
-      subcategory: "Sem subcategoria",
-      subcategoryId: null,
+      averageTicket: Number(item.average_amount ?? 0),
+      categoryId: item.category_id,
+      parentCategoryId,
+      direction: "debit",
+      percentageOfCategory: Number(item.share_ratio ?? 0),
+      subcategory: item.subcategory_name,
+      total: Number(item.amount ?? 0),
+      transactionCount: item.count,
     };
-  }
-  if (!assignedCategory.parent_category_id) {
-    return {
-      category: assignedCategory.name,
-      categoryId: assignedCategory.id,
-      subcategory: "Sem subcategoria",
-      subcategoryId: assignedCategory.id,
-    };
-  }
-  const parent = categories.find((category) => category.id === assignedCategory.parent_category_id);
-  return {
-    category: parent?.name ?? "Outros",
-    categoryId: parent?.id ?? assignedCategory.parent_category_id,
-    subcategory: assignedCategory.name,
-    subcategoryId: assignedCategory.id,
-  };
+  });
 }
 
 function isOutflowTransaction(transaction: TransactionRead) {
   return transaction.direction === "debit" || transaction.direction === "payment" || Number(transaction.amount ?? 0) < 0;
-}
-
-function isCategorizedExpenseTransaction(transaction: TransactionRead) {
-  return transaction.direction === "debit";
 }
 
 function maxBy<T>(items: T[], getter: (item: T) => number) {
@@ -4029,14 +3866,14 @@ function CalendarPage({
     queryKey: ["calendar-recent-transactions", session.token, period.query],
     queryFn: () => getTransactions(session, withQueryParams(period.query, { limit: "6", sort_by: "transaction_date", sort_dir: "desc" })),
   });
-  const calendarEvents = buildCalendarEvents({
+  const calendarEvents = useMemo(() => buildCalendarEvents({
     apiEvents: persistedEvents.data?.items,
     installments: installments.data?.items ?? [],
     recurring: recurring.data?.items ?? [],
     transactions: recentTransactions.data?.items ?? [],
-  });
-  const totalPlannedOutflow = calendarEvents.reduce((total, item) => total + Number(item.amount ?? 0), 0);
-  const riskEvents = calendarEvents.filter((item) => item.tone === "warning" || item.tone === "negative").length;
+  }), [installments.data?.items, persistedEvents.data?.items, recurring.data?.items, recentTransactions.data?.items]);
+  const totalPlannedOutflow = useMemo(() => calendarEvents.reduce((total, item) => total + Number(item.amount ?? 0), 0), [calendarEvents]);
+  const riskEvents = useMemo(() => calendarEvents.filter((item) => item.tone === "warning" || item.tone === "negative").length, [calendarEvents]);
 
   return (
     <section className="page-stack">
@@ -5604,7 +5441,7 @@ function CategoriesPage({ session }: { session: ApiSession }) {
 function RulesPage({ session }: { session: ApiSession }) {
   const queryClient = useQueryClient();
   const categories = useCategories(session);
-  const categoryOptions = orderedCategoryOptions(categories.data?.items ?? []);
+  const categoryOptions = useMemo(() => orderedCategoryOptions(categories.data?.items ?? []), [categories.data?.items]);
   const rules = useQuery({
     queryKey: ["rules", session.token],
     queryFn: () => getRules(session),
@@ -6181,6 +6018,7 @@ function TransactionExplorer({
   const pageSize = 50;
   const duplicatePageSize = 10;
   const categories = useCategories(session);
+  const categoryOptions = useMemo(() => orderedCategoryOptions(categories.data?.items ?? []), [categories.data?.items]);
   const queryClient = useQueryClient();
   const query = useMemo(() => {
     const params = new URLSearchParams();
@@ -6656,6 +6494,7 @@ function TransactionExplorer({
             {visibleTransactions.map((transaction) => (
               <TransactionRow
                 categories={categories.data?.items ?? []}
+                categoryOptions={categoryOptions}
                 key={transaction.id}
                 onDelete={() => {
                   if (window.confirm(`Excluir a transação "${transaction.description}"? Esta ação não pode ser desfeita no MVP.`)) {
@@ -6693,6 +6532,7 @@ function TransactionExplorer({
         <Drawer title="Detalhe da transação" onClose={() => onSelect(null)}>
           <TransactionDetail
             categories={categories.data?.items ?? []}
+            categoryOptions={categoryOptions}
             deleting={remove.isPending}
             onDelete={() => {
               if (window.confirm(`Excluir a transação "${selected.description}"? Esta ação não pode ser desfeita no MVP.`)) {
@@ -6956,6 +6796,7 @@ function DuplicateTransactionsPanel({
 function TransactionRow({
   transaction,
   categories,
+  categoryOptions,
   session,
   onDelete,
   onSelect,
@@ -6966,6 +6807,7 @@ function TransactionRow({
 }: {
   transaction: TransactionRead;
   categories: CategoryRead[];
+  categoryOptions: ReturnType<typeof orderedCategoryOptions>;
   session: ApiSession;
   onDelete: () => void;
   onSelect: () => void;
@@ -6988,7 +6830,7 @@ function TransactionRow({
       <td><DirectionPicker session={session} transaction={transaction} /></td>
       <td className={amountClass(transaction)}>{moneyAbs(transaction.amount)}</td>
       <td>{installmentLabel(transaction)}</td>
-      <td><CategoryPicker categories={categories} onCategorized={onCategorized} session={session} transaction={transaction} /></td>
+      <td><CategoryPicker categoryOptions={categoryOptions} onCategorized={onCategorized} session={session} transaction={transaction} /></td>
       <td><SourceBadge source={transaction.category?.source} label={categoryLabel} /></td>
       {showDedupeStatus ? (
         <td>
@@ -7010,18 +6852,17 @@ function TransactionRow({
 }
 
 function CategoryPicker({
+  categoryOptions,
   transaction,
-  categories,
   session,
   onCategorized,
 }: {
+  categoryOptions: ReturnType<typeof orderedCategoryOptions>;
   transaction: TransactionRead;
-  categories: CategoryRead[];
   session: ApiSession;
   onCategorized?: (transaction: TransactionRead, categoryId: string | null) => void;
 }) {
   const queryClient = useQueryClient();
-  const categoryOptions = orderedCategoryOptions(categories);
   const mutation = useMutation({
     mutationFn: (categoryId: string | null) => updateTransactionCategory(session, transaction.id, categoryId),
     onSuccess: (updatedTransaction, categoryId) => {
@@ -7079,6 +6920,7 @@ function DirectionPicker({ transaction, session }: { transaction: TransactionRea
 function TransactionDetail({
   transaction,
   categories,
+  categoryOptions,
   deleting = false,
   onDelete,
   onCategorized,
@@ -7086,6 +6928,7 @@ function TransactionDetail({
 }: {
   transaction: TransactionRead;
   categories: CategoryRead[];
+  categoryOptions: ReturnType<typeof orderedCategoryOptions>;
   deleting?: boolean;
   onDelete?: () => void;
   onCategorized?: (transaction: TransactionRead, categoryId: string | null) => void;
@@ -7123,7 +6966,7 @@ function TransactionDetail({
       <QualityRow label="Fonte" value={transaction.category?.source ?? "Pendente"} />
       <div>
         <p className="field-label">Alterar categoria</p>
-        <CategoryPicker categories={categories} onCategorized={onCategorized} session={session} transaction={transaction} />
+        <CategoryPicker categoryOptions={categoryOptions} onCategorized={onCategorized} session={session} transaction={transaction} />
       </div>
       {onDelete ? (
         <div className="danger-zone">
@@ -7752,17 +7595,6 @@ function projectionRangeFromPeriod(dateFrom: string, dateTo: string) {
   };
 }
 
-function creditCardDueDateInRange(dateFrom: string, dateTo: string, dueDay?: number) {
-  const start = parseIsoDate(dateFrom);
-  const end = parseIsoDate(dateTo);
-  if (!start || !end || !dueDay) return dateFrom;
-  const candidates = [
-    new Date(start.getFullYear(), start.getMonth(), dueDay),
-    new Date(start.getFullYear(), start.getMonth() + 1, dueDay),
-  ];
-  const match = candidates.find((candidate) => candidate >= start && candidate <= end);
-  return isoDate(match ?? start);
-}
 
 function daysFromToday(value: string) {
   const target = parseIsoDate(value);
@@ -8124,13 +7956,14 @@ function reportMetricLabel(report: ReportCardRead) {
   return money(report.primary_metric);
 }
 
+const BRL_FORMATTER = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+
 function money(value?: string | number | null) {
-  const numeric = Number(value ?? 0);
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(numeric);
+  return BRL_FORMATTER.format(Number(value ?? 0));
 }
 
 function moneyAbs(value?: string | number | null) {
-  return money(Math.abs(Number(value ?? 0)));
+  return BRL_FORMATTER.format(Math.abs(Number(value ?? 0)));
 }
 
 function formatCurrencyCompact(value?: string | number | null) {
@@ -8336,12 +8169,15 @@ function signedPercent(value?: string | null) {
   return `${sign}${formatPercentNumber(numberValue)}%`;
 }
 
+const PERCENT_FORMATTER = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 });
+const NUMBER_FORMATTER = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 });
+
 function formatPercentNumber(value: number) {
-  return new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 }).format(value);
+  return PERCENT_FORMATTER.format(value);
 }
 
 function formatNumber(value: number) {
-  return new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(value);
+  return NUMBER_FORMATTER.format(value);
 }
 
 function commitmentTone(value?: string | null): "positive" | "negative" | "warning" {

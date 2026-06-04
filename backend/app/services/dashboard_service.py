@@ -11,6 +11,8 @@ from app.core.config import settings
 from app.db.models import (
     AccountBalance,
     Category,
+    CreditCardStatement,
+    FinancialCalendarEvent,
     ImportJob,
     SourceFile,
     Transaction,
@@ -433,15 +435,11 @@ class DashboardService:
         ]
         total_expenses = sum(debits, ZERO)
         segments = [
-            ("small", "Pequenas saídas", "Até R$ 100", ZERO, Decimal("100.00")),
-            (
-                "medium",
-                "Saídas médias",
-                "De R$ 100,01 a R$ 1.000",
-                Decimal("100.00"),
-                Decimal("1000.00"),
-            ),
-            ("large", "Grandes saídas", "Acima de R$ 1.000", Decimal("1000.00"), None),
+            ("cotidiana", "Cotidiana", "Até R$ 50", ZERO, Decimal("50.00")),
+            ("pequena", "Pequena", "De R$ 50,01 a R$ 200", Decimal("50.00"), Decimal("200.00")),
+            ("media", "Média", "De R$ 200,01 a R$ 1.000", Decimal("200.00"), Decimal("1000.00")),
+            ("alta", "Alta", "De R$ 1.000,01 a R$ 5.000", Decimal("1000.00"), Decimal("5000.00")),
+            ("premium", "Premium", "Acima de R$ 5.000", Decimal("5000.00"), None),
         ]
         items: list[dict[str, object]] = []
         for key, label, helper, minimum, maximum in segments:
@@ -592,9 +590,8 @@ class DashboardService:
         ).all()
         categories_by_id = {
             category.id: category
-            for category in self.db.scalars(
-                select(Category).where(Category.workspace_id == workspace_id)
-            ).all()
+            for _, category in rows
+            if category is not None
         }
         grouped: dict[str, dict[str, object]] = {}
         for transaction, category in rows:
@@ -1004,6 +1001,229 @@ class DashboardService:
             "total_future_amount": total_future_amount,
             "items": items[:limit],
         }
+
+    def projection_feed(
+        self,
+        workspace_id: str,
+        horizon_days: int,
+    ) -> dict[str, object]:
+        today = date.today()
+        horizon_date = date.fromordinal(today.toordinal() + horizon_days)
+        lookback = _add_months(today, -12)
+
+        current_balance = self._current_account_balance(workspace_id=workspace_id, date_to=today)
+        known_events = self._projection_known_events(
+            workspace_id=workspace_id, date_from=today, date_to=horizon_date
+        )
+        recurring_expenses = self._recurring_transactions(
+            workspace_id=workspace_id,
+            date_from=lookback,
+            date_to=today,
+            min_months=3,
+            limit=50,
+            direction="debit",
+        )
+        recurring_incomes = self._recurring_transactions(
+            workspace_id=workspace_id,
+            date_from=lookback,
+            date_to=today,
+            min_months=3,
+            limit=20,
+            direction="credit",
+        )
+        credit_card_installments = self._projection_credit_card_statements(
+            workspace_id=workspace_id, date_from=today, date_to=horizon_date
+        )
+        variable_categories = self._projection_variable_categories(
+            workspace_id=workspace_id, today=today
+        )
+        recurring_items: list[dict[str, object]] = [
+            {
+                "description": item["description"],
+                "amount": item["average_amount"],
+                "type": "expense",
+                "last_date": item["last_transaction_date"].isoformat(),
+                "month_count": item["month_count"],
+                "transaction_count": item["transaction_count"],
+                "category_id": item["category_id"],
+                "frequency": "monthly",
+            }
+            for item in recurring_expenses
+        ] + [
+            {
+                "description": item["description"],
+                "amount": item["average_amount"],
+                "type": "income",
+                "last_date": item["last_transaction_date"].isoformat(),
+                "month_count": item["month_count"],
+                "transaction_count": item["transaction_count"],
+                "category_id": item["category_id"],
+                "frequency": "monthly",
+            }
+            for item in recurring_incomes
+        ]
+        return {
+            "workspace_id": workspace_id,
+            "current_balance": current_balance.balance_amount if current_balance else None,
+            "current_balance_date": current_balance.balance_date if current_balance else None,
+            "current_balance_account": current_balance.account_name if current_balance else None,
+            "known_events": known_events,
+            "recurring_items": recurring_items,
+            "credit_card_installments": credit_card_installments,
+            "variable_categories": variable_categories,
+        }
+
+    def _projection_known_events(
+        self,
+        workspace_id: str,
+        date_from: date,
+        date_to: date,
+    ) -> list[dict[str, object]]:
+        events = self.db.scalars(
+            select(FinancialCalendarEvent)
+            .where(
+                FinancialCalendarEvent.workspace_id == workspace_id,
+                FinancialCalendarEvent.status == "planned",
+                FinancialCalendarEvent.amount.is_not(None),
+                FinancialCalendarEvent.due_date >= date_from,
+                FinancialCalendarEvent.due_date <= date_to,
+            )
+            .order_by(FinancialCalendarEvent.due_date, FinancialCalendarEvent.title)
+        ).all()
+        return [
+            {
+                "amount": event.amount,
+                "date": event.due_date.isoformat(),
+                "description": event.title,
+                "source": "calendar",
+                "type": "income" if event.event_type == "income" else "expense",
+            }
+            for event in events
+            if event.amount is not None and event.amount > ZERO
+        ]
+
+    def _projection_credit_card_statements(
+        self,
+        workspace_id: str,
+        date_from: date,
+        date_to: date,
+    ) -> list[dict[str, object]]:
+        statements = self.db.scalars(
+            select(CreditCardStatement)
+            .where(
+                CreditCardStatement.workspace_id == workspace_id,
+                CreditCardStatement.status.in_(["open", "closed"]),
+                CreditCardStatement.due_date >= date_from,
+                CreditCardStatement.due_date <= date_to,
+                CreditCardStatement.total_amount.is_not(None),
+            )
+            .order_by(CreditCardStatement.due_date)
+        ).all()
+        return [
+            {
+                "amount": statement.total_amount,
+                "description": f"Fatura {statement.due_date.strftime('%m/%Y')}",
+                "due_date": statement.due_date.isoformat(),
+            }
+            for statement in statements
+            if statement.total_amount is not None and statement.total_amount > ZERO
+        ]
+
+    def _projection_variable_categories(
+        self,
+        workspace_id: str,
+        today: date,
+    ) -> list[dict[str, object]]:
+        month_start = date(today.year, today.month, 1)
+        history_from = _add_months(month_start, -6)
+        current_month_str = month_start.strftime("%Y-%m")
+
+        rows = self.db.execute(
+            select(Transaction, Category)
+            .outerjoin(
+                TransactionCategoryAssignment,
+                and_(
+                    TransactionCategoryAssignment.transaction_id == Transaction.id,
+                    TransactionCategoryAssignment.workspace_id == workspace_id,
+                ),
+            )
+            .outerjoin(
+                Category,
+                and_(
+                    Category.id == TransactionCategoryAssignment.category_id,
+                    Category.workspace_id == workspace_id,
+                ),
+            )
+            .where(
+                Transaction.workspace_id == workspace_id,
+                Transaction.direction == "debit",
+                Transaction.transaction_date >= history_from,
+                Transaction.transaction_date <= today,
+            )
+            .order_by(Transaction.transaction_date, Transaction.id)
+        ).all()
+
+        categories_by_id = {
+            cat.id: cat
+            for _, cat in rows
+            if cat is not None
+        }
+
+        grouped: dict[tuple[str | None, str], dict[str, object]] = {}
+        for transaction, category in rows:
+            display_category = (
+                categories_by_id.get(category.parent_category_id)
+                if category is not None and category.parent_category_id is not None
+                else category
+            )
+            cat_id = display_category.id if display_category is not None else None
+            cat_name = display_category.name if display_category is not None else "Sem categoria"
+            key = (cat_id, cat_name)
+            item = grouped.setdefault(
+                key,
+                {
+                    "category_id": cat_id,
+                    "category_name": cat_name,
+                    "monthly_amounts": {},
+                    "current_month_spent": ZERO,
+                },
+            )
+            month = transaction.transaction_date.strftime("%Y-%m")
+            amount = abs(transaction.amount)
+            if month == current_month_str:
+                item["current_month_spent"] = Decimal(item["current_month_spent"]) + amount
+            else:
+                monthly: dict[str, Decimal] = item["monthly_amounts"]  # type: ignore[assignment]
+                monthly[month] = monthly.get(month, ZERO) + amount
+
+        result: list[dict[str, object]] = []
+        for item in grouped.values():
+            monthly: dict[str, Decimal] = item["monthly_amounts"]  # type: ignore[assignment]
+            if len(monthly) < 2:
+                continue
+            amounts_list = sorted(monthly.values())
+            monthly_average = (sum(amounts_list, ZERO) / Decimal(len(amounts_list))).quantize(
+                Decimal("0.01")
+            )
+            result.append(
+                {
+                    "category_id": item["category_id"],
+                    "category_name": item["category_name"],
+                    "current_month_spent": Decimal(item["current_month_spent"]).quantize(
+                        Decimal("0.01")
+                    ),
+                    "historical_monthly_amounts": [
+                        v.quantize(Decimal("0.01")) for v in amounts_list
+                    ],
+                    "monthly_average": monthly_average,
+                }
+            )
+
+        return sorted(
+            result,
+            key=lambda item: Decimal(item["monthly_average"]),
+            reverse=True,
+        )
 
     def _next_month_reference(self, date_to: date) -> date:
         if date_to.month == 12:
