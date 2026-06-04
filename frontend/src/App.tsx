@@ -1723,15 +1723,17 @@ function CashflowPage({
               Categoria
               <select value={selectedExpenseCategoryId} onChange={(event) => setSelectedExpenseCategoryId(event.target.value)}>
                 <option value="">Todas</option>
-                {expenseCategoryOptions.map((item) => (
+                {expenseCategoryOptions.filter((item) => item.id !== "__uncategorized__").map((item) => (
                   <option key={item.id} value={item.id}>{item.label}</option>
                 ))}
               </select>
             </label>
             <SubcategoryBreakdown
-              color={chartPalette[categoryItems.findIndex((c) => c.category_id === selectedExpenseCategoryId) % chartPalette.length] ?? chartPalette[0]}
+              categoryColorMap={new Map(categoryItems.map((item, index) => [item.category_id, chartPalette[index % chartPalette.length]]))}
+              categoryLabelMap={new Map(expenseCategoryOptions.map((item) => [item.id, item.label]))}
               items={subcategoryRows}
               loading={subcategoryRanking.isLoading}
+              showCategoryLabel={!selectedExpenseCategoryId}
               onOpen={(item) => {
                 onOpenTransactions({
                   categoryId: item.categoryId ?? selectedExpenseCategory?.id,
@@ -2034,15 +2036,19 @@ function ExpenseSizeProfile({
 }
 
 function SubcategoryBreakdown({
-  color,
+  categoryColorMap,
+  categoryLabelMap,
   items,
   loading,
   onOpen,
+  showCategoryLabel,
 }: {
-  color?: string;
+  categoryColorMap?: Map<string | null, string>;
+  categoryLabelMap?: Map<string, string>;
   items: SubcategorySummary[];
   loading: boolean;
   onOpen: (item: SubcategorySummary) => void;
+  showCategoryLabel?: boolean;
 }) {
   if (loading) return <PageState icon={Loader2} title="Carregando subcategorias" description="Aguarde um momento." spin compact />;
   if (!items.length) return <EmptyInline message="Sem subcategorias no período." />;
@@ -2051,11 +2057,15 @@ function SubcategoryBreakdown({
   const hiddenCount = Math.max(items.length - visibleItems.length, 0);
   return (
     <div className="subcategory-list">
-      {visibleItems.map((item) => (
+      {visibleItems.map((item) => {
+        const color = categoryColorMap?.get(item.categoryId) ?? "#8b5cf6";
+        const categoryLabel = showCategoryLabel && item.categoryId ? categoryLabelMap?.get(item.categoryId) : null;
+        return (
         <button className="subcategory-row" key={`${item.subcategory}-${item.categoryId ?? "none"}`} onClick={() => onOpen(item)} type="button">
           <span>
             <strong>{item.subcategory}</strong>
             <small>
+              {categoryLabel ? <>{categoryLabel} · </> : null}
               {formatPercentNumber(item.percentageOfCategory * 100)}% da categoria · {item.transactionCount} transaç{item.transactionCount === 1 ? "ão" : "ões"}
             </small>
           </span>
@@ -2067,7 +2077,8 @@ function SubcategoryBreakdown({
             <small>Ticket médio {moneyAbs(item.averageTicket)}</small>
           </b>
         </button>
-      ))}
+        );
+      })}
       {hiddenCount > 0 ? <small className="subcategory-more">+{hiddenCount} subcategoria{hiddenCount === 1 ? "" : "s"} no período</small> : null}
     </div>
   );
