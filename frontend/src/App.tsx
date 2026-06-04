@@ -13,6 +13,7 @@ import {
   ChevronRight,
   CreditCard,
   Database,
+  Download,
   Gem,
   FileWarning,
   FileUp,
@@ -6082,6 +6083,30 @@ function InfoTile({
   );
 }
 
+function exportTransactionsCSV(transactions: TransactionRead[], filename = "transacoes") {
+  const headers = ["Data", "Descrição", "Descrição original", "Tipo", "Valor", "Categoria", "Fonte", "Status"];
+  const rows = transactions.map((t) => [
+    t.transaction_date,
+    `"${t.description.replace(/"/g, '""')}"`,
+    `"${t.raw_description.replace(/"/g, '""')}"`,
+    directionLabel(t.direction),
+    t.amount,
+    t.category ? "Confirmado" : "Pendente",
+    sourceTypeLabel(t.source_type),
+    t.category ? "Com categoria" : "Sem categoria",
+  ]);
+  const csv = [headers.join(";"), ...rows.map((r) => r.join(";"))].join("\n");
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${filename}-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 function TransactionExplorer({
   initialCategoryId = "",
   initialDateFrom = "",
@@ -6412,6 +6437,16 @@ function TransactionExplorer({
       {/* Toolbar */}
       {!reviewMode ? (
         <div className="page-toolbar">
+          <button
+            className="ghost-button"
+            disabled={!visibleTransactions.length}
+            onClick={() => exportTransactionsCSV(visibleTransactions, "transacoes")}
+            title="Exportar página atual como CSV"
+            type="button"
+          >
+            <Download size={16} />
+            Exportar CSV
+          </button>
           <button className="primary-button" onClick={() => setShowCreate(true)} type="button">
             <Plus size={16} />
             Nova transação
@@ -6498,27 +6533,29 @@ function TransactionExplorer({
               ))}
             </div>
 
-            <div className="transactions-sidebar-section">
-              <p className="sidebar-section-title">Categorias</p>
-              <button
-                className={`sidebar-filter-item ${!categoryId ? "active" : ""}`}
-                onClick={() => { setCategoryId(""); setPage(0); }}
-                type="button"
-              >
-                Todas
-              </button>
-              {(sidebarRanking.data?.items ?? []).map((cat) => (
+            {(direction === "" || direction === "debit") ? (
+              <div className="transactions-sidebar-section">
+                <p className="sidebar-section-title">Categorias de despesa</p>
                 <button
-                  className={`sidebar-filter-item ${categoryId === (cat.category_id ?? "") ? "active" : ""}`}
-                  key={cat.category_id ?? "none"}
-                  onClick={() => { setCategoryId(cat.category_id ?? ""); setPage(0); }}
+                  className={`sidebar-filter-item ${!categoryId ? "active" : ""}`}
+                  onClick={() => { setCategoryId(""); setPage(0); }}
                   type="button"
                 >
-                  <span>{cat.category_name}</span>
-                  <span className="sidebar-item-amount">{moneyAbs(cat.amount)}</span>
+                  Todas
                 </button>
-              ))}
-            </div>
+                {(sidebarRanking.data?.items ?? []).map((cat) => (
+                  <button
+                    className={`sidebar-filter-item ${categoryId === (cat.category_id ?? "") ? "active" : ""}`}
+                    key={cat.category_id ?? "none"}
+                    onClick={() => { setCategoryId(cat.category_id ?? ""); setPage(0); }}
+                    type="button"
+                  >
+                    <span>{cat.category_name}</span>
+                    <span className="sidebar-item-amount">{moneyAbs(cat.amount)}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </aside>
         ) : null}
 
