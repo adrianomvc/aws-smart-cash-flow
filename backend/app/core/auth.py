@@ -27,20 +27,19 @@ async def get_auth_context(authorization: str | None = Header(default=None)) -> 
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
-    # Local auth is only allowed when explicitly enabled in local environment.
-    if settings.allow_local_auth:
-        if settings.app_env != "local":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Local authentication is not allowed outside local environment",
-            )
-
-        if token == "local-dev":
+    if token == "local-dev":
+        if settings.app_env == "local":
             return AuthContext(
                 user_id=LOCAL_USER_ID,
                 workspace_id=LOCAL_WORKSPACE_ID,
                 email="local@example.invalid",
             )
+        if settings.allow_local_auth:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Local authentication is not allowed outside local environment",
+            )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
     if settings.supabase_jwt_secret:
         try:

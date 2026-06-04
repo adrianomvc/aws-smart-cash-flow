@@ -434,7 +434,13 @@ class DashboardService:
         total_expenses = sum(debits, ZERO)
         segments = [
             ("small", "Pequenas saídas", "Até R$ 100", ZERO, Decimal("100.00")),
-            ("medium", "Saídas médias", "De R$ 100,01 a R$ 1.000", Decimal("100.00"), Decimal("1000.00")),
+            (
+                "medium",
+                "Saídas médias",
+                "De R$ 100,01 a R$ 1.000",
+                Decimal("100.00"),
+                Decimal("1000.00"),
+            ),
             ("large", "Grandes saídas", "Acima de R$ 1.000", Decimal("1000.00"), None),
         ]
         items: list[dict[str, object]] = []

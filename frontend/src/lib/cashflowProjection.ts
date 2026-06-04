@@ -178,7 +178,7 @@ export function buildRollingCashFlowProjection({
   const firstNegativeDay = points.find((point) => point.projectedBalance < 0) ?? null;
   const lowestProjectedBalance = points.reduce(
     (lowest, point) => Math.min(lowest, point.projectedBalance),
-    points[0]?.projectedBalance ?? Number(currentBalance) ?? 0,
+    points[0]?.projectedBalance ?? Number(currentBalance || 0),
   );
 
   return {

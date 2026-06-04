@@ -52,7 +52,6 @@ import {
   ComposedChart,
   Legend,
   Line,
-  LineChart,
   Pie,
   PieChart,
   ReferenceLine,
@@ -858,14 +857,6 @@ function DashboardPage({
     recurring: recurring.data?.items ?? [],
     transactions: recentTransactions.data?.items ?? [],
   });
-  const projectedBalance = hybridProjectedBalance({
-    balance,
-    categoryItems,
-    events: calendarEvents,
-    futureInstallments: installments.data?.total_future_amount ?? "0",
-    recurring: recurring.data?.items ?? [],
-    summary: summary.data,
-  });
   const currentBalance = summary.data?.current_balance;
   const currentBalanceValue = currentBalance === null || currentBalance === undefined ? null : Number(currentBalance);
   const monthlyBurnRate = Number(summary.data?.burn_rate ?? 0);
@@ -1505,35 +1496,15 @@ function CashflowPage({
     queryKey: ["cashflow-recurring-incomes", session.token, period.recurringQuery],
     queryFn: () => getRecurringIncomes(session, withQueryParams(period.recurringQuery, { limit: "6", min_months: "3" })),
   });
-  const installments = useQuery({
-    queryKey: ["cashflow-credit-card-installments", session.token, period.dateTo],
-    queryFn: () =>
-      getCreditCardInstallments(
-        session,
-        period.dateTo ? withQueryParams("", { date_to: period.dateTo, limit: "8" }) : withQueryParams("", { limit: "8" }),
-      ),
-  });
   const evolutionProjectionInstallments = useQuery({
     enabled: Boolean(evolutionProjectionRange),
     queryKey: ["cashflow-evolution-projection-credit-card-installments", session.token, evolutionProjectionQuery],
     queryFn: () => getCreditCardInstallments(session, withQueryParams(evolutionProjectionQuery, { limit: "100" })),
   });
-  const persistedEvents = useQuery({
-    queryKey: ["cashflow-calendar-events", session.token, period.query],
-    queryFn: () => getCalendarEvents(session, period.query),
-  });
   const evolutionProjectionPersistedEvents = useQuery({
     enabled: Boolean(evolutionProjectionRange),
     queryKey: ["cashflow-evolution-projection-calendar-events", session.token, evolutionProjectionQuery],
     queryFn: () => getCalendarEvents(session, evolutionProjectionQuery),
-  });
-  const transactions = useQuery({
-    queryKey: ["cashflow-transactions", session.token, period.query],
-    queryFn: () => getTransactions(session, withQueryParams(period.query, { limit: "100", sort_by: "amount", sort_dir: "desc" })),
-  });
-  const recentTransactions = useQuery({
-    queryKey: ["cashflow-recent-transactions", session.token, period.query],
-    queryFn: () => getTransactions(session, withQueryParams(period.query, { limit: "6", sort_by: "transaction_date", sort_dir: "desc" })),
   });
   const incomeTransactions = useQuery({
     queryKey: ["cashflow-income-transactions", session.token, period.query],
@@ -3305,35 +3276,6 @@ function compactCategoryDistribution(items: CategoryRankingItem[]) {
     });
   }
   return visible;
-}
-
-function hybridProjectedBalance({
-  balance,
-  categoryItems,
-  events,
-  futureInstallments,
-  recurring,
-  summary,
-}: {
-  balance: number;
-  categoryItems: CategoryRankingItem[];
-  events: CalendarEvent[];
-  futureInstallments: string | number;
-  recurring: RecurringExpenseItem[];
-  summary?: DashboardSummary;
-}) {
-  const knownIncome = events
-    .filter((event) => event.direction === "credit")
-    .reduce((total, event) => total + Math.abs(Number(event.amount ?? 0)), 0);
-  const scheduledOutflow = events
-    .filter((event) => event.direction !== "credit")
-    .reduce((total, event) => total + Math.abs(Number(event.amount ?? 0)), 0);
-  const recurringOutflow = recurring.reduce((total, item) => total + Math.abs(Number(item.average_amount ?? 0)), 0);
-  const variableByCategory = categoryItems
-    .filter((item) => !recurring.some((recurringItem) => recurringItem.category_id === item.category_id))
-    .reduce((total, item) => total + Math.abs(Number(item.amount ?? 0)) * 0.35, 0);
-  const fallbackVariable = categoryItems.length ? 0 : Math.abs(Number(summary?.expenses ?? 0)) * 0.25;
-  return balance + knownIncome - scheduledOutflow - Math.abs(Number(futureInstallments ?? 0)) - recurringOutflow - variableByCategory - fallbackVariable;
 }
 
 function buildGoalRows(summary?: DashboardSummary, persistedGoals?: GoalRead[]) {
@@ -8089,10 +8031,6 @@ function monthYearLabel(value: string) {
 function yearLabel(value: string) {
   const [year] = value.split("-");
   return year || "período selecionado";
-}
-
-function shortChartLabel(value: string) {
-  return value.length > 12 ? `${value.slice(0, 11)}...` : value;
 }
 
 function useCategories(session: ApiSession) {

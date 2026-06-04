@@ -589,7 +589,7 @@ class ImportService:
             if occurrence == 1:
                 continue
             payload["natural_dedupe_key"] = sha256(
-                f"{natural_key}|occurrence|{occurrence}".encode("utf-8")
+                f"{natural_key}|occurrence|{occurrence}".encode()
             ).hexdigest()
 
     def _existing_transaction_dedupe_keys(

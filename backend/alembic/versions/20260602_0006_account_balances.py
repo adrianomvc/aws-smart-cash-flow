@@ -1,8 +1,7 @@
 """Add account balances imported from Excel statements."""
 
-from collections.abc import Sequence
-
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "20260602_0006"
