@@ -6020,6 +6020,18 @@ function TransactionExplorer({
   const categories = useCategories(session);
   const categoryOptions = useMemo(() => orderedCategoryOptions(categories.data?.items ?? []), [categories.data?.items]);
   const queryClient = useQueryClient();
+  const sidebarRankingQuery = useMemo(() => {
+    const params = new URLSearchParams();
+    if (dateFrom) params.set("date_from", dateFrom);
+    if (dateTo) params.set("date_to", dateTo);
+    params.set("limit", "10");
+    return `?${params.toString()}`;
+  }, [dateFrom, dateTo]);
+  const sidebarRanking = useQuery({
+    queryKey: ["transactions-sidebar-ranking", session.token, sidebarRankingQuery],
+    queryFn: () => getCategoryRanking(session, sidebarRankingQuery),
+    staleTime: 2 * 60 * 1000,
+  });
   const query = useMemo(() => {
     const params = new URLSearchParams();
     if (search) params.set("q", search);
@@ -6124,6 +6136,7 @@ function TransactionExplorer({
     .filter((transaction) => transaction.direction === "payment")
     .reduce((total, transaction) => total + Math.abs(Number(transaction.amount)), 0);
   const pagePending = visibleTransactions.filter((transaction) => !transaction.category).length;
+  const pageBalance = pageIncome - pageExpenses;
   const nextPageDisabled =
     transactions.isLoading || fixedQuery === "category_id=__uncategorized__"
       ? visibleTransactions.length < pageSize
@@ -6251,6 +6264,7 @@ function TransactionExplorer({
 
   return (
     <section className="page-stack">
+      {/* Review mode summary */}
       {reviewMode ? (
         <div className="transaction-summary-grid compact-four" aria-label="Resumo da revisão">
           <div className="transaction-summary-card warning">
@@ -6275,6 +6289,8 @@ function TransactionExplorer({
           </div>
         </div>
       ) : null}
+
+      {/* Toolbar */}
       {!reviewMode ? (
         <div className="page-toolbar">
           <button className="primary-button" onClick={() => setShowCreate(true)} type="button">
@@ -6283,102 +6299,122 @@ function TransactionExplorer({
           </button>
         </div>
       ) : null}
-      <div className="transaction-summary-grid" aria-label="Resumo da página atual">
-        <div className="transaction-summary-card">
-          <span>Lançamentos</span>
-          <strong>{visibleTransactions.length}</strong>
-          <small>Nesta página</small>
+
+      {/* KPI bar */}
+      {!reviewMode ? (
+        <div className="transaction-summary-grid transaction-summary-grid-6" aria-label="Resumo da página atual">
+          <div className="transaction-summary-card">
+            <span>Lançamentos</span>
+            <strong>{visibleTransactions.length}</strong>
+            <small>Nesta página</small>
+          </div>
+          <div className="transaction-summary-card positive">
+            <span>Receitas</span>
+            <strong>{formatCurrencyCompact(pageIncome)}</strong>
+            <small title={moneyAbs(pageIncome)}>{moneyAbs(pageIncome)}</small>
+          </div>
+          <div className="transaction-summary-card negative">
+            <span>Despesas</span>
+            <strong>{formatCurrencyCompact(pageExpenses)}</strong>
+            <small title={moneyAbs(pageExpenses)}>{moneyAbs(pageExpenses)}</small>
+          </div>
+          <div className="transaction-summary-card info">
+            <span>Faturas</span>
+            <strong>{formatCurrencyCompact(pagePayments)}</strong>
+            <small title={moneyAbs(pagePayments)}>{moneyAbs(pagePayments)}</small>
+          </div>
+          <div className={`transaction-summary-card ${pageBalance >= 0 ? "positive" : "negative"}`}>
+            <span>Saldo</span>
+            <strong>{formatCurrencyCompact(pageBalance)}</strong>
+            <small title={money(pageBalance)}>{money(pageBalance)}</small>
+          </div>
+          <div className="transaction-summary-card warning">
+            <span>Pendentes</span>
+            <strong>{pagePending}</strong>
+            <small>Sem categoria</small>
+          </div>
         </div>
-        <div className="transaction-summary-card positive">
-          <span>Receitas</span>
-          <strong>{formatCurrencyCompact(pageIncome)}</strong>
-          <small title={moneyAbs(pageIncome)}>{moneyAbs(pageIncome)}</small>
-        </div>
-        <div className="transaction-summary-card negative">
-          <span>Despesas</span>
-          <strong>{formatCurrencyCompact(pageExpenses)}</strong>
-          <small title={moneyAbs(pageExpenses)}>{moneyAbs(pageExpenses)}</small>
-        </div>
-        <div className="transaction-summary-card info">
-          <span>Faturas</span>
-          <strong>{formatCurrencyCompact(pagePayments)}</strong>
-          <small title={moneyAbs(pagePayments)}>{moneyAbs(pagePayments)}</small>
-        </div>
-        <div className="transaction-summary-card warning">
-          <span>Pendentes</span>
-          <strong>{pagePending}</strong>
-          <small>Sem categoria</small>
-        </div>
-      </div>
-      <Panel title="Busca e filtros">
-        <div className="transaction-type-tabs" aria-label="Filtrar por tipo financeiro">
-          {[
-            { label: "Todos", value: "" },
-            { label: "Despesas", value: "debit" },
-            { label: "Receitas", value: "credit" },
-            { label: "Faturas", value: "payment" },
-          ].map((tab) => (
-            <button
-              className={direction === tab.value ? "active" : ""}
-              key={tab.value || "all"}
-              onClick={() => {
-                setDirection(tab.value);
-                setPage(0);
-              }}
-              type="button"
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-        <div className="filters">
-          <label>
-            <Search size={16} />
-            <input
-              placeholder="Buscar descrição"
-              value={search}
-              onChange={(event) => {
-                setSearch(event.target.value);
-                setPage(0);
-              }}
-            />
-          </label>
-          <label>
-            <Filter size={16} />
-            <select
-              value={sourceType}
-              onChange={(event) => {
-                setSourceType(event.target.value);
-                setPage(0);
-              }}
-            >
-              <option value="">Todas as origens</option>
-              <option value="bank_statement">Conta corrente</option>
-              <option value="credit_card_statement">Cartão</option>
-              <option value="unknown">Manual/Outras</option>
-            </select>
-          </label>
-          {!reviewMode ? (
-            <label>
-              <Tags size={16} />
-              <select
-                value={categoryId}
-                onChange={(event) => {
-                  setCategoryId(event.target.value);
-                  setPage(0);
-                }}
+      ) : null}
+
+      {/* Two-column layout */}
+      <div className={reviewMode ? "page-stack" : "transactions-layout"}>
+        {/* Sidebar */}
+        {!reviewMode ? (
+          <aside className="transactions-sidebar">
+            <div className="transactions-sidebar-section">
+              <p className="sidebar-section-title">Tipo</p>
+              {([
+                { label: "Todos", value: "" },
+                { label: "Despesas", value: "debit" },
+                { label: "Receitas", value: "credit" },
+                { label: "Faturas", value: "payment" },
+              ] as const).map((tab) => (
+                <button
+                  className={`sidebar-filter-item ${direction === tab.value ? "active" : ""}`}
+                  key={tab.value || "all"}
+                  onClick={() => { setDirection(tab.value); setPage(0); }}
+                  type="button"
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="transactions-sidebar-section">
+              <p className="sidebar-section-title">Origem</p>
+              {([
+                { label: "Todas", value: "" },
+                { label: "Conta corrente", value: "bank_statement" },
+                { label: "Cartão de crédito", value: "credit_card_statement" },
+                { label: "Manual/Outras", value: "unknown" },
+              ] as const).map((opt) => (
+                <button
+                  className={`sidebar-filter-item ${sourceType === opt.value ? "active" : ""}`}
+                  key={opt.value || "all"}
+                  onClick={() => { setSourceType(opt.value); setPage(0); }}
+                  type="button"
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="transactions-sidebar-section">
+              <p className="sidebar-section-title">Categorias</p>
+              <button
+                className={`sidebar-filter-item ${!categoryId ? "active" : ""}`}
+                onClick={() => { setCategoryId(""); setPage(0); }}
+                type="button"
               >
-                <option value="">Todas as categorias</option>
-                {orderedCategoryOptions(categories.data?.items ?? []).map((category) => (
-                  <option key={category.id} value={category.id}>
-                    {category.label}
-                  </option>
-                ))}
-              </select>
+                Todas
+              </button>
+              {(sidebarRanking.data?.items ?? []).map((cat) => (
+                <button
+                  className={`sidebar-filter-item ${categoryId === (cat.category_id ?? "") ? "active" : ""}`}
+                  key={cat.category_id ?? "none"}
+                  onClick={() => { setCategoryId(cat.category_id ?? ""); setPage(0); }}
+                  type="button"
+                >
+                  <span>{cat.category_name}</span>
+                  <span className="sidebar-item-amount">{moneyAbs(cat.amount)}</span>
+                </button>
+              ))}
+            </div>
+          </aside>
+        ) : null}
+
+        {/* Main content */}
+        <div className="transactions-main">
+          {/* Compact filter bar */}
+          <div className="transactions-filter-bar">
+            <label className="filter-search-label">
+              <Search size={14} />
+              <input
+                placeholder="Buscar descrição..."
+                value={search}
+                onChange={(event) => { setSearch(event.target.value); setPage(0); }}
+              />
             </label>
-          ) : null}
-          <label>
-            <Filter size={16} />
             <select value={periodPreset} onChange={(event) => applyPeriodPreset(event.target.value as TransactionPeriodPreset)}>
               <option value="all">Todos os períodos</option>
               <option value="current_month">Mês atual</option>
@@ -6387,147 +6423,151 @@ function TransactionExplorer({
               <option value="previous_year">Ano anterior</option>
               <option value="custom">Personalizado</option>
             </select>
-          </label>
-          <label className="date-filter">
-            De
-            <input type="date" value={dateFrom} onChange={(event) => updateDateFrom(event.target.value)} />
-          </label>
-          <label className="date-filter">
-            Até
-            <input type="date" value={dateTo} onChange={(event) => updateDateTo(event.target.value)} />
-          </label>
-          <button className="ghost-button filter-clear" disabled={!activeFilterCount} onClick={clearFilters} type="button">
-            Limpar filtros
-          </button>
-        </div>
-        <div className="filter-summary">
-          <span>{filterSummary}</span>
-          <strong>{totalTransactions} lançamentos</strong>
-        </div>
-      </Panel>
-      {actionMessage ? <InlineSuccess message={actionMessage} /> : null}
-      {!reviewMode ? (
-        <Panel
-          title="Possíveis duplicados"
-          description="Grupos encontrados pela regra atual. Confira qual lançamento deve ficar antes de excluir duplicados."
-        >
-          <div className="panel-actions">
-            <button
-              className="ghost-button"
-              onClick={() => {
-                setShowDuplicates((current) => !current);
-                setDuplicatePage(0);
-              }}
-              type="button"
+            <label className="date-filter">
+              De
+              <input type="date" value={dateFrom} onChange={(event) => updateDateFrom(event.target.value)} />
+            </label>
+            <label className="date-filter">
+              Até
+              <input type="date" value={dateTo} onChange={(event) => updateDateTo(event.target.value)} />
+            </label>
+            {activeFilterCount > 0 ? (
+              <button className="ghost-button filter-clear" onClick={clearFilters} type="button">
+                Limpar ({activeFilterCount})
+              </button>
+            ) : null}
+          </div>
+
+          <div className="filter-summary">
+            <span>{filterSummary}</span>
+            <strong>{totalTransactions} lançamentos</strong>
+          </div>
+
+          {actionMessage ? <InlineSuccess message={actionMessage} /> : null}
+
+          {/* Duplicates panel */}
+          {!reviewMode ? (
+            <Panel
+              title="Possíveis duplicados"
+              description="Grupos encontrados pela regra atual. Confira qual lançamento deve ficar antes de excluir duplicados."
             >
-              {showDuplicates ? "Ocultar" : "Ver duplicados"}
-            </button>
-          </div>
-          {showDuplicates ? (
-            <DuplicateTransactionsPanel
-              groups={duplicates.data?.groups ?? []}
-              loading={duplicates.isLoading}
-              onFilterGroup={filterDuplicateGroup}
-              onNextPage={() => setDuplicatePage((current) => current + 1)}
-              onPreviousPage={() => setDuplicatePage((current) => Math.max(current - 1, 0))}
-              onRefresh={() => void duplicates.refetch()}
-              page={duplicatePage}
-              pageSize={duplicatePageSize}
-              totalGroups={duplicates.data?.total_groups ?? 0}
-              totalTransactions={duplicates.data?.total_transactions ?? 0}
-            />
-          ) : (
-            <div className="filter-summary compact">
-              <span>Abra a revisão para conferir grupos históricos sem alterar a base automaticamente.</span>
-            </div>
-          )}
-        </Panel>
-      ) : null}
-      <Panel title={reviewMode ? "Pendências" : "Lançamentos"}>
-        {duplicateGroupIds.length ? (
-          <div className="duplicate-filter-banner">
-            <span>Revise o grupo, mantenha o principal e exclua apenas lançamentos repetidos.</span>
-            <div>
-              <button
-                className="danger-button compact-button"
-                disabled={removeDuplicateReviewItems.isPending || duplicateGroupIds.length < 2}
-                onClick={deleteReviewedDuplicates}
-                type="button"
-              >
-                {removeDuplicateReviewItems.isPending ? "Excluindo..." : "Excluir duplicados"}
+              <div className="panel-actions">
+                <button
+                  className="ghost-button"
+                  onClick={() => { setShowDuplicates((current) => !current); setDuplicatePage(0); }}
+                  type="button"
+                >
+                  {showDuplicates ? "Ocultar" : "Ver duplicados"}
+                </button>
+              </div>
+              {showDuplicates ? (
+                <DuplicateTransactionsPanel
+                  groups={duplicates.data?.groups ?? []}
+                  loading={duplicates.isLoading}
+                  onFilterGroup={filterDuplicateGroup}
+                  onNextPage={() => setDuplicatePage((current) => current + 1)}
+                  onPreviousPage={() => setDuplicatePage((current) => Math.max(current - 1, 0))}
+                  onRefresh={() => void duplicates.refetch()}
+                  page={duplicatePage}
+                  pageSize={duplicatePageSize}
+                  totalGroups={duplicates.data?.total_groups ?? 0}
+                  totalTransactions={duplicates.data?.total_transactions ?? 0}
+                />
+              ) : (
+                <div className="filter-summary compact">
+                  <span>Abra a revisão para conferir grupos históricos sem alterar a base automaticamente.</span>
+                </div>
+              )}
+            </Panel>
+          ) : null}
+
+          {/* Table */}
+          <Panel title={reviewMode ? "Pendências" : "Lançamentos"}>
+            {duplicateGroupIds.length ? (
+              <div className="duplicate-filter-banner">
+                <span>Revise o grupo, mantenha o principal e exclua apenas lançamentos repetidos.</span>
+                <div>
+                  <button
+                    className="danger-button compact-button"
+                    disabled={removeDuplicateReviewItems.isPending || duplicateGroupIds.length < 2}
+                    onClick={deleteReviewedDuplicates}
+                    type="button"
+                  >
+                    {removeDuplicateReviewItems.isPending ? "Excluindo..." : "Excluir duplicados"}
+                  </button>
+                  <button
+                    className="ghost-button compact-button"
+                    disabled={removeDuplicateReviewItems.isPending}
+                    onClick={() => {
+                      setDuplicateGroupIds([]);
+                      setDuplicateGroupKey("");
+                      setDuplicateGroupPrimaryId("");
+                      setPage(0);
+                    }}
+                    type="button"
+                  >
+                    Limpar grupo
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            <ResponsiveTable
+              loading={transactions.isLoading}
+              empty={!visibleTransactions.length}
+              emptyMessage={emptyMessage}
+            >
+              <thead>
+                <tr>
+                  <th><SortHeader active={sortBy === "transaction_date"} direction={sortDir} label="Data" onClick={() => toggleSort("transaction_date")} /></th>
+                  <th><SortHeader active={sortBy === "description"} direction={sortDir} label="Descrição" onClick={() => toggleSort("description")} /></th>
+                  <th><SortHeader active={sortBy === "direction"} direction={sortDir} label="Tipo" onClick={() => toggleSort("direction")} /></th>
+                  <th><SortHeader active={sortBy === "amount"} direction={sortDir} label="Valor" onClick={() => toggleSort("amount")} /></th>
+                  <th>Parcela</th>
+                  <th>Categoria</th>
+                  <th><SortHeader active={sortBy === "source_type"} direction={sortDir} label="Fonte" onClick={() => toggleSort("source_type")} /></th>
+                  <th>Status</th>
+                  {duplicateGroupIds.length ? <th>Revisão</th> : null}
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {visibleTransactions.map((transaction) => (
+                  <TransactionRow
+                    categories={categories.data?.items ?? []}
+                    categoryOptions={categoryOptions}
+                    key={transaction.id}
+                    onDelete={() => {
+                      if (window.confirm(`Excluir a transação "${transaction.description}"? Esta ação não pode ser desfeita no MVP.`)) {
+                        remove.mutate(transaction.id);
+                      }
+                    }}
+                    onSelect={() => onSelect(transaction)}
+                    onCategorized={handleCategoryChanged}
+                    expectedDedupeKey={duplicateGroupKey}
+                    primaryDedupeId={duplicateGroupPrimaryId}
+                    session={session}
+                    showDedupeStatus={Boolean(duplicateGroupIds.length)}
+                    transaction={transaction}
+                  />
+                ))}
+              </tbody>
+            </ResponsiveTable>
+            <div className="pagination-bar">
+              <button className="ghost-button" disabled={page === 0 || transactions.isLoading} onClick={() => setPage((current) => Math.max(current - 1, 0))}>
+                Anterior
               </button>
+              <span>Página {page + 1} · {visibleTransactions.length} de {totalTransactions} lançamentos</span>
               <button
-                className="ghost-button compact-button"
-                disabled={removeDuplicateReviewItems.isPending}
-                onClick={() => {
-                  setDuplicateGroupIds([]);
-                  setDuplicateGroupKey("");
-                  setDuplicateGroupPrimaryId("");
-                  setPage(0);
-                }}
-                type="button"
+                className="ghost-button"
+                disabled={nextPageDisabled}
+                onClick={() => setPage((current) => current + 1)}
               >
-                Limpar grupo
+                Próxima
               </button>
             </div>
-          </div>
-        ) : null}
-        <ResponsiveTable
-          loading={transactions.isLoading}
-          empty={!visibleTransactions.length}
-          emptyMessage={emptyMessage}
-        >
-          <thead>
-            <tr>
-              <th><SortHeader active={sortBy === "transaction_date"} direction={sortDir} label="Data" onClick={() => toggleSort("transaction_date")} /></th>
-              <th><SortHeader active={sortBy === "description"} direction={sortDir} label="Descrição" onClick={() => toggleSort("description")} /></th>
-              <th><SortHeader active={sortBy === "direction"} direction={sortDir} label="Tipo" onClick={() => toggleSort("direction")} /></th>
-              <th><SortHeader active={sortBy === "amount"} direction={sortDir} label="Valor" onClick={() => toggleSort("amount")} /></th>
-              <th>Parcela</th>
-              <th>Categoria</th>
-              <th><SortHeader active={sortBy === "source_type"} direction={sortDir} label="Fonte" onClick={() => toggleSort("source_type")} /></th>
-              {duplicateGroupIds.length ? <th>Revisão</th> : null}
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {visibleTransactions.map((transaction) => (
-              <TransactionRow
-                categories={categories.data?.items ?? []}
-                categoryOptions={categoryOptions}
-                key={transaction.id}
-                onDelete={() => {
-                  if (window.confirm(`Excluir a transação "${transaction.description}"? Esta ação não pode ser desfeita no MVP.`)) {
-                    remove.mutate(transaction.id);
-                  }
-                }}
-                onSelect={() => onSelect(transaction)}
-                onCategorized={handleCategoryChanged}
-                expectedDedupeKey={duplicateGroupKey}
-                primaryDedupeId={duplicateGroupPrimaryId}
-                session={session}
-                showDedupeStatus={Boolean(duplicateGroupIds.length)}
-                transaction={transaction}
-              />
-            ))}
-          </tbody>
-        </ResponsiveTable>
-        <div className="pagination-bar">
-          <button className="ghost-button" disabled={page === 0 || transactions.isLoading} onClick={() => setPage((current) => Math.max(current - 1, 0))}>
-            Anterior
-          </button>
-          <span>
-            Página {page + 1} · {visibleTransactions.length} de {totalTransactions} lançamentos
-          </span>
-          <button
-            className="ghost-button"
-            disabled={nextPageDisabled}
-            onClick={() => setPage((current) => current + 1)}
-          >
-            Próxima
-          </button>
+          </Panel>
         </div>
-      </Panel>
+      </div>
       {selected ? (
         <Drawer title="Detalhe da transação" onClose={() => onSelect(null)}>
           <TransactionDetail
@@ -6832,6 +6872,11 @@ function TransactionRow({
       <td>{installmentLabel(transaction)}</td>
       <td><CategoryPicker categoryOptions={categoryOptions} onCategorized={onCategorized} session={session} transaction={transaction} /></td>
       <td><SourceBadge source={transaction.category?.source} label={categoryLabel} /></td>
+      <td>
+        {transaction.category
+          ? <span className="status-badge confirmed">Confirmado</span>
+          : <span className="status-badge pending">Pendente</span>}
+      </td>
       {showDedupeStatus ? (
         <td>
           <DedupeStatusBadge status={dedupeStatus(transaction, expectedDedupeKey, primaryDedupeId)} />
