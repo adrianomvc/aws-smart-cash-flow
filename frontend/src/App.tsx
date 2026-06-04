@@ -3808,6 +3808,89 @@ function DashboardAlerts({
   );
 }
 
+function CalendarMonthGrid({
+  events,
+  dateFrom,
+  loading,
+  onEventClick,
+}: {
+  events: CalendarEvent[];
+  dateFrom: string;
+  dateTo: string;
+  loading: boolean;
+  onEventClick: (event: CalendarEvent) => void;
+}) {
+  const parts = dateFrom.split("-").map(Number);
+  const year = parts[0];
+  const month = parts[1];
+  if (!year || !month) return null;
+
+  const firstDay = new Date(year, month - 1, 1);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const startWeekday = firstDay.getDay();
+  const totalCells = 42;
+  const cells: Array<number | null> = [
+    ...Array(startWeekday).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+  ];
+  while (cells.length < totalCells) cells.push(null);
+
+  const eventsByDate = new Map<string, CalendarEvent[]>();
+  for (const event of events) {
+    const key = event.date;
+    const arr = eventsByDate.get(key) ?? [];
+    arr.push(event);
+    eventsByDate.set(key, arr);
+  }
+
+  const today = isoDate(new Date());
+  const weekdays = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"] as const;
+  const MAX_VISIBLE = 2;
+
+  if (loading) return <PageState icon={Loader2} title="Carregando calendário" description="Organizando compromissos." spin compact />;
+
+  return (
+    <div className="calendar-month-grid-wrap">
+      <div className="calendar-month-header">
+        {weekdays.map((d) => (
+          <div className="calendar-month-weekday" key={d}>{d}</div>
+        ))}
+      </div>
+      <div className="calendar-month-grid">
+        {cells.map((day, idx) => {
+          if (!day) return <div className="calendar-month-cell empty" key={`empty-${idx}`} />;
+          const mm = String(month).padStart(2, "0");
+          const dd = String(day).padStart(2, "0");
+          const dateKey = `${year}-${mm}-${dd}`;
+          const dayEvents = eventsByDate.get(dateKey) ?? [];
+          const visible = dayEvents.slice(0, MAX_VISIBLE);
+          const hidden = dayEvents.length - visible.length;
+          const isToday = dateKey === today;
+          return (
+            <div className={`calendar-month-cell${isToday ? " today" : ""}`} key={dateKey}>
+              <span className="calendar-day-number">{day}</span>
+              {visible.map((ev, i) => (
+                <button
+                  className={`calendar-event-chip ${ev.tone}`}
+                  key={i}
+                  onClick={() => onEventClick(ev)}
+                  title={`${ev.label} — ${moneyAbs(ev.amount)}`}
+                  type="button"
+                >
+                  {ev.label}
+                </button>
+              ))}
+              {hidden > 0 ? (
+                <span className="calendar-event-more">+{hidden}</span>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function CalendarPage({
   onOpenTransactions,
   session,
@@ -3815,6 +3898,7 @@ function CalendarPage({
   onOpenTransactions: (drilldown?: TransactionDrilldown) => void;
   session: ApiSession;
 }) {
+  const [calendarView, setCalendarView] = useState<"grid" | "timeline">("grid");
   const [calendarPeriod, setCalendarPeriod] = useState<PeriodState>(() => {
     const range = periodRange("current_month");
     return { ...range, periodPreset: "current_month" };
@@ -3885,60 +3969,95 @@ function CalendarPage({
         <MetricCard icon={ShieldCheck} label="Pontos de atenção" value={String(riskEvents)} helper="Itens que merecem revisão" tone={riskEvents ? "warning" : "positive"} />
         <MetricCard icon={Gauge} label="Saldo do período" value={money(summary.data?.balance)} helper="Calculado pelo dashboard atual" tone={Number(summary.data?.balance ?? 0) >= 0 ? "positive" : "negative"} />
       </div>
-      <section className="dashboard-section">
-        <DashboardSectionHeader
-          eyebrow="Calendário"
-          title="Próximos compromissos financeiros"
-          description="Primeira visão baseada nos dados já importados. A API dedicada de calendário entra na próxima etapa."
+      {/* Toggle de visualização */}
+      <div className="calendar-view-toggle">
+        <button
+          className={calendarView === "grid" ? "active" : ""}
+          onClick={() => setCalendarView("grid")}
+          type="button"
+        >
+          Grade
+        </button>
+        <button
+          className={calendarView === "timeline" ? "active" : ""}
+          onClick={() => setCalendarView("timeline")}
+          type="button"
+        >
+          Linha do tempo
+        </button>
+      </div>
+
+      {calendarView === "grid" ? (
+        <CalendarMonthGrid
+          events={calendarEvents}
+          dateFrom={period.dateFrom}
+          dateTo={period.dateTo}
+          loading={persistedEvents.isLoading || recurring.isLoading || installments.isLoading}
+          onEventClick={(event) => onOpenTransactions({
+            dateFrom: period.dateFrom,
+            dateTo: period.dateTo,
+            direction: event.direction,
+            label: event.label,
+            periodPreset: period.periodPreset,
+            search: event.search,
+          })}
         />
-        <div className="dashboard-grid analysis-grid">
-          <Panel title="Linha do tempo" description="Eventos estimados a partir de recorrências, parcelas e lançamentos recentes.">
-            <div className="timeline-list">
-              {persistedEvents.isLoading || recurring.isLoading || installments.isLoading || recentTransactions.isLoading ? (
-                <PageState icon={Loader2} title="Carregando calendário" description="Organizando compromissos do período." spin compact />
-              ) : null}
-              {!persistedEvents.isLoading && !recurring.isLoading && !installments.isLoading && !recentTransactions.isLoading && !calendarEvents.length ? (
-                <EmptyInline message="Ainda não há eventos suficientes para montar o calendário." />
-              ) : null}
-              {calendarEvents.map((event) => (
-                <button
-                  className={`timeline-item ${event.tone}`}
-                  key={`${event.kind}-${event.label}-${event.date}`}
-                  onClick={() =>
-                    onOpenTransactions({
-                      dateFrom: period.dateFrom,
-                      dateTo: period.dateTo,
-                      direction: event.direction,
-                      label: event.label,
-                      periodPreset: period.periodPreset,
-                      search: event.search,
-                    })
-                  }
-                  type="button"
-                >
-                  <span>
-                    <strong>{dateInputLabel(event.date)}</strong>
-                    <small>{event.kind}</small>
-                  </span>
-                  <div>
-                    <strong>{event.label}</strong>
-                    <small>{event.detail}</small>
-                  </div>
-                  <b>{moneyAbs(event.amount)}</b>
-                </button>
-              ))}
-            </div>
-          </Panel>
-          <Panel title="Resumo operacional" description="Leitura inicial enquanto o módulo Planning não tem backend próprio.">
-            <div className="settings-list">
-              <QualityRow label="Fonte dos dados" value={persistedEvents.data?.items.length ? "Planning API" : "Transações importadas"} />
-              <QualityRow label="Recorrências prováveis" value={recurring.data?.items.length ?? 0} />
-              <QualityRow label="Parcelado futuro" value={moneyAbs(installments.data?.total_future_amount)} />
-              <QualityRow label="Qualidade da previsão" value={calendarEvents.length >= 5 ? "Boa" : "Inicial"} />
-            </div>
-          </Panel>
-        </div>
-      </section>
+      ) : (
+        <section className="dashboard-section">
+          <DashboardSectionHeader
+            eyebrow="Calendário"
+            title="Próximos compromissos financeiros"
+            description="Primeira visão baseada nos dados já importados. A API dedicada de calendário entra na próxima etapa."
+          />
+          <div className="dashboard-grid analysis-grid">
+            <Panel title="Linha do tempo" description="Eventos estimados a partir de recorrências, parcelas e lançamentos recentes.">
+              <div className="timeline-list">
+                {persistedEvents.isLoading || recurring.isLoading || installments.isLoading || recentTransactions.isLoading ? (
+                  <PageState icon={Loader2} title="Carregando calendário" description="Organizando compromissos do período." spin compact />
+                ) : null}
+                {!persistedEvents.isLoading && !recurring.isLoading && !installments.isLoading && !recentTransactions.isLoading && !calendarEvents.length ? (
+                  <EmptyInline message="Ainda não há eventos suficientes para montar o calendário." />
+                ) : null}
+                {calendarEvents.map((event) => (
+                  <button
+                    className={`timeline-item ${event.tone}`}
+                    key={`${event.kind}-${event.label}-${event.date}`}
+                    onClick={() =>
+                      onOpenTransactions({
+                        dateFrom: period.dateFrom,
+                        dateTo: period.dateTo,
+                        direction: event.direction,
+                        label: event.label,
+                        periodPreset: period.periodPreset,
+                        search: event.search,
+                      })
+                    }
+                    type="button"
+                  >
+                    <span>
+                      <strong>{dateInputLabel(event.date)}</strong>
+                      <small>{event.kind}</small>
+                    </span>
+                    <div>
+                      <strong>{event.label}</strong>
+                      <small>{event.detail}</small>
+                    </div>
+                    <b>{moneyAbs(event.amount)}</b>
+                  </button>
+                ))}
+              </div>
+            </Panel>
+            <Panel title="Resumo operacional" description="Leitura inicial enquanto o módulo Planning não tem backend próprio.">
+              <div className="settings-list">
+                <QualityRow label="Fonte dos dados" value={persistedEvents.data?.items.length ? "Planning API" : "Transações importadas"} />
+                <QualityRow label="Recorrências prováveis" value={recurring.data?.items.length ?? 0} />
+                <QualityRow label="Parcelado futuro" value={moneyAbs(installments.data?.total_future_amount)} />
+                <QualityRow label="Qualidade da previsão" value={calendarEvents.length >= 5 ? "Boa" : "Inicial"} />
+              </div>
+            </Panel>
+          </div>
+        </section>
+      )}
       <Panel title="Novo evento" description="Cadastre compromissos que ainda não aparecem nos extratos importados.">
         <form
           className="inline-form form-grid two-columns"
