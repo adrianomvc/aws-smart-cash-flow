@@ -213,6 +213,7 @@ class Transaction(Base):
     source_line: Mapped[int | None] = mapped_column(Integer)
     dedupe_key: Mapped[str] = mapped_column(String(64), nullable=False)
     natural_dedupe_key: Mapped[str | None] = mapped_column(String(64))
+    duplicate_group_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
