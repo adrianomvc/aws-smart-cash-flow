@@ -439,6 +439,8 @@ export function TransactionExplorer({
       onSelect(null);
       setActionMessage("Transação excluída. Indicadores e listas foram atualizados.");
       void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["transaction-duplicates"] });
+      void queryClient.invalidateQueries({ queryKey: ["duplicate-count-badge"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
       void queryClient.invalidateQueries({ queryKey: ["monthly-cashflow"] });
       void queryClient.invalidateQueries({ queryKey: ["category-ranking"] });
@@ -453,6 +455,7 @@ export function TransactionExplorer({
       setActionMessage(`${transactionIds.length} duplicado(s) excluído(s). A base foi atualizada.`);
       void queryClient.invalidateQueries({ queryKey: ["transactions"] });
       void queryClient.invalidateQueries({ queryKey: ["transaction-duplicates"] });
+      void queryClient.invalidateQueries({ queryKey: ["duplicate-count-badge"] });
       void queryClient.invalidateQueries({ queryKey: ["transactions-period-summary"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
       void queryClient.invalidateQueries({ queryKey: ["monthly-cashflow"] });
