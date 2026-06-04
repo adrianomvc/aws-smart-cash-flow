@@ -4,11 +4,60 @@ import pytest
 
 from app.domain.imports import TransactionDirection
 from app.services.parsers import (
+    extract_installment,
     normalize_transaction_description,
+    normalize_transaction_description_for_dedupe,
     parse_brazilian_decimal,
     parse_credit_card_csv,
+    parse_excel_bank_statement,
     parse_txt_bank_statement,
 )
+
+
+class FakeExcelSheet:
+    name = "Lançamentos"
+
+    def __init__(self) -> None:
+        self.rows = [
+            ["Logotipo Itaú", "", "", "", ""],
+            ["Atualização:", "01/06/2026 às 08:36:25", "", "", ""],
+            ["Nome:", "ADRIANO", "", "", ""],
+            ["Agência:", 7348.0, "", "", ""],
+            ["Conta:", "00740-7", "", "", ""],
+            ["", "", "", "", ""],
+            ["Lançamentos", "", "", "", ""],
+            ["", "", "", "", ""],
+            ["data", "lançamento", "ag./origem", "valor (R$)", "saldos (R$)"],
+            ["lançamentos", "", "", "", ""],
+            ["31/12/2025", "SALDO ANTERIOR", "", "", 40354.41],
+            ["02/01/2026", "PIX TRANSF  ANTHONY01/01", "", 70.0, ""],
+            ["02/01/2026", "ITAU BLACK  3102-2224", "", -872.19, ""],
+            ["02/01/2026", "SALDO TOTAL DISPONÍVEL DIA", "", "", 37077.88],
+            ["Lançamentos futuros", "", "", "", ""],
+            ["05/01/2026", "TED AGENDADA", "", -120.0, ""],
+            ["06/01/2026", "SALARIO FUTURO", "", 1000.0, ""],
+        ]
+        self.nrows = len(self.rows)
+        self.ncols = 5
+
+    def cell_value(self, row: int, column: int) -> object:
+        return self.rows[row][column]
+
+
+class FakeExcelBook:
+    datemode = 0
+
+    def __init__(self) -> None:
+        self.sheet = FakeExcelSheet()
+
+    def sheet_names(self) -> list[str]:
+        return ["Lançamentos"]
+
+    def sheet_by_name(self, _name: str) -> FakeExcelSheet:
+        return self.sheet
+
+    def sheet_by_index(self, _index: int) -> FakeExcelSheet:
+        return self.sheet
 
 
 def test_parse_txt_bank_statement_valid_line() -> None:
@@ -27,6 +76,34 @@ def test_parse_txt_bank_statement_credit_card_payment_is_payment() -> None:
     assert result.errors == []
     assert result.transactions[0].amount == Decimal("-800.00")
     assert result.transactions[0].direction == TransactionDirection.PAYMENT
+
+
+def test_parse_txt_bank_statement_moves_balance_markers_to_account_balances() -> None:
+    result = parse_txt_bank_statement(
+        "31/01/2014;SALDO FINAL;3.885,22\n"
+        "23/09/2013;SALDO PARCIAL;5.281,40\n"
+        "05/09/2011;TRANSFERENCIA SALDO;-751,41"
+    )
+
+    assert result.errors == []
+    assert [transaction.description for transaction in result.transactions] == [
+        "TRANSFERENCIA SALDO"
+    ]
+    assert len(result.account_balances) == 2
+    assert result.account_balances[0].balance_date.isoformat() == "2014-01-31"
+    assert result.account_balances[0].balance_amount == Decimal("3885.22")
+    assert result.account_balances[1].balance_date.isoformat() == "2013-09-23"
+    assert result.account_balances[1].balance_amount == Decimal("5281.40")
+
+
+def test_parse_txt_bank_statement_does_not_extract_pix_date_as_installment() -> None:
+    result = parse_txt_bank_statement("01/04/2026;PIX TRANSF FLAVIA 01/04;-100,00")
+
+    assert result.errors == []
+    assert result.transactions[0].description == "PIX TRANSF FLAVIA"
+    assert result.transactions[0].raw_description == "PIX TRANSF FLAVIA 01/04"
+    assert result.transactions[0].installment_current is None
+    assert result.transactions[0].installment_total is None
 
 
 def test_parse_txt_bank_statement_invalid_column_count() -> None:
@@ -64,6 +141,37 @@ def test_parse_txt_bank_statement_preserves_accented_description() -> None:
     assert result.transactions[0].raw_description == "TRANSFERÊNCIA  JOÃO AÇÃO"
     assert result.transactions[0].description == "TRANSFERENCIA JOAO ACAO"
     assert result.transactions[0].amount == Decimal("-1234.56")
+
+
+def test_parse_excel_bank_statement_extracts_transactions_and_daily_balances(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import xlrd
+
+    monkeypatch.setattr(xlrd, "open_workbook", lambda **_kwargs: FakeExcelBook())
+
+    result = parse_excel_bank_statement(b"fake-xls")
+
+    assert result.source_kind == "bank_statement_excel"
+    assert result.total_rows == 6
+    assert len(result.transactions) == 2
+    assert result.transactions[0].description == "PIX TRANSF ANTHONY"
+    assert result.transactions[0].amount == Decimal("70.0")
+    assert result.transactions[0].direction == TransactionDirection.CREDIT
+    assert result.transactions[1].description == "ITAU BLACK 3102-2224"
+    assert result.transactions[1].direction == TransactionDirection.DEBIT
+    assert len(result.account_balances) == 2
+    assert result.account_balances[-1].account_name == "Itau 00740-7"
+    assert result.account_balances[-1].balance_date.isoformat() == "2026-01-02"
+    assert result.account_balances[-1].balance_amount == Decimal("37077.88")
+    assert len(result.calendar_events) == 2
+    assert result.calendar_events[0].title == "TED AGENDADA"
+    assert result.calendar_events[0].event_type == "expense"
+    assert result.calendar_events[0].amount == Decimal("120.0")
+    assert result.calendar_events[0].due_date.isoformat() == "2026-01-05"
+    assert result.calendar_events[1].title == "SALARIO FUTURO"
+    assert result.calendar_events[1].event_type == "income"
+    assert result.calendar_events[1].amount == Decimal("1000.0")
 
 
 def test_parse_brazilian_decimal_rejects_non_finite_values() -> None:
@@ -176,16 +284,124 @@ def test_normalize_transaction_description_removes_long_numeric_reference_tokens
 
 
 def test_normalize_transaction_description_preserves_semantic_channel_and_merchant() -> None:
-    assert normalize_transaction_description("MERCADOLIVRE*LOJA EXEMPLO") == "MERCADO LIVRE"
+    assert (
+        normalize_transaction_description("MERCADOLIVRE*LOJA EXEMPLO")
+        == "MERCADO LIVRE LOJA EXEMPLO"
+    )
+    assert normalize_transaction_description("MERCADOLIVRE*EPILHAS") == "MERCADO LIVRE EPILHAS"
     assert (
         normalize_transaction_description("99FOOD*RESTAURANTE EXEMPLO")
         == "99FOOD RESTAURANTE EXEMPLO"
     )
     assert normalize_transaction_description("SHELL*POSTO EXEMPLO") == "SHELL POSTO EXEMPLO"
-    assert normalize_transaction_description("SHOPEE*LOJA EXEMPLO") == "SHOPEE"
-    assert normalize_transaction_description("AMAZONMKTPLC*LOJA EXEMPLO") == "AMAZON"
+    assert normalize_transaction_description("SHOPEE*LOJA EXEMPLO") == "SHOPEE LOJA EXEMPLO"
+    assert normalize_transaction_description("AMAZONMKTPLC*LOJA EXEMPLO") == "AMAZON LOJA EXEMPLO"
+
+
+def test_normalize_transaction_description_keeps_marketplace_complement() -> None:
+    assert normalize_transaction_description("MERCADOLIVRE*EPILHAS") == "MERCADO LIVRE EPILHAS"
+    assert (
+        normalize_transaction_description("MERCADOLIVRE*MERCADO LIVRE EPILHAS")
+        == "MERCADO LIVRE EPILHAS"
+    )
+    assert normalize_transaction_description("MERCADO LIVRE*EPILHAS") == "MERCADO LIVRE EPILHAS"
+    assert (
+        normalize_transaction_description("PAYPAL*MERCADOLIVRE*EPILHAS")
+        == "PAYPAL MERCADO LIVRE EPILHAS"
+    )
 
 
 def test_normalize_transaction_description_collapses_repeated_alias_sequences() -> None:
-    assert normalize_transaction_description("MERCADOLIVRE*MERCADO LIVRE LOJA") == "MERCADO LIVRE"
+    assert (
+        normalize_transaction_description("MERCADOLIVRE*MERCADO LIVRE LOJA")
+        == "MERCADO LIVRE LOJA"
+    )
+    assert normalize_transaction_description("MERCADOLIVRE*MERCADOLIV") == "MERCADO LIVRE"
+    assert normalize_transaction_description("MERCADOLIVRE*MERCADOLI") == "MERCADO LIVRE"
     assert normalize_transaction_description("99FOOD*99Food RESTAURANTE") == "99FOOD RESTAURANTE"
+
+
+def test_normalize_transaction_description_expands_safe_99_channel_sequences() -> None:
+    assert normalize_transaction_description("99 FOOD*ESFIHA IMIGRANT") == "99FOOD ESFIHA IMIGRANT"
+    assert normalize_transaction_description("99 FOOD 99FOOD ESFIHA") == "99FOOD ESFIHA"
+    assert normalize_transaction_description("99 APP * 99APP") == "99APP"
+    assert normalize_transaction_description("99") == "99"
+
+
+def test_normalize_transaction_description_expands_contextual_payment_aliases() -> None:
+    assert normalize_transaction_description("PAYPAL*PAYPAL *SH") == "PAYPAL SHELLBOX"
+    assert normalize_transaction_description("PAYPAL*PAYPAL *UB") == "PAYPAL UBER BR"
+    assert normalize_transaction_description("PAYPAL*PAYPAL *AB") == "PAYPAL ABASTECE AI"
+    assert normalize_transaction_description("LOJA *SH") == "LOJA SH"
+
+
+def test_normalize_transaction_description_expands_safe_payment_and_mobility_aliases() -> None:
+    assert normalize_transaction_description("MP*LOJA EXEMPLO") == "MERCADO PAGO LOJA EXEMPLO"
+    assert normalize_transaction_description("MP RONALDODESOUZ") == "MERCADO PAGO RONALDODESOUZ"
+    assert normalize_transaction_description("MP*RONALDODESOUZ") == "MERCADO PAGO RONALDODESOUZ"
+    assert normalize_transaction_description("MP") == "MP"
+    assert normalize_transaction_description("SHELL BOX*POSTO EXEMPLO") == "SHELLBOX POSTO EXEMPLO"
+    assert normalize_transaction_description("SHELLBOX*POSTO EXEMPLO") == "SHELLBOX POSTO EXEMPLO"
+    assert normalize_transaction_description("UBERBR*TRIP") == "UBER BR TRIP"
+    assert normalize_transaction_description("UBERBRASIL*TRIP") == "UBER BR TRIP"
+
+
+def test_normalize_transaction_description_preserves_fuel_and_mobility_context() -> None:
+    assert normalize_transaction_description("SHELL*POSTO EXEMPLO") == "SHELL POSTO EXEMPLO"
+    assert normalize_transaction_description("SHELL BOX*POSTO EXEMPLO") == "SHELLBOX POSTO EXEMPLO"
+    assert normalize_transaction_description("SHELLBOX*POSTO EXEMPLO") == "SHELLBOX POSTO EXEMPLO"
+    assert normalize_transaction_description("UBER * TRIP 123456") == "UBER TRIP"
+    assert normalize_transaction_description("UBER DO BRASI") == "UBER BR"
+    assert normalize_transaction_description("UBER EATS*RESTAURANTE") == "UBER EATS RESTAURANTE"
+
+
+def test_normalize_transaction_description_expands_known_truncated_sequences() -> None:
+    assert normalize_transaction_description("PAYPAL *Uber do Brasi") == "PAYPAL UBER BR"
+    assert normalize_transaction_description("PAYPAL *GOOGLE YOUTUB") == "PAYPAL GOOGLE YOUTUBE"
+    assert (
+        normalize_transaction_description("Amazon Ad free for Prim")
+        == "AMAZON AD FREE FOR PRIME"
+    )
+    assert normalize_transaction_description("DAISO BRASIL") == "DAISO BRASIL"
+
+
+def test_normalize_transaction_description_removes_trailing_installment_tokens() -> None:
+    assert normalize_transaction_description("ANGLO 03/10") == "ANGLO"
+    assert normalize_transaction_description("ANGLO 03 10") == "ANGLO"
+    assert normalize_transaction_description("ANGLO 02 10") == "ANGLO"
+    assert normalize_transaction_description("ANGLO 05/05") == "ANGLO"
+    assert normalize_transaction_description("REINALDO DOS SANTO08/10") == "REINALDO DOS SANTO"
+    assert normalize_transaction_description("ANGLO") == "ANGLO"
+    assert normalize_transaction_description("LOJA 11 10") == "LOJA 11 10"
+    assert normalize_transaction_description("LOJA 11/10") == "LOJA 11 10"
+
+
+def test_normalize_transaction_description_for_dedupe_preserves_installment_tokens() -> None:
+    assert normalize_transaction_description_for_dedupe("ANGLO 03/10") == "ANGLO 03 10"
+    assert normalize_transaction_description_for_dedupe("ANGLO 03 10") == "ANGLO 03 10"
+    assert normalize_transaction_description_for_dedupe("ANGLO 02 10") == "ANGLO 02 10"
+    assert (
+        normalize_transaction_description_for_dedupe("BKI PM SAO PAU 626400399")
+        == "BKI PM SAO PAU"
+    )
+
+
+def test_extract_installment_from_raw_description() -> None:
+    assert extract_installment("ANGLO 03/10") == (3, 10)
+    assert extract_installment("ANGLO 03 10") == (3, 10)
+    assert extract_installment("ANGLO 05/05") == (5, 5)
+    assert extract_installment("REINALDO DOS SANTO08/10") == (8, 10)
+    assert extract_installment("ANGLO") == (None, None)
+    assert extract_installment("LOJA 11 10") == (None, None)
+
+
+def test_parse_credit_card_csv_extracts_installments_and_keeps_clean_description() -> None:
+    content = "data,lançamento,valor\n2026-02-23,ANGLO 03/10,6536.76"
+
+    result = parse_credit_card_csv(content)
+
+    assert result.errors == []
+    assert result.transactions[0].description == "ANGLO"
+    assert result.transactions[0].raw_description == "ANGLO 03/10"
+    assert result.transactions[0].installment_current == 3
+    assert result.transactions[0].installment_total == 10

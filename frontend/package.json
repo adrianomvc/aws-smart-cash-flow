@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "test:projection": "tsc -p tsconfig.projection-test.json && node --test dist-projection-tests/tests/cashflow.test.js dist-projection-tests/tests/cashflowProjection.test.js",
     "lint": "eslint ."
   },
   "dependencies": {

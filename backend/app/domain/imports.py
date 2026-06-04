@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 class SourceKind(StrEnum):
     BANK_STATEMENT_TXT = "bank_statement_txt"
+    BANK_STATEMENT_EXCEL = "bank_statement_excel"
     CREDIT_CARD_CSV = "credit_card_csv"
     UNKNOWN = "unknown"
 
@@ -33,6 +34,25 @@ class ParsedTransaction(BaseModel):
     amount: Decimal
     direction: TransactionDirection
     source_line: int
+    installment_current: int | None = None
+    installment_total: int | None = None
+
+
+class ParsedAccountBalance(BaseModel):
+    balance_date: date
+    account_name: str
+    balance_amount: Decimal
+    source_line: int
+    raw_payload: dict[str, object] = Field(default_factory=dict)
+
+
+class ParsedCalendarEvent(BaseModel):
+    title: str
+    event_type: str
+    amount: Decimal
+    due_date: date
+    source_line: int
+    raw_payload: dict[str, object] = Field(default_factory=dict)
 
 
 class ParseError(BaseModel):
@@ -47,6 +67,8 @@ class ParseResult(BaseModel):
     source_kind: SourceKind
     total_rows: int
     transactions: list[ParsedTransaction] = Field(default_factory=list)
+    account_balances: list[ParsedAccountBalance] = Field(default_factory=list)
+    calendar_events: list[ParsedCalendarEvent] = Field(default_factory=list)
     errors: list[ParseError] = Field(default_factory=list)
 
 

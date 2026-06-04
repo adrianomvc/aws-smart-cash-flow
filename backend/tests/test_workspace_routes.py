@@ -119,7 +119,7 @@ def test_current_workspace_rejects_invalid_supabase_jwt_when_secret_is_configure
     assert response.status_code == 401
 
 
-def test_current_workspace_accepts_local_demo_when_enabled_outside_local_env(
+def test_current_workspace_rejects_local_demo_when_enabled_outside_local_env(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -129,10 +129,7 @@ def test_current_workspace_accepts_local_demo_when_enabled_outside_local_env(
 
     response = client.get("/v1/workspaces/current", headers={"Authorization": "Bearer local-dev"})
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["user_id"] == auth_module.LOCAL_USER_ID
-    assert payload["workspace_id"] == auth_module.LOCAL_WORKSPACE_ID
+    assert response.status_code == 403
 
 
 def test_current_workspace_rejects_local_demo_when_disabled_outside_local_env(

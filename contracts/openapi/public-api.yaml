@@ -1,0 +1,811 @@
+openapi: 3.0.3
+info:
+  title: SmartCashFlow Public API
+  version: 0.1.0
+  description: Initial contract map for the current MVP API.
+servers:
+  - url: http://localhost:8000
+security:
+  - bearerAuth: []
+tags:
+  - name: health
+  - name: identity
+  - name: workspaces
+  - name: imports
+  - name: ledger
+  - name: dashboard
+  - name: planning
+  - name: reports
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Health check.
+      security: []
+      responses:
+        "200":
+          description: Service status.
+  /v1/auth/signup:
+    post:
+      tags: [identity]
+      summary: Create a user account.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignupRequest"
+      responses:
+        "201":
+          description: Created user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignupResponse"
+  /v1/auth/login:
+    post:
+      tags: [identity]
+      summary: Authenticate with email and password.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: API session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+  /v1/auth/refresh:
+    post:
+      tags: [identity]
+      summary: Refresh an access token.
+      security: []
+      responses:
+        "200":
+          description: Refreshed API session.
+  /v1/auth/reset-password:
+    post:
+      tags: [identity]
+      summary: Request password reset.
+      security: []
+      responses:
+        "200":
+          description: Reset request accepted.
+  /v1/workspaces/current:
+    get:
+      tags: [workspaces]
+      summary: Resolve or create the current workspace for the authenticated user.
+      responses:
+        "200":
+          description: Current workspace.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentWorkspace"
+  /v1/imports:
+    get:
+      tags: [imports]
+      summary: List import jobs.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+        - name: status_filter
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Import job list.
+    post:
+      tags: [imports]
+      summary: Upload and process a financial file.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                source_kind:
+                  type: string
+                  default: auto
+      responses:
+        "200":
+          description: Import result.
+  /v1/imports/preview:
+    post:
+      tags: [imports]
+      summary: Preview a financial file before importing.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                source_kind:
+                  type: string
+                  default: auto
+      responses:
+        "200":
+          description: Import preview.
+  /v1/imports/{import_job_id}:
+    get:
+      tags: [imports]
+      summary: Get one import job.
+      parameters:
+        - $ref: "#/components/parameters/ImportJobId"
+      responses:
+        "200":
+          description: Import job.
+    delete:
+      tags: [imports]
+      summary: Delete an import and related transactions.
+      parameters:
+        - $ref: "#/components/parameters/ImportJobId"
+      responses:
+        "204":
+          description: Deleted.
+  /v1/imports/{import_job_id}/errors:
+    get:
+      tags: [imports]
+      summary: List import parsing errors.
+      parameters:
+        - $ref: "#/components/parameters/ImportJobId"
+      responses:
+        "200":
+          description: Import errors.
+  /v1/transactions:
+    get:
+      tags: [ledger]
+      summary: List transactions.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: date_from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: category_id
+          in: query
+          schema:
+            type: string
+        - name: direction
+          in: query
+          schema:
+            type: string
+            enum: [debit, credit, payment]
+      responses:
+        "200":
+          description: Transaction list.
+    post:
+      tags: [ledger]
+      summary: Create a manual transaction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ManualTransactionCreate"
+      responses:
+        "201":
+          description: Created transaction.
+  /v1/transactions/duplicates:
+    get:
+      tags: [ledger]
+      summary: List possible duplicate transaction groups.
+      responses:
+        "200":
+          description: Duplicate groups.
+  /v1/transactions/normalize-descriptions:
+    post:
+      tags: [ledger]
+      summary: Normalize existing transaction descriptions.
+      responses:
+        "200":
+          description: Normalization result.
+  /v1/transactions/{transaction_id}/category:
+    patch:
+      tags: [ledger]
+      summary: Update transaction category.
+      parameters:
+        - $ref: "#/components/parameters/TransactionId"
+      responses:
+        "200":
+          description: Updated transaction.
+  /v1/transactions/{transaction_id}/direction:
+    patch:
+      tags: [ledger]
+      summary: Update transaction financial direction.
+      parameters:
+        - $ref: "#/components/parameters/TransactionId"
+      responses:
+        "200":
+          description: Updated transaction.
+  /v1/transactions/{transaction_id}:
+    delete:
+      tags: [ledger]
+      summary: Delete a transaction.
+      parameters:
+        - $ref: "#/components/parameters/TransactionId"
+      responses:
+        "204":
+          description: Deleted.
+  /v1/categories:
+    get:
+      tags: [ledger]
+      summary: List categories.
+      responses:
+        "200":
+          description: Category list.
+    post:
+      tags: [ledger]
+      summary: Create a category.
+      responses:
+        "201":
+          description: Created category.
+  /v1/categories/{category_id}:
+    patch:
+      tags: [ledger]
+      summary: Update a category.
+      parameters:
+        - $ref: "#/components/parameters/CategoryId"
+      responses:
+        "200":
+          description: Updated category.
+    delete:
+      tags: [ledger]
+      summary: Delete a category.
+      parameters:
+        - $ref: "#/components/parameters/CategoryId"
+      responses:
+        "204":
+          description: Deleted.
+  /v1/categorization-rules:
+    get:
+      tags: [ledger]
+      summary: List categorization rules.
+      responses:
+        "200":
+          description: Rule list.
+    post:
+      tags: [ledger]
+      summary: Create a categorization rule.
+      responses:
+        "201":
+          description: Created rule.
+  /v1/categorization-rules/{rule_id}:
+    patch:
+      tags: [ledger]
+      summary: Update a categorization rule.
+      parameters:
+        - $ref: "#/components/parameters/RuleId"
+      responses:
+        "200":
+          description: Updated rule.
+    delete:
+      tags: [ledger]
+      summary: Delete a categorization rule.
+      parameters:
+        - $ref: "#/components/parameters/RuleId"
+      responses:
+        "204":
+          description: Deleted.
+  /v1/categorization-rules/{rule_id}/preview:
+    get:
+      tags: [ledger]
+      summary: Preview categorization rule impact.
+      parameters:
+        - $ref: "#/components/parameters/RuleId"
+      responses:
+        "200":
+          description: Rule preview.
+  /v1/categorization-rules/apply:
+    post:
+      tags: [ledger]
+      summary: Apply active categorization rules.
+      responses:
+        "200":
+          description: Apply result.
+  /v1/dashboard/summary:
+    get:
+      tags: [dashboard]
+      summary: Financial summary for a period.
+      parameters:
+        - $ref: "#/components/parameters/DateFrom"
+        - $ref: "#/components/parameters/DateTo"
+      responses:
+        "200":
+          description: Dashboard summary.
+  /v1/dashboard/monthly-cashflow:
+    get:
+      tags: [dashboard]
+      summary: Monthly cashflow series.
+      responses:
+        "200":
+          description: Monthly cashflow.
+  /v1/dashboard/daily-cashflow:
+    get:
+      tags: [dashboard]
+      summary: Daily cashflow series.
+      parameters:
+        - $ref: "#/components/parameters/DateFrom"
+        - $ref: "#/components/parameters/DateTo"
+      responses:
+        "200":
+          description: Daily cashflow.
+  /v1/dashboard/category-ranking:
+    get:
+      tags: [dashboard]
+      summary: Expense ranking by category.
+      responses:
+        "200":
+          description: Category ranking.
+  /v1/dashboard/merchant-ranking:
+    get:
+      tags: [dashboard]
+      summary: Expense ranking by normalized merchant description.
+      responses:
+        "200":
+          description: Merchant ranking.
+  /v1/dashboard/recurring-expenses:
+    get:
+      tags: [dashboard]
+      summary: Probable recurring expenses.
+      responses:
+        "200":
+          description: Recurring expenses.
+  /v1/dashboard/category-growth-alerts:
+    get:
+      tags: [dashboard]
+      summary: Category growth alerts.
+      responses:
+        "200":
+          description: Growth alerts.
+  /v1/dashboard/weekday-spending:
+    get:
+      tags: [dashboard]
+      summary: Spending grouped by weekday.
+      responses:
+        "200":
+          description: Weekday spending.
+  /v1/dashboard/data-quality:
+    get:
+      tags: [dashboard]
+      summary: Data quality metrics.
+      responses:
+        "200":
+          description: Data quality.
+  /v1/dashboard/credit-card-payment-matches:
+    get:
+      tags: [dashboard]
+      summary: Candidate matches between card payments and card expenses.
+      responses:
+        "200":
+          description: Payment match candidates.
+  /v1/dashboard/credit-card-installments:
+    get:
+      tags: [dashboard]
+      summary: Active and future credit card installments.
+      responses:
+        "200":
+          description: Installments projection.
+  /v1/calendar/events:
+    get:
+      tags: [planning]
+      summary: List financial calendar events.
+      parameters:
+        - $ref: "#/components/parameters/DateFrom"
+        - $ref: "#/components/parameters/DateTo"
+      responses:
+        "200":
+          description: Calendar events.
+    post:
+      tags: [planning]
+      summary: Create a financial calendar event.
+      responses:
+        "201":
+          description: Created calendar event.
+  /v1/calendar/events/{event_id}:
+    patch:
+      tags: [planning]
+      summary: Update a financial calendar event.
+      parameters:
+        - $ref: "#/components/parameters/EventId"
+      responses:
+        "200":
+          description: Updated calendar event.
+    delete:
+      tags: [planning]
+      summary: Delete a financial calendar event.
+      parameters:
+        - $ref: "#/components/parameters/EventId"
+      responses:
+        "204":
+          description: Deleted.
+  /v1/budgets:
+    get:
+      tags: [planning]
+      summary: List budgets.
+      parameters:
+        - $ref: "#/components/parameters/DateFrom"
+        - $ref: "#/components/parameters/DateTo"
+      responses:
+        "200":
+          description: Budgets.
+    post:
+      tags: [planning]
+      summary: Create a budget.
+      responses:
+        "201":
+          description: Created budget.
+  /v1/budgets/{budget_id}:
+    patch:
+      tags: [planning]
+      summary: Update a budget.
+      parameters:
+        - $ref: "#/components/parameters/BudgetId"
+      responses:
+        "200":
+          description: Updated budget.
+    delete:
+      tags: [planning]
+      summary: Delete a budget.
+      parameters:
+        - $ref: "#/components/parameters/BudgetId"
+      responses:
+        "204":
+          description: Deleted.
+  /v1/goals:
+    get:
+      tags: [planning]
+      summary: List goals.
+      responses:
+        "200":
+          description: Goals.
+    post:
+      tags: [planning]
+      summary: Create a goal.
+      responses:
+        "201":
+          description: Created goal.
+  /v1/goals/{goal_id}:
+    patch:
+      tags: [planning]
+      summary: Update a goal.
+      parameters:
+        - $ref: "#/components/parameters/GoalId"
+      responses:
+        "200":
+          description: Updated goal.
+    delete:
+      tags: [planning]
+      summary: Delete a goal.
+      parameters:
+        - $ref: "#/components/parameters/GoalId"
+      responses:
+        "204":
+          description: Deleted.
+  /v1/planning/projection:
+    get:
+      tags: [planning]
+      summary: Project planned cash flow horizons.
+      parameters:
+        - $ref: "#/components/parameters/DateFrom"
+        - $ref: "#/components/parameters/Horizons"
+      responses:
+        "200":
+          description: Planning projection.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlanningProjection"
+  /v1/reports:
+    get:
+      tags: [reports]
+      summary: List consolidated financial reports.
+      parameters:
+        - $ref: "#/components/parameters/DateFrom"
+        - $ref: "#/components/parameters/DateTo"
+      responses:
+        "200":
+          description: Report list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportList"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        default: 20
+    Offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        default: 0
+    DateFrom:
+      name: date_from
+      in: query
+      schema:
+        type: string
+        format: date
+    DateTo:
+      name: date_to
+      in: query
+      schema:
+        type: string
+        format: date
+    ImportJobId:
+      name: import_job_id
+      in: path
+      required: true
+      schema:
+        type: string
+    TransactionId:
+      name: transaction_id
+      in: path
+      required: true
+      schema:
+        type: string
+    CategoryId:
+      name: category_id
+      in: path
+      required: true
+      schema:
+        type: string
+    RuleId:
+      name: rule_id
+      in: path
+      required: true
+      schema:
+        type: string
+    EventId:
+      name: event_id
+      in: path
+      required: true
+      schema:
+        type: string
+    BudgetId:
+      name: budget_id
+      in: path
+      required: true
+      schema:
+        type: string
+    GoalId:
+      name: goal_id
+      in: path
+      required: true
+      schema:
+        type: string
+    Horizons:
+      name: horizons
+      in: query
+      schema:
+        type: string
+        default: 30,60,90
+        maxLength: 32
+  schemas:
+    SignupRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+        display_name:
+          type: string
+          nullable: true
+    SignupResponse:
+      type: object
+      properties:
+        user_id:
+          type: string
+        email:
+          type: string
+        display_name:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+    LoginResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+          nullable: true
+        user_id:
+          type: string
+        email:
+          type: string
+        display_name:
+          type: string
+          nullable: true
+    CurrentWorkspace:
+      type: object
+      properties:
+        user_id:
+          type: string
+        workspace_id:
+          type: string
+        workspace_name:
+          type: string
+        role:
+          type: string
+          enum: [owner, admin, member]
+        created_at:
+          type: string
+          format: date-time
+    ManualTransactionCreate:
+      type: object
+      required: [transaction_date, description, amount, direction]
+      properties:
+        transaction_date:
+          type: string
+          format: date
+        description:
+          type: string
+        amount:
+          type: string
+        direction:
+          type: string
+          enum: [debit, credit, payment]
+        category_id:
+          type: string
+          nullable: true
+    PlanningProjection:
+      type: object
+      properties:
+        workspace_id:
+          type: string
+        date_from:
+          type: string
+          format: date
+        horizons:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectionHorizon"
+        upcoming_events:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectionEvent"
+        goals_due:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectionGoal"
+        assumptions:
+          type: array
+          items:
+            type: string
+    ProjectionHorizon:
+      type: object
+      properties:
+        days:
+          type: integer
+        date_to:
+          type: string
+          format: date
+        projected_income:
+          type: string
+        projected_expenses:
+          type: string
+        projected_balance:
+          type: string
+        event_count:
+          type: integer
+        risk_level:
+          type: string
+          enum: [healthy, attention, risk]
+        risk_reason:
+          type: string
+    ProjectionEvent:
+      type: object
+      properties:
+        title:
+          type: string
+        event_type:
+          type: string
+        amount:
+          type: string
+        due_date:
+          type: string
+          format: date
+        recurrence:
+          type: string
+    ProjectionGoal:
+      type: object
+      properties:
+        name:
+          type: string
+        target_amount:
+          type: string
+        current_amount:
+          type: string
+        remaining_amount:
+          type: string
+        target_date:
+          type: string
+          format: date
+          nullable: true
+    ReportList:
+      type: object
+      properties:
+        workspace_id:
+          type: string
+        date_from:
+          type: string
+          format: date
+          nullable: true
+        date_to:
+          type: string
+          format: date
+          nullable: true
+        export_status:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportCard"
+    ReportCard:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum: [ready, partial, empty, coming_soon]
+        primary_metric:
+          type: string
+        secondary_metric:
+          type: string
+        target_page:
+          type: string

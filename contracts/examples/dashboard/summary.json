@@ -1,0 +1,15 @@
+{
+  "workspace_id": "workspace-demo",
+  "date_from": "2026-05-01",
+  "date_to": "2026-05-31",
+  "income": "12000.00",
+  "expenses": "9300.00",
+  "payments": "2850.00",
+  "balance": "2700.00",
+  "savings_rate": "0.2250",
+  "commitment_rate": "0.7750",
+  "burn_rate": "9300.00",
+  "burn_rate_months": 3,
+  "burn_rate_basis": "trailing_average",
+  "transaction_count": 128
+}

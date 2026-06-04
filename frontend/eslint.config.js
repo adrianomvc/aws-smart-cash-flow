@@ -4,7 +4,7 @@ import tseslint from "typescript-eslint";
 
 export default [
   {
-    ignores: ["dist", "node_modules"],
+    ignores: ["dist", "dist-projection-tests", "node_modules"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

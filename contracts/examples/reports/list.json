@@ -1,0 +1,26 @@
+{
+  "workspace_id": "00000000-0000-0000-0000-000000000002",
+  "date_from": "2026-05-01",
+  "date_to": "2026-05-31",
+  "export_status": "coming_soon",
+  "items": [
+    {
+      "id": "executive-summary",
+      "title": "Resumo executivo",
+      "description": "Receitas, despesas, saldo e indicadores principais do periodo.",
+      "status": "ready",
+      "primary_metric": "1800.00",
+      "secondary_metric": "42 transacoes",
+      "target_page": "dashboard"
+    },
+    {
+      "id": "data-quality",
+      "title": "Qualidade dos dados",
+      "description": "Cobertura de categorizacao, erros e duplicidades.",
+      "status": "ready",
+      "primary_metric": "87.50%",
+      "secondary_metric": "5 pendentes",
+      "target_page": "review"
+    }
+  ]
+}

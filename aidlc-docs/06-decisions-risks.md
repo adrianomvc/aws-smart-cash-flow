@@ -184,6 +184,28 @@ Motivo:
 - O caminho futuro deve permitir comparar estrategia deterministica, embedding e
   LLM sem expor dados financeiros sensiveis em logs ou prompts desnecessarios.
 
+DEC-017B: Normalizacao deterministica nao deve enriquecer descricoes genericas sem evidencia suficiente.
+
+Motivo:
+
+- Descricoes como `99` sozinhas nao indicam com seguranca se sao transporte,
+  delivery, marketplace ou outro canal.
+- O MVP pode unir sequencias seguras como `99 FOOD` para `99FOOD` e `99 APP`
+  para `99APP`, mas nao deve transformar uma descricao generica por suposicao.
+- Abreviacoes tambem devem exigir contexto seguro: `MP*LOJA` pode ser expandido
+  para `MERCADO PAGO LOJA`, mas `MP` isolado deve ser preservado.
+- Casos genericos devem ser tratados por regra manual, alias aprovado pelo
+  usuario, embedding ou LLM em fase futura, preservando `raw_description`.
+
+Impacto:
+
+- Reduz falso agrupamento em deduplicacao e falso positivo de categorizacao.
+- Mantem a importacao previsivel e auditavel.
+
+Validacao:
+
+- Testes de parser devem cobrir canais seguros e manter `99` sem enriquecimento.
+
 DEC-018: A infraestrutura AWS sera criada e evoluida com Terraform.
 
 Motivo:
@@ -196,6 +218,35 @@ Motivo:
 - A conexao inicial do Amplify com GitHub pode ser feita fora do Terraform se
   isso evitar armazenar tokens sensiveis no state; os recursos AWS e permissoes
   associados devem permanecer sob controle do Terraform.
+
+DEC-019: O prototipo de telas sera usado como referencia de UX/UI e roadmap, nao como substituto direto do MVP atual.
+
+Motivo:
+
+- O prototipo em `aidlc-docs/prototipo de telas` cobre um produto mais amplo,
+  incluindo telas de calendario, orcamentos, metas, planejamento, investimentos,
+  patrimonio, relatorios, insights IA, familia, assinaturas e configuracoes.
+- O MVP atual ja possui backend real, importacao, normalizacao, deduplicacao,
+  categorizacao e dashboard com dados do workspace; recomeçar por mock API
+  aumentaria retrabalho e risco.
+- A melhor rota e absorver o design system, navegacao e hierarquia visual do
+  prototipo em pacotes agrupados de frontend, mantendo a base funcional existente.
+- Funcionalidades que dependem de novos dominios, como orcamentos, metas,
+  patrimonio, familia e billing, devem permanecer como backlog de evolucao ate
+  terem contrato de dados, seguranca e testes.
+
+Impacto:
+
+- Proximas entregas de front devem aproximar a experiencia do prototipo sem
+  quebrar os fluxos ja validados de importacao, transacoes e dashboard.
+- O backlog passa a diferenciar "alinhamento visual com prototipo" de "novas
+  funcionalidades do produto completo".
+
+Atualizacao:
+
+- Em 2026-05-25, `smartcashflow_full_product_spec_v3.md` passou a ser a
+  referencia mais recente do prototipo, especialmente para Configuracoes,
+  Preferencias Financeiras e subareas de conta/produto.
 
 DEC-019: Recursos AWS gerenciados por Terraform devem usar tags padrao de custo.
 
@@ -264,6 +315,25 @@ Motivo:
 - Referencias visuais fornecidas em 2026-05-23 devem orientar a evolucao de UX,
   mas a implementacao deve preservar simplicidade, responsividade e leitura de
   produto financeiro de uso recorrente.
+
+DEC-025: Projecao de parcelas de cartao deve considerar fechamento da fatura.
+
+Motivo:
+
+- A data da compra nao define sozinha a competencia da parcela no cartao.
+- Compras feitas apos o fechamento entram na fatura do mes seguinte.
+
+Decisao:
+
+- O calculo de parcela por mes alvo deve partir da primeira fatura da compra,
+  usando `closing_day`.
+- Enquanto o cadastro de cartoes nao existir, o MVP usa dia de fechamento
+  configuravel por ambiente como fallback.
+
+Risco:
+
+- Cartoes com fechamento diferente do fallback podem apresentar uma parcela
+  deslocada ate que exista cadastro de cartoes por usuario.
 
 R-007: Banco gratuito pode impor limites de armazenamento, conexoes ou pausa por inatividade.
 

@@ -11,7 +11,7 @@ class CategorizationService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def apply_rules(self, workspace_id: str) -> int:
+    def apply_rules(self, workspace_id: str, transaction_ids: set[str] | None = None) -> int:
         rules = self.db.scalars(
             select(CategorizationRule)
             .where(
@@ -28,16 +28,28 @@ class CategorizationService:
             return 0
 
         applied = 0
-        transactions = self.db.scalars(
-            select(Transaction).where(Transaction.workspace_id == workspace_id)
-        ).all()
-        for transaction in transactions:
-            existing = self.db.scalar(
+        transaction_query = select(Transaction).where(Transaction.workspace_id == workspace_id)
+        if transaction_ids is not None:
+            if not transaction_ids:
+                return 0
+            transaction_query = transaction_query.where(Transaction.id.in_(transaction_ids))
+        transactions = self.db.scalars(transaction_query).all()
+        if not transactions:
+            return 0
+
+        existing_assignments = {
+            assignment.transaction_id: assignment
+            for assignment in self.db.scalars(
                 select(TransactionCategoryAssignment).where(
                     TransactionCategoryAssignment.workspace_id == workspace_id,
-                    TransactionCategoryAssignment.transaction_id == transaction.id,
+                    TransactionCategoryAssignment.transaction_id.in_(
+                        [transaction.id for transaction in transactions]
+                    ),
                 )
-            )
+            ).all()
+        }
+        for transaction in transactions:
+            existing = existing_assignments.get(transaction.id)
 
             matching_rule = next(
                 (rule for rule in rules if self._matches(rule=rule, transaction=transaction)),

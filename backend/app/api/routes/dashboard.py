@@ -22,7 +22,22 @@ class DashboardSummaryResponse(BaseModel):
     payments: Decimal
     balance: Decimal
     savings_rate: Decimal | None
+    commitment_rate: Decimal | None
+    burn_rate: Decimal
+    burn_rate_months: int
+    burn_rate_basis: str
+    burn_rate_90_days: Decimal
+    burn_rate_90_days_window: int
+    burn_rate_90_days_basis: str
+    safe_spend: Decimal | None
+    safe_spend_reserve_minimum: Decimal | None
+    safe_spend_basis: str
+    financial_health_score: int | None
+    financial_health_basis: str
     transaction_count: int
+    current_balance: Decimal | None
+    current_balance_date: date | None
+    current_balance_account: str | None
 
 
 class MonthlyCashflowItem(BaseModel):
@@ -31,12 +46,30 @@ class MonthlyCashflowItem(BaseModel):
     expenses: Decimal
     payments: Decimal
     balance: Decimal
+    opening_balance: Decimal
+    closing_balance: Decimal
     transaction_count: int
 
 
 class MonthlyCashflowResponse(BaseModel):
     workspace_id: str
     items: list[MonthlyCashflowItem]
+
+
+class DailyCashflowItem(BaseModel):
+    date: date
+    income: Decimal
+    expenses: Decimal
+    payments: Decimal
+    balance: Decimal
+    opening_balance: Decimal
+    closing_balance: Decimal
+    transaction_count: int
+
+
+class DailyCashflowResponse(BaseModel):
+    workspace_id: str
+    items: list[DailyCashflowItem]
 
 
 class CategoryRankingItem(BaseModel):
@@ -53,6 +86,35 @@ class CategoryRankingResponse(BaseModel):
     items: list[CategoryRankingItem]
 
 
+class SubcategoryRankingItem(BaseModel):
+    category_id: str | None
+    subcategory_name: str
+    amount: Decimal
+    count: int
+    share_ratio: Decimal | None
+    average_amount: Decimal
+
+
+class SubcategoryRankingResponse(BaseModel):
+    workspace_id: str
+    items: list[SubcategoryRankingItem]
+
+
+class ExpenseSizeProfileItem(BaseModel):
+    key: str
+    label: str
+    helper: str
+    total: Decimal
+    count: int
+    share_ratio: Decimal
+    average_amount: Decimal
+
+
+class ExpenseSizeProfileResponse(BaseModel):
+    workspace_id: str
+    items: list[ExpenseSizeProfileItem]
+
+
 class MerchantRankingItem(BaseModel):
     description: str
     amount: Decimal
@@ -62,6 +124,29 @@ class MerchantRankingItem(BaseModel):
 class MerchantRankingResponse(BaseModel):
     workspace_id: str
     items: list[MerchantRankingItem]
+
+
+class RecurringExpenseItem(BaseModel):
+    description: str
+    category_id: str | None
+    category_name: str | None
+    average_amount: Decimal
+    last_amount: Decimal
+    transaction_count: int
+    month_count: int
+    last_transaction_date: date
+    change_ratio: Decimal | None
+    status: str
+
+
+class RecurringExpensesResponse(BaseModel):
+    workspace_id: str
+    items: list[RecurringExpenseItem]
+
+
+class RecurringIncomesResponse(BaseModel):
+    workspace_id: str
+    items: list[RecurringExpenseItem]
 
 
 class CategoryGrowthAlertItem(BaseModel):
@@ -122,8 +207,29 @@ class CreditCardPaymentMatchesResponse(BaseModel):
     items: list[CreditCardPaymentMatchItem]
 
 
+class CreditCardInstallmentItem(BaseModel):
+    description: str
+    amount: Decimal
+    installment_current: int
+    installment_total: int
+    remaining_installments: int
+    future_amount: Decimal
+    first_invoice_month: date
+    last_transaction_date: date
+    transaction_count: int
+
+
+class CreditCardInstallmentsResponse(BaseModel):
+    workspace_id: str
+    active_count: int
+    closing_day: int
+    due_day: int
+    total_future_amount: Decimal
+    items: list[CreditCardInstallmentItem]
+
+
 @router.get("/summary")
-async def get_summary(
+def get_summary(
     auth: AuthContext = AuthDependency,
     db: Session = DbDependency,
     date_from: date | None = None,
@@ -139,7 +245,7 @@ async def get_summary(
 
 
 @router.get("/monthly-cashflow")
-async def get_monthly_cashflow(
+def get_monthly_cashflow(
     auth: AuthContext = AuthDependency,
     db: Session = DbDependency,
     date_from: date | None = None,
@@ -153,8 +259,23 @@ async def get_monthly_cashflow(
     return MonthlyCashflowResponse(workspace_id=auth.workspace_id, items=items)
 
 
+@router.get("/daily-cashflow")
+def get_daily_cashflow(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> DailyCashflowResponse:
+    items = DashboardService(db).daily_cashflow(
+        workspace_id=auth.workspace_id,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    return DailyCashflowResponse(workspace_id=auth.workspace_id, items=items)
+
+
 @router.get("/category-ranking")
-async def get_category_ranking(
+def get_category_ranking(
     auth: AuthContext = AuthDependency,
     db: Session = DbDependency,
     date_from: date | None = None,
@@ -170,8 +291,42 @@ async def get_category_ranking(
     return CategoryRankingResponse(workspace_id=auth.workspace_id, items=items)
 
 
+@router.get("/subcategory-ranking")
+def get_subcategory_ranking(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    category_id: str | None = None,
+    limit: int = Query(default=10, ge=1, le=50),
+) -> SubcategoryRankingResponse:
+    items = DashboardService(db).subcategory_ranking(
+        workspace_id=auth.workspace_id,
+        date_from=date_from,
+        date_to=date_to,
+        category_id=category_id,
+        limit=limit,
+    )
+    return SubcategoryRankingResponse(workspace_id=auth.workspace_id, items=items)
+
+
+@router.get("/expense-size-profile")
+def get_expense_size_profile(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> ExpenseSizeProfileResponse:
+    items = DashboardService(db).expense_size_profile(
+        workspace_id=auth.workspace_id,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    return ExpenseSizeProfileResponse(workspace_id=auth.workspace_id, items=items)
+
+
 @router.get("/merchant-ranking")
-async def get_merchant_ranking(
+def get_merchant_ranking(
     auth: AuthContext = AuthDependency,
     db: Session = DbDependency,
     date_from: date | None = None,
@@ -187,8 +342,46 @@ async def get_merchant_ranking(
     return MerchantRankingResponse(workspace_id=auth.workspace_id, items=items)
 
 
+@router.get("/recurring-expenses")
+def get_recurring_expenses(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    min_months: int = Query(default=3, ge=2, le=12),
+    limit: int = Query(default=8, ge=1, le=50),
+) -> RecurringExpensesResponse:
+    items = DashboardService(db).recurring_expenses(
+        workspace_id=auth.workspace_id,
+        date_from=date_from,
+        date_to=date_to,
+        min_months=min_months,
+        limit=limit,
+    )
+    return RecurringExpensesResponse(workspace_id=auth.workspace_id, items=items)
+
+
+@router.get("/recurring-incomes")
+def get_recurring_incomes(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    min_months: int = Query(default=3, ge=2, le=12),
+    limit: int = Query(default=8, ge=1, le=50),
+) -> RecurringIncomesResponse:
+    items = DashboardService(db).recurring_incomes(
+        workspace_id=auth.workspace_id,
+        date_from=date_from,
+        date_to=date_to,
+        min_months=min_months,
+        limit=limit,
+    )
+    return RecurringIncomesResponse(workspace_id=auth.workspace_id, items=items)
+
+
 @router.get("/category-growth-alerts")
-async def get_category_growth_alerts(
+def get_category_growth_alerts(
     auth: AuthContext = AuthDependency,
     db: Session = DbDependency,
     date_from: date | None = None,
@@ -205,7 +398,7 @@ async def get_category_growth_alerts(
 
 
 @router.get("/weekday-spending")
-async def get_weekday_spending(
+def get_weekday_spending(
     auth: AuthContext = AuthDependency,
     db: Session = DbDependency,
     date_from: date | None = None,
@@ -220,7 +413,7 @@ async def get_weekday_spending(
 
 
 @router.get("/data-quality")
-async def get_data_quality(
+def get_data_quality(
     auth: AuthContext = AuthDependency,
     db: Session = DbDependency,
     date_from: date | None = None,
@@ -236,7 +429,7 @@ async def get_data_quality(
 
 
 @router.get("/credit-card-payment-matches")
-async def get_credit_card_payment_matches(
+def get_credit_card_payment_matches(
     auth: AuthContext = AuthDependency,
     db: Session = DbDependency,
     date_from: date | None = None,
@@ -252,3 +445,21 @@ async def get_credit_card_payment_matches(
         limit=limit,
     )
     return CreditCardPaymentMatchesResponse(workspace_id=auth.workspace_id, items=items)
+
+
+@router.get("/credit-card-installments")
+def get_credit_card_installments(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    limit: int = Query(default=20, ge=1, le=100),
+) -> CreditCardInstallmentsResponse:
+    return CreditCardInstallmentsResponse(
+        **DashboardService(db).credit_card_installments(
+            workspace_id=auth.workspace_id,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
+        )
+    )
