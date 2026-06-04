@@ -1729,6 +1729,7 @@ function CashflowPage({
               </select>
             </label>
             <SubcategoryBreakdown
+              color={chartPalette[categoryItems.findIndex((c) => c.category_id === selectedExpenseCategoryId) % chartPalette.length] ?? chartPalette[0]}
               items={subcategoryRows}
               loading={subcategoryRanking.isLoading}
               onOpen={(item) => {
@@ -2033,10 +2034,12 @@ function ExpenseSizeProfile({
 }
 
 function SubcategoryBreakdown({
+  color,
   items,
   loading,
   onOpen,
 }: {
+  color?: string;
   items: SubcategorySummary[];
   loading: boolean;
   onOpen: (item: SubcategorySummary) => void;
@@ -2057,7 +2060,7 @@ function SubcategoryBreakdown({
             </small>
           </span>
           <div className="subcategory-track" aria-hidden="true">
-            <i style={{ width: `${Math.max((item.total / maxTotal) * 100, 5)}%` }} />
+            <i style={{ background: color, width: `${Math.max((item.total / maxTotal) * 100, 5)}%` }} />
           </div>
           <b>
             <strong>{moneyAbs(item.total)}</strong>
