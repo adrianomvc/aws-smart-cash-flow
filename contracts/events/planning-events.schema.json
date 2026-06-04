@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://smartcashflow.local/contracts/events/planning-events.schema.json",
+  "title": "SmartCashFlow Planning Events",
+  "description": "Planned planning event contracts. These events are not yet published by the current MVP.",
+  "oneOf": [
+    { "$ref": "#/$defs/calendarEventDueSoon" },
+    { "$ref": "#/$defs/budgetThresholdReached" },
+    { "$ref": "#/$defs/goalProgressUpdated" }
+  ],
+  "$defs": {
+    "baseEvent": {
+      "type": "object",
+      "required": ["event_id", "event_type", "event_version", "occurred_at", "workspace_id"],
+      "properties": {
+        "event_id": { "type": "string" },
+        "event_type": { "type": "string" },
+        "event_version": { "type": "integer", "const": 1 },
+        "occurred_at": { "type": "string", "format": "date-time" },
+        "workspace_id": { "type": "string" }
+      }
+    },
+    "calendarEventDueSoon": {
+      "allOf": [
+        { "$ref": "#/$defs/baseEvent" },
+        {
+          "type": "object",
+          "required": ["calendar_event_id", "due_date"],
+          "properties": {
+            "event_type": { "const": "calendar_event.due_soon" },
+            "calendar_event_id": { "type": "string" },
+            "due_date": { "type": "string", "format": "date" }
+          }
+        }
+      ]
+    },
+    "budgetThresholdReached": {
+      "allOf": [
+        { "$ref": "#/$defs/baseEvent" },
+        {
+          "type": "object",
+          "required": ["budget_id", "usage_ratio"],
+          "properties": {
+            "event_type": { "const": "budget.threshold_reached" },
+            "budget_id": { "type": "string" },
+            "usage_ratio": { "type": "number" }
+          }
+        }
+      ]
+    },
+    "goalProgressUpdated": {
+      "allOf": [
+        { "$ref": "#/$defs/baseEvent" },
+        {
+          "type": "object",
+          "required": ["goal_id", "progress_ratio"],
+          "properties": {
+            "event_type": { "const": "goal.progress_updated" },
+            "goal_id": { "type": "string" },
+            "progress_ratio": { "type": "number" }
+          }
+        }
+      ]
+    }
+  }
+}

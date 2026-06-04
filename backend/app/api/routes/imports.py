@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import AuthContext, AuthDependency
 from app.db.models import (
+    AccountBalance,
+    CreditCardStatement,
     ImportError,
     ImportJob,
     RawTransactionLine,
@@ -79,8 +81,26 @@ async def create_import(
     file: UploadFile = UploadFileDependency,
     db: Session = DbDependency,
     source_kind: str | None = Form(default=None),
+    credit_card_statement_id: str | None = Form(default=None),
 ) -> dict[str, object]:
+    statement: CreditCardStatement | None = None
+    if credit_card_statement_id:
+        if source_kind not in (None, "auto", "credit_card_csv"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Credit card statement can only be linked to credit card imports",
+            )
+        statement = _get_credit_card_statement(
+            db=db,
+            statement_id=credit_card_statement_id,
+            workspace_id=auth.workspace_id,
+        )
+
     result = await ImportService(db).process_upload(auth=auth, file=file, source_kind=source_kind)
+    if statement is not None:
+        statement.source_file_id = result.source_file_id
+        db.add(statement)
+        db.commit()
     return result.model_dump()
 
 
@@ -100,6 +120,7 @@ async def list_imports(
     db: Session = DbDependency,
     has_errors: bool = False,
     q: str | None = None,
+    source_kind: str | None = None,
     status_filter: str | None = Query(default=None, alias="status"),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
@@ -111,6 +132,22 @@ async def list_imports(
         filters.append(ImportJob.error_rows > 0)
     if q:
         filters.append(SourceFile.original_filename.ilike(f"%{q}%"))
+    if source_kind:
+        allowed_source_kinds = {
+            "bank_statement_txt",
+            "bank_statement_excel",
+            "credit_card_csv",
+            "unknown",
+        }
+        if source_kind not in allowed_source_kinds:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "Invalid source_kind. Use bank_statement_txt, bank_statement_excel, "
+                    "credit_card_csv, or unknown."
+                ),
+            )
+        filters.append(SourceFile.source_kind == source_kind)
 
     total = db.scalar(
         select(func.count())
@@ -190,6 +227,12 @@ async def delete_import(
         delete(Transaction).where(
             Transaction.workspace_id == auth.workspace_id,
             Transaction.import_job_id == import_job_id,
+        )
+    )
+    db.execute(
+        delete(AccountBalance).where(
+            AccountBalance.workspace_id == auth.workspace_id,
+            AccountBalance.import_job_id == import_job_id,
         )
     )
     db.execute(
@@ -277,3 +320,23 @@ def _import_job_read(import_job: ImportJob, source_file: SourceFile | None) -> I
         created_at=import_job.created_at,
         source_file=_source_file_read(source_file) if source_file is not None else None,
     )
+
+
+def _get_credit_card_statement(
+    *,
+    db: Session,
+    statement_id: str,
+    workspace_id: str,
+) -> CreditCardStatement:
+    statement = db.scalar(
+        select(CreditCardStatement).where(
+            CreditCardStatement.id == statement_id,
+            CreditCardStatement.workspace_id == workspace_id,
+        )
+    )
+    if statement is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Credit card statement not found",
+        )
+    return statement

@@ -1,14 +1,18 @@
+import re
+from calendar import monthrange
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
 
-from sqlalchemy import and_, desc, func, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.models import (
+    AccountBalance,
     Category,
     ImportJob,
+    SourceFile,
     Transaction,
     TransactionCategoryAssignment,
 )
@@ -48,6 +52,25 @@ class DashboardService:
         savings_rate = (balance / income).quantize(Decimal("0.0001")) if income > ZERO else None
         commitment_rate = (expenses / income).quantize(Decimal("0.0001")) if income > ZERO else None
         burn_rate, burn_rate_months = self._burn_rate(workspace_id=workspace_id, date_to=date_to)
+        burn_rate_90_days, burn_rate_90_days_window = self._burn_rate_90_days(
+            workspace_id=workspace_id,
+            date_to=date_to,
+        )
+        current_balance = self._current_account_balance(workspace_id=workspace_id, date_to=date_to)
+        safe_spend, safe_spend_reserve = self._safe_spend(
+            workspace_id=workspace_id,
+            date_to=date_to,
+            current_balance=current_balance.balance_amount if current_balance else None,
+            reserve_minimum=burn_rate_90_days,
+        )
+        financial_health_score = self._financial_health_score(
+            commitment_rate=commitment_rate,
+            current_balance=current_balance.balance_amount if current_balance else None,
+            income=income,
+            savings_rate=savings_rate,
+            safe_spend=safe_spend,
+            burn_rate=burn_rate_90_days if burn_rate_90_days > ZERO else burn_rate,
+        )
 
         return {
             "workspace_id": workspace_id,
@@ -62,7 +85,18 @@ class DashboardService:
             "burn_rate": burn_rate,
             "burn_rate_months": burn_rate_months,
             "burn_rate_basis": "trailing_12_month_average",
+            "burn_rate_90_days": burn_rate_90_days,
+            "burn_rate_90_days_window": burn_rate_90_days_window,
+            "burn_rate_90_days_basis": "trailing_90_days_monthly_equivalent",
+            "safe_spend": safe_spend,
+            "safe_spend_reserve_minimum": safe_spend_reserve,
+            "safe_spend_basis": "next_30_days_with_90_day_burn_rate_reserve",
+            "financial_health_score": financial_health_score,
+            "financial_health_basis": "runway_saving_commitment_safe_spend_balance",
             "transaction_count": len(transactions),
+            "current_balance": current_balance.balance_amount if current_balance else None,
+            "current_balance_date": current_balance.balance_date if current_balance else None,
+            "current_balance_account": current_balance.account_name if current_balance else None,
         }
 
     def monthly_cashflow(
@@ -72,12 +106,30 @@ class DashboardService:
         date_to: date | None,
     ) -> list[dict[str, object]]:
         buckets: dict[str, dict[str, Decimal | str | int]] = {}
-        for transaction in self._transactions(
+        opening_balance = self._opening_account_balance(
+            workspace_id=workspace_id,
+            date_from=date_from,
+        )
+        running_balance = opening_balance
+        transactions = self._cashflow_transactions(
             workspace_id=workspace_id,
             date_from=date_from,
             date_to=date_to,
-        ):
-            month = transaction.transaction_date.strftime("%Y-%m")
+        )
+        source_file_due_dates = self._source_file_statement_due_dates(transactions)
+        month_balances = self._account_balances_by_month(
+            workspace_id=workspace_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        for transaction in transactions:
+            cashflow_date = self._cashflow_date(
+                transaction,
+                source_file_due_dates.get(transaction.source_file_id),
+            )
+            if not _date_in_range(cashflow_date, date_from, date_to):
+                continue
+            month = cashflow_date.strftime("%Y-%m")
             bucket = buckets.setdefault(
                 month,
                 {
@@ -86,6 +138,8 @@ class DashboardService:
                     "expenses": ZERO,
                     "payments": ZERO,
                     "balance": ZERO,
+                    "opening_balance": ZERO,
+                    "closing_balance": ZERO,
                     "transaction_count": 0,
                 },
             )
@@ -98,7 +152,104 @@ class DashboardService:
                 bucket["payments"] = Decimal(bucket["payments"]) + abs(transaction.amount)
             bucket["balance"] = Decimal(bucket["income"]) - Decimal(bucket["expenses"])
 
-        return [buckets[month] for month in sorted(buckets)]
+        items: list[dict[str, object]] = []
+        for month in sorted(buckets):
+            bucket = buckets[month]
+            bucket["opening_balance"] = running_balance
+            running_balance = (
+                month_balances[month]
+                if month in month_balances
+                else running_balance + Decimal(bucket["balance"])
+            )
+            bucket["closing_balance"] = running_balance
+            items.append(bucket)
+        return items
+
+    def daily_cashflow(
+        self,
+        workspace_id: str,
+        date_from: date | None,
+        date_to: date | None,
+    ) -> list[dict[str, object]]:
+        transactions = self._cashflow_transactions(
+            workspace_id=workspace_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        source_file_due_dates = self._source_file_statement_due_dates(transactions)
+        buckets: dict[date, dict[str, Decimal | date | int]] = {}
+        account_balances = self._account_balances_by_date(
+            workspace_id=workspace_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        for transaction in transactions:
+            cashflow_date = self._cashflow_date(
+                transaction,
+                source_file_due_dates.get(transaction.source_file_id),
+            )
+            if not _date_in_range(cashflow_date, date_from, date_to):
+                continue
+            bucket = buckets.setdefault(
+                cashflow_date,
+                {
+                    "date": cashflow_date,
+                    "income": ZERO,
+                    "expenses": ZERO,
+                    "payments": ZERO,
+                    "balance": ZERO,
+                    "opening_balance": ZERO,
+                    "closing_balance": ZERO,
+                    "transaction_count": 0,
+                },
+            )
+            bucket["transaction_count"] = int(bucket["transaction_count"]) + 1
+            if transaction.direction == "credit":
+                bucket["income"] = Decimal(bucket["income"]) + abs(transaction.amount)
+            elif transaction.direction == "debit":
+                bucket["expenses"] = Decimal(bucket["expenses"]) + abs(transaction.amount)
+            elif transaction.direction == "payment":
+                bucket["payments"] = Decimal(bucket["payments"]) + abs(transaction.amount)
+            bucket["balance"] = Decimal(bucket["income"]) - Decimal(bucket["expenses"])
+
+        if date_from is None and date_to is None:
+            days = sorted(buckets)
+        else:
+            start = date_from or (min(buckets) if buckets else date_to)
+            end = date_to or (max(buckets) if buckets else date_from)
+            if start is None or end is None or start > end:
+                days = []
+            else:
+                day_count = (end - start).days + 1
+                days = [start + timedelta(days=offset) for offset in range(day_count)]
+
+        running_balance = self._opening_account_balance(
+            workspace_id=workspace_id,
+            date_from=days[0] if days else date_from,
+        )
+        items: list[dict[str, object]] = []
+        for day in days:
+            bucket = buckets.get(
+                day,
+                {
+                    "date": day,
+                    "income": ZERO,
+                    "expenses": ZERO,
+                    "payments": ZERO,
+                    "balance": ZERO,
+                    "opening_balance": ZERO,
+                    "closing_balance": ZERO,
+                    "transaction_count": 0,
+                },
+            )
+            bucket["opening_balance"] = running_balance
+            running_balance = account_balances.get(
+                day,
+                running_balance + Decimal(bucket["balance"]),
+            )
+            bucket["closing_balance"] = running_balance
+            items.append(bucket)
+        return items
 
     def category_ranking(
         self,
@@ -180,6 +331,140 @@ class DashboardService:
             )
         return ranked[:limit]
 
+    def subcategory_ranking(
+        self,
+        workspace_id: str,
+        date_from: date | None,
+        date_to: date | None,
+        category_id: str | None,
+        limit: int,
+    ) -> list[dict[str, object]]:
+        filters = self._transaction_filters(
+            workspace_id=workspace_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        rows = self.db.execute(
+            select(Transaction, Category)
+            .outerjoin(
+                TransactionCategoryAssignment,
+                and_(
+                    TransactionCategoryAssignment.transaction_id == Transaction.id,
+                    TransactionCategoryAssignment.workspace_id == workspace_id,
+                ),
+            )
+            .outerjoin(
+                Category,
+                and_(
+                    Category.id == TransactionCategoryAssignment.category_id,
+                    Category.workspace_id == workspace_id,
+                ),
+            )
+            .where(*filters, Transaction.direction == "debit")
+        ).all()
+        categories_by_id = {
+            category.id: category
+            for category in self.db.scalars(
+                select(Category).where(Category.workspace_id == workspace_id)
+            ).all()
+        }
+        totals: dict[tuple[str | None, str], dict[str, object]] = defaultdict(
+            lambda: {
+                "category_id": None,
+                "subcategory_name": "Sem subcategoria",
+                "amount": ZERO,
+                "count": 0,
+            }
+        )
+        for transaction, category in rows:
+            parent_category = (
+                categories_by_id.get(category.parent_category_id)
+                if category is not None and category.parent_category_id is not None
+                else category
+            )
+            parent_id = parent_category.id if parent_category is not None else None
+            if category_id is not None and parent_id != category_id:
+                continue
+            if category is None:
+                key = (None, "Sem categoria / Sem subcategoria")
+            elif category.parent_category_id is None:
+                key = (category.id, "Sem subcategoria")
+            else:
+                key = (category.id, category.name)
+            totals[key]["category_id"] = key[0]
+            totals[key]["subcategory_name"] = key[1]
+            totals[key]["amount"] = Decimal(totals[key]["amount"]) + abs(transaction.amount)
+            totals[key]["count"] = int(totals[key]["count"]) + 1
+
+        ranked = sorted(
+            totals.values(),
+            key=lambda item: (Decimal(item["amount"]), int(item["count"])),
+            reverse=True,
+        )
+        total_amount = sum((Decimal(item["amount"]) for item in ranked), ZERO)
+        for item in ranked:
+            amount = Decimal(item["amount"])
+            count = int(item["count"])
+            item["share_ratio"] = (
+                (amount / total_amount).quantize(Decimal("0.0001"))
+                if total_amount > ZERO
+                else None
+            )
+            item["average_amount"] = (
+                (amount / Decimal(count)).quantize(Decimal("0.01")) if count else ZERO
+            )
+        return ranked[:limit]
+
+    def expense_size_profile(
+        self,
+        workspace_id: str,
+        date_from: date | None,
+        date_to: date | None,
+    ) -> list[dict[str, object]]:
+        transactions = self._transactions(
+            workspace_id=workspace_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        debits = [
+            abs(transaction.amount)
+            for transaction in transactions
+            if transaction.direction == "debit"
+        ]
+        total_expenses = sum(debits, ZERO)
+        segments = [
+            ("small", "Pequenas saídas", "Até R$ 100", ZERO, Decimal("100.00")),
+            ("medium", "Saídas médias", "De R$ 100,01 a R$ 1.000", Decimal("100.00"), Decimal("1000.00")),
+            ("large", "Grandes saídas", "Acima de R$ 1.000", Decimal("1000.00"), None),
+        ]
+        items: list[dict[str, object]] = []
+        for key, label, helper, minimum, maximum in segments:
+            amounts = [
+                amount
+                for amount in debits
+                if amount > minimum and (maximum is None or amount <= maximum)
+            ]
+            total = sum(amounts, ZERO)
+            count = len(amounts)
+            share_ratio = (
+                (total / total_expenses).quantize(Decimal("0.0001"))
+                if total_expenses > ZERO
+                else ZERO
+            )
+            average_amount = (total / Decimal(count)).quantize(Decimal("0.01")) if count else ZERO
+            items.append(
+                {
+                    "key": key,
+                    "label": label,
+                    "helper": helper,
+                    "total": total.quantize(Decimal("0.01")),
+                    "count": count,
+                    "share_ratio": share_ratio,
+                    "average_amount": average_amount,
+                }
+            )
+        return items
+
     def merchant_ranking(
         self,
         workspace_id: str,
@@ -187,12 +472,8 @@ class DashboardService:
         date_to: date | None,
         limit: int,
     ) -> list[dict[str, object]]:
-        rows = self.db.execute(
-            select(
-                Transaction.description,
-                func.sum(func.abs(Transaction.amount)),
-                func.count(),
-            )
+        transactions = self.db.scalars(
+            select(Transaction)
             .where(
                 *self._transaction_filters(
                     workspace_id=workspace_id,
@@ -201,21 +482,37 @@ class DashboardService:
                 ),
                 Transaction.direction == "debit",
             )
-            .group_by(Transaction.description)
-            .order_by(
-                desc(func.sum(func.abs(Transaction.amount))),
-                desc(func.count()),
-                Transaction.description,
-            )
-            .limit(limit)
         ).all()
+        grouped: dict[str, dict[str, object]] = {}
+        for transaction in transactions:
+            description = _merchant_ranking_description(transaction.description)
+            item = grouped.setdefault(
+                description,
+                {
+                    "description": description,
+                    "amount": ZERO,
+                    "count": 0,
+                },
+            )
+            item["amount"] = Decimal(item["amount"]) + abs(transaction.amount)
+            item["count"] = int(item["count"]) + 1
+
+        ranked = sorted(
+            grouped.values(),
+            key=lambda item: (
+                Decimal(item["amount"]),
+                int(item["count"]),
+                str(item["description"]),
+            ),
+            reverse=True,
+        )
         return [
             {
-                "description": description,
-                "amount": Decimal(str(amount or ZERO)).quantize(Decimal("0.01")),
-                "count": count,
+                "description": item["description"],
+                "amount": Decimal(item["amount"]).quantize(Decimal("0.01")),
+                "count": item["count"],
             }
-            for description, amount, count in rows
+            for item in ranked[:limit]
         ]
 
     def recurring_expenses(
@@ -225,6 +522,41 @@ class DashboardService:
         date_to: date | None,
         min_months: int,
         limit: int,
+    ) -> list[dict[str, object]]:
+        return self._recurring_transactions(
+            workspace_id=workspace_id,
+            date_from=date_from,
+            date_to=date_to,
+            min_months=min_months,
+            limit=limit,
+            direction="debit",
+        )
+
+    def recurring_incomes(
+        self,
+        workspace_id: str,
+        date_from: date | None,
+        date_to: date | None,
+        min_months: int,
+        limit: int,
+    ) -> list[dict[str, object]]:
+        return self._recurring_transactions(
+            workspace_id=workspace_id,
+            date_from=date_from,
+            date_to=date_to,
+            min_months=min_months,
+            limit=limit,
+            direction="credit",
+        )
+
+    def _recurring_transactions(
+        self,
+        workspace_id: str,
+        date_from: date | None,
+        date_to: date | None,
+        min_months: int,
+        limit: int,
+        direction: str,
     ) -> list[dict[str, object]]:
         rows = self.db.execute(
             select(Transaction, Category)
@@ -248,7 +580,7 @@ class DashboardService:
                     date_from=date_from,
                     date_to=date_to,
                 ),
-                Transaction.direction == "debit",
+                Transaction.direction == direction,
             )
             .order_by(Transaction.description, Transaction.transaction_date, Transaction.id)
         ).all()
@@ -769,6 +1101,103 @@ class DashboardService:
             .order_by(Transaction.transaction_date, Transaction.id)
         ).all()
 
+    def _cashflow_transactions(
+        self,
+        workspace_id: str,
+        date_from: date | None,
+        date_to: date | None,
+    ) -> list[Transaction]:
+        if date_from is None and date_to is None:
+            return self._transactions(
+                workspace_id=workspace_id,
+                date_from=None,
+                date_to=None,
+            )
+
+        installment_from = _add_months(date_from, -99) if date_from is not None else None
+        installment_clause = and_(
+            Transaction.source_type == "credit_card_statement",
+            Transaction.direction == "debit",
+            Transaction.installment_current.is_not(None),
+            Transaction.installment_total.is_not(None),
+        )
+        regular_filters = self._transaction_filters(
+            workspace_id=workspace_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        installment_filters = self._transaction_filters(
+            workspace_id=workspace_id,
+            date_from=installment_from,
+            date_to=date_to,
+        )
+        source_file_month_filters = _source_file_month_filters(date_from, date_to)
+        cashflow_clauses = [
+            and_(*regular_filters),
+            and_(installment_clause, *installment_filters),
+        ]
+        if source_file_month_filters:
+            cashflow_clauses.append(
+                and_(
+                    Transaction.source_type == "credit_card_statement",
+                    Transaction.direction == "debit",
+                    SourceFile.source_kind == "credit_card_csv",
+                    or_(*source_file_month_filters),
+                )
+            )
+        return self.db.scalars(
+            select(Transaction)
+            .join(SourceFile, SourceFile.id == Transaction.source_file_id)
+            .where(or_(*cashflow_clauses))
+            .order_by(Transaction.transaction_date, Transaction.id)
+        ).all()
+
+    def _source_file_statement_due_dates(self, transactions: list[Transaction]) -> dict[str, date]:
+        source_file_ids = {
+            transaction.source_file_id
+            for transaction in transactions
+            if transaction.source_type == "credit_card_statement"
+            and transaction.direction == "debit"
+        }
+        if not source_file_ids:
+            return {}
+
+        rows = self.db.execute(
+            select(SourceFile.id, SourceFile.original_filename, SourceFile.source_kind).where(
+                SourceFile.id.in_(source_file_ids)
+            )
+        ).all()
+        due_dates: dict[str, date] = {}
+        for source_file_id, original_filename, source_kind in rows:
+            if source_kind != "credit_card_csv":
+                continue
+            due_date = _statement_due_date_from_filename(original_filename)
+            if due_date is not None:
+                due_dates[str(source_file_id)] = due_date
+        return due_dates
+
+    def _cashflow_date(
+        self,
+        transaction: Transaction,
+        statement_due_date: date | None = None,
+    ) -> date:
+        if transaction.source_type == "credit_card_statement" and transaction.direction == "debit":
+            if statement_due_date is not None:
+                return statement_due_date
+            if not (transaction.installment_current and transaction.installment_total):
+                return transaction.transaction_date
+            first_invoice_month = get_first_invoice_month(
+                transaction.transaction_date,
+                settings.default_credit_card_closing_day,
+            )
+            invoice_month = _add_months(first_invoice_month, transaction.installment_current - 1)
+            return _day_in_month(
+                invoice_month.year,
+                invoice_month.month,
+                settings.default_credit_card_due_day,
+            )
+        return transaction.transaction_date
+
     def _transaction_filters(
         self,
         workspace_id: str,
@@ -818,6 +1247,101 @@ class DashboardService:
         burn_rate = (expenses / Decimal(months)).quantize(Decimal("0.01")) if months else ZERO
         return burn_rate, months
 
+    def _burn_rate_90_days(self, workspace_id: str, date_to: date | None) -> tuple[Decimal, int]:
+        anchor = date_to or self._latest_transaction_date(workspace_id)
+        if anchor is None:
+            return ZERO, 0
+        window_start = anchor - timedelta(days=89)
+        debits = self._transactions(
+            workspace_id=workspace_id,
+            date_from=window_start,
+            date_to=anchor,
+        )
+        debit_dates = [
+            transaction.transaction_date
+            for transaction in debits
+            if transaction.direction == "debit"
+        ]
+        if not debit_dates:
+            return ZERO, 0
+        first_debit_date = max(min(debit_dates), window_start)
+        window_days = max((anchor - first_debit_date).days + 1, 1)
+        expenses = self._sum(debits, "debit")
+        monthly_equivalent = (expenses / Decimal(window_days) * Decimal(30)).quantize(
+            Decimal("0.01")
+        )
+        return monthly_equivalent, window_days
+
+    def _safe_spend(
+        self,
+        workspace_id: str,
+        date_to: date | None,
+        current_balance: Decimal | None,
+        reserve_minimum: Decimal,
+    ) -> tuple[Decimal | None, Decimal | None]:
+        if current_balance is None:
+            return None, None
+        anchor = date_to or self._latest_transaction_date(workspace_id) or date.today()
+        horizon_start = anchor + timedelta(days=1)
+        horizon_end = anchor + timedelta(days=30)
+        transactions = self._cashflow_transactions(
+            workspace_id=workspace_id,
+            date_from=horizon_start,
+            date_to=horizon_end,
+        )
+        source_file_due_dates = self._source_file_statement_due_dates(transactions)
+        income = ZERO
+        outflow = ZERO
+        for transaction in transactions:
+            cashflow_date = self._cashflow_date(
+                transaction,
+                source_file_due_dates.get(transaction.source_file_id),
+            )
+            if not _date_in_range(cashflow_date, horizon_start, horizon_end):
+                continue
+            if transaction.direction == "credit":
+                income += abs(transaction.amount)
+            elif transaction.direction in {"debit", "payment"}:
+                outflow += abs(transaction.amount)
+        safe_spend = (current_balance + income - outflow - reserve_minimum).quantize(
+            Decimal("0.01")
+        )
+        return safe_spend, reserve_minimum.quantize(Decimal("0.01"))
+
+    def _financial_health_score(
+        self,
+        commitment_rate: Decimal | None,
+        current_balance: Decimal | None,
+        income: Decimal,
+        savings_rate: Decimal | None,
+        safe_spend: Decimal | None,
+        burn_rate: Decimal,
+    ) -> int | None:
+        if current_balance is None or burn_rate <= ZERO:
+            return None
+
+        score = Decimal("0")
+        runway_months = current_balance / burn_rate if burn_rate > ZERO else ZERO
+
+        score += min(max(runway_months / Decimal("6"), ZERO), Decimal("1")) * Decimal("30")
+
+        if savings_rate is not None:
+            score += min(max(savings_rate / Decimal("0.20"), ZERO), Decimal("1")) * Decimal("20")
+
+        if commitment_rate is not None:
+            commitment_component = Decimal("1") - min(
+                max((commitment_rate - Decimal("0.50")) / Decimal("0.50"), ZERO),
+                Decimal("1"),
+            )
+            score += commitment_component * Decimal("20")
+
+        if safe_spend is not None:
+            safe_spend_component = Decimal("1") if safe_spend >= ZERO else Decimal("0")
+            score += safe_spend_component * Decimal("20")
+
+        score += (Decimal("1") if income > ZERO else Decimal("0")) * Decimal("10")
+        return int(min(max(score, ZERO), Decimal("100")).quantize(Decimal("1")))
+
     def _latest_transaction_date(self, workspace_id: str) -> date | None:
         return self.db.scalar(
             select(func.max(Transaction.transaction_date)).where(
@@ -825,6 +1349,112 @@ class DashboardService:
                 Transaction.natural_dedupe_key.is_not(None),
             )
         )
+
+    def _current_account_balance(
+        self,
+        workspace_id: str,
+        date_to: date | None,
+    ) -> AccountBalance | None:
+        filters = [AccountBalance.workspace_id == workspace_id]
+        if date_to is not None:
+            filters.append(AccountBalance.balance_date <= date_to)
+        return self.db.scalars(
+            select(AccountBalance)
+            .where(*filters)
+            .order_by(
+                desc(AccountBalance.balance_date),
+                desc(AccountBalance.created_at),
+                AccountBalance.id,
+            )
+            .limit(1)
+        ).first()
+
+    def _opening_account_balance(
+        self,
+        workspace_id: str,
+        date_from: date | None,
+    ) -> Decimal:
+        if date_from is None:
+            return ZERO
+        balance = self._current_account_balance(
+            workspace_id=workspace_id,
+            date_to=date_from - timedelta(days=1),
+        )
+        return balance.balance_amount if balance is not None else ZERO
+
+    def _account_balances_by_date(
+        self,
+        workspace_id: str,
+        date_from: date | None,
+        date_to: date | None,
+    ) -> dict[date, Decimal]:
+        filters = [AccountBalance.workspace_id == workspace_id]
+        if date_from is not None:
+            filters.append(AccountBalance.balance_date >= date_from)
+        if date_to is not None:
+            filters.append(AccountBalance.balance_date <= date_to)
+        rows = self.db.scalars(
+            select(AccountBalance)
+            .where(*filters)
+            .order_by(
+                AccountBalance.balance_date,
+                desc(AccountBalance.created_at),
+                AccountBalance.id,
+            )
+        ).all()
+        balances: dict[date, Decimal] = {}
+        for row in rows:
+            balances[row.balance_date] = row.balance_amount
+        return balances
+
+    def _account_balances_by_month(
+        self,
+        workspace_id: str,
+        date_from: date | None,
+        date_to: date | None,
+    ) -> dict[str, Decimal]:
+        by_date = self._account_balances_by_date(
+            workspace_id=workspace_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        balances: dict[str, Decimal] = {}
+        for balance_date in sorted(by_date):
+            balances[balance_date.strftime("%Y-%m")] = by_date[balance_date]
+        return balances
+
+
+def _statement_due_date_from_filename(filename: str) -> date | None:
+    match = re.search(r"(?<!\d)(20\d{2})(0[1-9]|1[0-2])([0-2]\d|3[01])(?!\d)", filename)
+    if match is None:
+        return None
+    year, month, day = (int(part) for part in match.groups())
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+
+
+def _merchant_ranking_description(description: str) -> str:
+    tokens = description.split()
+    prefix = ("MERCADO", "LIVRE")
+    if tuple(tokens[: len(prefix)]) == prefix:
+        return " ".join(prefix)
+    return description
+
+
+def _source_file_month_filters(date_from: date | None, date_to: date | None) -> list[object]:
+    if date_from is None or date_to is None or date_from > date_to:
+        return []
+    month_count = _inclusive_months(date(date_from.year, date_from.month, 1), date_to)
+    if month_count > 24:
+        return []
+    return [
+        SourceFile.original_filename.ilike(f"%{_add_months(date_from, offset):%Y%m}%")
+        for offset in range(month_count)
+    ]
 
 
 def _inclusive_months(date_from: date, date_to: date) -> int:
@@ -838,6 +1468,18 @@ def _add_months(value: date, months: int) -> date:
     year = month_index // 12
     month = month_index % 12 + 1
     return date(year, month, 1)
+
+
+def _day_in_month(year: int, month: int, day: int) -> date:
+    return date(year, month, min(day, monthrange(year, month)[1]))
+
+
+def _date_in_range(value: date, date_from: date | None, date_to: date | None) -> bool:
+    if date_from is not None and value < date_from:
+        return False
+    if date_to is not None and value > date_to:
+        return False
+    return True
 
 
 def get_first_invoice_month(purchase_date: date, closing_day: int) -> date:

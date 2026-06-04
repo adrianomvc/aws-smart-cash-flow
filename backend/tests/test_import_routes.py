@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from datetime import date
 from uuid import uuid4
 
 import pytest
@@ -8,8 +9,19 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.auth import AuthContext, get_auth_context
-from app.db.models import Base, ImportError, ImportJob, RawTransactionLine, SourceFile, Transaction
+from app.db.models import (
+    AccountBalance,
+    Base,
+    CreditCard,
+    CreditCardStatement,
+    ImportError,
+    ImportJob,
+    RawTransactionLine,
+    SourceFile,
+    Transaction,
+)
 from app.db.session import get_db
+from app.domain.imports import ParsedAccountBalance, ParseResult, SourceKind
 from app.main import create_app
 from app.services.import_service import ImportService
 
@@ -114,6 +126,101 @@ def test_create_import_accepts_manual_source_kind(
     assert list_response.json()["items"][0]["source_file"]["source_kind"] == "credit_card_csv"
 
 
+def test_create_import_accepts_excel_bank_statement(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_parse_excel_bank_statement(_content: bytes) -> ParseResult:
+        return ParseResult(
+            source_kind=SourceKind.BANK_STATEMENT_EXCEL,
+            total_rows=1,
+            account_balances=[
+                ParsedAccountBalance(
+                    balance_date=date(2026, 1, 2),
+                    account_name="Itau 00740-7",
+                    balance_amount="37077.88",
+                    source_line=21,
+                    raw_payload={"0": "02/01/2026", "4": 37077.88},
+                )
+            ],
+        )
+
+    monkeypatch.setattr(
+        "app.services.import_service.parse_excel_bank_statement",
+        fake_parse_excel_bank_statement,
+    )
+
+    response = client.post(
+        "/v1/imports",
+        data={"source_kind": "bank_statement_excel"},
+        files={
+            "file": (
+                "Extrato Conta Corrente.xls",
+                b"fake-xls",
+                "application/vnd.ms-excel",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["valid_rows"] == 1
+    assert db_session.scalar(select(func.count()).select_from(AccountBalance)) == 1
+
+    list_response = client.get("/v1/imports", params={"source_kind": "bank_statement_excel"})
+    assert list_response.status_code == 200
+    assert list_response.json()["items"][0]["source_file"]["source_kind"] == "bank_statement_excel"
+
+
+def test_create_import_links_credit_card_statement(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    card = CreditCard(
+        id=str(uuid4()),
+        workspace_id=auth.workspace_id,
+        name="Nubank",
+        issuer="Nubank",
+        brand="Mastercard",
+        last_four="1234",
+        closing_day=23,
+        due_day=30,
+    )
+    statement = CreditCardStatement(
+        id=str(uuid4()),
+        workspace_id=auth.workspace_id,
+        credit_card_id=card.id,
+        statement_month=date(2026, 4, 1),
+        due_date=date(2026, 4, 30),
+        status="closed",
+    )
+    db_session.add_all([card, statement])
+    db_session.commit()
+
+    response = client.post(
+        "/v1/imports",
+        data={
+            "credit_card_statement_id": statement.id,
+            "source_kind": "credit_card_csv",
+        },
+        files={
+            "file": (
+                "fatura-20260430.csv",
+                b"data,lan\xc3\xa7amento,valor\n2026-04-07,STUDIO Z 01/02,140.00\n",
+                "text/csv",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    db_session.refresh(statement)
+    assert statement.source_file_id == payload["source_file_id"]
+
+
 def test_preview_import_parses_without_persisting(
     client: TestClient,
 ) -> None:
@@ -185,6 +292,19 @@ def test_list_imports_filters_by_status_filename_and_paginates(
     assert payload["offset"] == 0
     assert [item["id"] for item in payload["items"]] == [duplicate.import_job_id]
     assert payload["items"][0]["source_file"]["original_filename"] == "extrato-janeiro.txt"
+
+    source_kind_response = client.get(
+        "/v1/imports",
+        params={"source_kind": "credit_card_csv"},
+    )
+
+    assert source_kind_response.status_code == 200
+    source_kind_payload = source_kind_response.json()
+    assert source_kind_payload["total"] == 1
+    assert (
+        source_kind_payload["items"][0]["source_file"]["original_filename"]
+        == "fatura-fevereiro.csv"
+    )
 
 
 def test_list_imports_filters_jobs_with_errors(

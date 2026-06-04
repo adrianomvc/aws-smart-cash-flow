@@ -9,8 +9,55 @@ from app.services.parsers import (
     normalize_transaction_description_for_dedupe,
     parse_brazilian_decimal,
     parse_credit_card_csv,
+    parse_excel_bank_statement,
     parse_txt_bank_statement,
 )
+
+
+class FakeExcelSheet:
+    name = "Lançamentos"
+
+    def __init__(self) -> None:
+        self.rows = [
+            ["Logotipo Itaú", "", "", "", ""],
+            ["Atualização:", "01/06/2026 às 08:36:25", "", "", ""],
+            ["Nome:", "ADRIANO", "", "", ""],
+            ["Agência:", 7348.0, "", "", ""],
+            ["Conta:", "00740-7", "", "", ""],
+            ["", "", "", "", ""],
+            ["Lançamentos", "", "", "", ""],
+            ["", "", "", "", ""],
+            ["data", "lançamento", "ag./origem", "valor (R$)", "saldos (R$)"],
+            ["lançamentos", "", "", "", ""],
+            ["31/12/2025", "SALDO ANTERIOR", "", "", 40354.41],
+            ["02/01/2026", "PIX TRANSF  ANTHONY01/01", "", 70.0, ""],
+            ["02/01/2026", "ITAU BLACK  3102-2224", "", -872.19, ""],
+            ["02/01/2026", "SALDO TOTAL DISPONÍVEL DIA", "", "", 37077.88],
+            ["Lançamentos futuros", "", "", "", ""],
+            ["05/01/2026", "TED AGENDADA", "", -120.0, ""],
+            ["06/01/2026", "SALARIO FUTURO", "", 1000.0, ""],
+        ]
+        self.nrows = len(self.rows)
+        self.ncols = 5
+
+    def cell_value(self, row: int, column: int) -> object:
+        return self.rows[row][column]
+
+
+class FakeExcelBook:
+    datemode = 0
+
+    def __init__(self) -> None:
+        self.sheet = FakeExcelSheet()
+
+    def sheet_names(self) -> list[str]:
+        return ["Lançamentos"]
+
+    def sheet_by_name(self, _name: str) -> FakeExcelSheet:
+        return self.sheet
+
+    def sheet_by_index(self, _index: int) -> FakeExcelSheet:
+        return self.sheet
 
 
 def test_parse_txt_bank_statement_valid_line() -> None:
@@ -29,6 +76,24 @@ def test_parse_txt_bank_statement_credit_card_payment_is_payment() -> None:
     assert result.errors == []
     assert result.transactions[0].amount == Decimal("-800.00")
     assert result.transactions[0].direction == TransactionDirection.PAYMENT
+
+
+def test_parse_txt_bank_statement_moves_balance_markers_to_account_balances() -> None:
+    result = parse_txt_bank_statement(
+        "31/01/2014;SALDO FINAL;3.885,22\n"
+        "23/09/2013;SALDO PARCIAL;5.281,40\n"
+        "05/09/2011;TRANSFERENCIA SALDO;-751,41"
+    )
+
+    assert result.errors == []
+    assert [transaction.description for transaction in result.transactions] == [
+        "TRANSFERENCIA SALDO"
+    ]
+    assert len(result.account_balances) == 2
+    assert result.account_balances[0].balance_date.isoformat() == "2014-01-31"
+    assert result.account_balances[0].balance_amount == Decimal("3885.22")
+    assert result.account_balances[1].balance_date.isoformat() == "2013-09-23"
+    assert result.account_balances[1].balance_amount == Decimal("5281.40")
 
 
 def test_parse_txt_bank_statement_does_not_extract_pix_date_as_installment() -> None:
@@ -76,6 +141,37 @@ def test_parse_txt_bank_statement_preserves_accented_description() -> None:
     assert result.transactions[0].raw_description == "TRANSFERÊNCIA  JOÃO AÇÃO"
     assert result.transactions[0].description == "TRANSFERENCIA JOAO ACAO"
     assert result.transactions[0].amount == Decimal("-1234.56")
+
+
+def test_parse_excel_bank_statement_extracts_transactions_and_daily_balances(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import xlrd
+
+    monkeypatch.setattr(xlrd, "open_workbook", lambda **_kwargs: FakeExcelBook())
+
+    result = parse_excel_bank_statement(b"fake-xls")
+
+    assert result.source_kind == "bank_statement_excel"
+    assert result.total_rows == 6
+    assert len(result.transactions) == 2
+    assert result.transactions[0].description == "PIX TRANSF ANTHONY"
+    assert result.transactions[0].amount == Decimal("70.0")
+    assert result.transactions[0].direction == TransactionDirection.CREDIT
+    assert result.transactions[1].description == "ITAU BLACK 3102-2224"
+    assert result.transactions[1].direction == TransactionDirection.DEBIT
+    assert len(result.account_balances) == 2
+    assert result.account_balances[-1].account_name == "Itau 00740-7"
+    assert result.account_balances[-1].balance_date.isoformat() == "2026-01-02"
+    assert result.account_balances[-1].balance_amount == Decimal("37077.88")
+    assert len(result.calendar_events) == 2
+    assert result.calendar_events[0].title == "TED AGENDADA"
+    assert result.calendar_events[0].event_type == "expense"
+    assert result.calendar_events[0].amount == Decimal("120.0")
+    assert result.calendar_events[0].due_date.isoformat() == "2026-01-05"
+    assert result.calendar_events[1].title == "SALARIO FUTURO"
+    assert result.calendar_events[1].event_type == "income"
+    assert result.calendar_events[1].amount == Decimal("1000.0")
 
 
 def test_parse_brazilian_decimal_rejects_non_finite_values() -> None:

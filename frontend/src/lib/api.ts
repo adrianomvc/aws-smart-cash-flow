@@ -172,7 +172,18 @@ export type DashboardSummary = {
   burn_rate: string;
   burn_rate_months: number;
   burn_rate_basis: string;
+  burn_rate_90_days: string;
+  burn_rate_90_days_window: number;
+  burn_rate_90_days_basis: string;
+  safe_spend: string | null;
+  safe_spend_reserve_minimum: string | null;
+  safe_spend_basis: string;
+  financial_health_score: number | null;
+  financial_health_basis: string;
   transaction_count: number;
+  current_balance: string | null;
+  current_balance_date: string | null;
+  current_balance_account: string | null;
 };
 
 export type MonthlyCashflowItem = {
@@ -181,6 +192,19 @@ export type MonthlyCashflowItem = {
   expenses: string;
   payments: string;
   balance: string;
+  opening_balance: string;
+  closing_balance: string;
+  transaction_count: number;
+};
+
+export type DailyCashflowItem = {
+  date: string;
+  income: string;
+  expenses: string;
+  payments: string;
+  balance: string;
+  opening_balance: string;
+  closing_balance: string;
   transaction_count: number;
 };
 
@@ -199,6 +223,25 @@ export type CategoryRankingItem = {
   amount: string;
   count: number;
   share_ratio: string | null;
+  average_amount: string;
+};
+
+export type SubcategoryRankingItem = {
+  category_id: string | null;
+  subcategory_name: string;
+  amount: string;
+  count: number;
+  share_ratio: string | null;
+  average_amount: string;
+};
+
+export type ExpenseSizeProfileItem = {
+  key: string;
+  label: string;
+  helper: string;
+  total: string;
+  count: number;
+  share_ratio: string;
   average_amount: string;
 };
 
@@ -266,6 +309,34 @@ export type CreditCardInstallmentsResponse = {
   items: CreditCardInstallmentItem[];
 };
 
+export type CreditCardRead = {
+  id: string;
+  workspace_id: string;
+  name: string;
+  issuer: string | null;
+  brand: string | null;
+  last_four: string | null;
+  closing_day: number;
+  due_day: number;
+  limit_amount: string | null;
+  active: boolean;
+  created_at: string;
+};
+
+export type CreditCardStatementRead = {
+  id: string;
+  workspace_id: string;
+  credit_card_id: string;
+  source_file_id: string | null;
+  statement_month: string;
+  closing_date: string | null;
+  due_date: string;
+  total_amount: string | null;
+  status: string;
+  notes: string | null;
+  created_at: string;
+};
+
 export type DataQuality = {
   workspace_id: string;
   transaction_count: number;
@@ -313,6 +384,150 @@ export type DuplicateTransactionListResponse = {
   total_transactions: number;
   limit: number;
   offset: number;
+};
+
+export type CalendarEventRead = {
+  id: string;
+  workspace_id: string;
+  title: string;
+  event_type: string;
+  amount: string | null;
+  due_date: string;
+  recurrence: string;
+  status: string;
+  notes: string | null;
+  created_at: string;
+};
+
+export type BudgetRead = {
+  id: string;
+  workspace_id: string;
+  name: string;
+  category_id: string | null;
+  period_start: string;
+  period_end: string;
+  limit_amount: string;
+  alert_threshold: string;
+  active: boolean;
+  created_at: string;
+};
+
+export type GoalRead = {
+  id: string;
+  workspace_id: string;
+  name: string;
+  description: string | null;
+  target_amount: string;
+  current_amount: string;
+  target_date: string | null;
+  status: string;
+  priority: number;
+  created_at: string;
+};
+
+export type ProjectionHorizonRead = {
+  days: number;
+  date_to: string;
+  projected_income: string;
+  projected_expenses: string;
+  projected_balance: string;
+  event_count: number;
+  risk_level: string;
+  risk_reason: string;
+};
+
+export type ProjectionEventRead = {
+  title: string;
+  event_type: string;
+  amount: string;
+  due_date: string;
+  recurrence: string;
+};
+
+export type ProjectionGoalRead = {
+  name: string;
+  target_amount: string;
+  current_amount: string;
+  remaining_amount: string;
+  target_date: string | null;
+};
+
+export type PlanningProjection = {
+  workspace_id: string;
+  date_from: string;
+  horizons: ProjectionHorizonRead[];
+  upcoming_events: ProjectionEventRead[];
+  goals_due: ProjectionGoalRead[];
+  assumptions: string[];
+};
+
+export type ReportCardRead = {
+  id: string;
+  title: string;
+  description: string;
+  status: string;
+  primary_metric: string;
+  secondary_metric: string;
+  target_page: string;
+};
+
+export type ReportListResponse = {
+  workspace_id: string;
+  date_from: string | null;
+  date_to: string | null;
+  export_status: string;
+  items: ReportCardRead[];
+};
+
+export type CalendarEventPayload = {
+  title: string;
+  event_type: string;
+  amount: string | null;
+  due_date: string;
+  recurrence: string;
+  status?: string;
+  notes?: string | null;
+};
+
+export type BudgetPayload = {
+  name: string;
+  category_id: string | null;
+  period_start: string;
+  period_end: string;
+  limit_amount: string;
+  alert_threshold?: string;
+  active?: boolean;
+};
+
+export type CreditCardPayload = {
+  name: string;
+  issuer?: string | null;
+  brand?: string | null;
+  last_four?: string | null;
+  closing_day?: number | null;
+  due_day?: number | null;
+  limit_amount?: string | null;
+};
+
+export type CreditCardStatementPayload = {
+  credit_card_id: string;
+  statement_month: string;
+  closing_date?: string | null;
+  due_date: string;
+  total_amount?: string | null;
+  status?: string;
+  source_file_id?: string | null;
+  notes?: string | null;
+};
+
+export type GoalPayload = {
+  name: string;
+  description?: string | null;
+  target_amount: string;
+  current_amount: string;
+  target_date?: string | null;
+  status?: string;
+  priority?: number;
 };
 
 export type ListResponse<T> = {
@@ -379,6 +594,10 @@ export function getMonthlyCashflow(session: ApiSession, query: string) {
   return apiRequest<ListResponse<MonthlyCashflowItem>>(`/dashboard/monthly-cashflow${query}`, session);
 }
 
+export function getDailyCashflow(session: ApiSession, query: string) {
+  return apiRequest<ListResponse<DailyCashflowItem>>(`/dashboard/daily-cashflow${query}`, session);
+}
+
 export function getWeekdaySpending(session: ApiSession, query: string) {
   return apiRequest<ListResponse<WeekdaySpendingItem>>(`/dashboard/weekday-spending${query}`, session);
 }
@@ -387,12 +606,24 @@ export function getCategoryRanking(session: ApiSession, query: string) {
   return apiRequest<ListResponse<CategoryRankingItem>>(`/dashboard/category-ranking${query}`, session);
 }
 
+export function getSubcategoryRanking(session: ApiSession, query: string) {
+  return apiRequest<ListResponse<SubcategoryRankingItem>>(`/dashboard/subcategory-ranking${query}`, session);
+}
+
+export function getExpenseSizeProfile(session: ApiSession, query: string) {
+  return apiRequest<ListResponse<ExpenseSizeProfileItem>>(`/dashboard/expense-size-profile${query}`, session);
+}
+
 export function getMerchantRanking(session: ApiSession, query: string) {
   return apiRequest<ListResponse<MerchantRankingItem>>(`/dashboard/merchant-ranking${query}`, session);
 }
 
 export function getRecurringExpenses(session: ApiSession, query: string) {
   return apiRequest<ListResponse<RecurringExpenseItem>>(`/dashboard/recurring-expenses${query}`, session);
+}
+
+export function getRecurringIncomes(session: ApiSession, query: string) {
+  return apiRequest<ListResponse<RecurringExpenseItem>>(`/dashboard/recurring-incomes${query}`, session);
 }
 
 export function getCategoryGrowthAlerts(session: ApiSession, query: string) {
@@ -407,8 +638,91 @@ export function getCreditCardInstallments(session: ApiSession, query: string) {
   return apiRequest<CreditCardInstallmentsResponse>(`/dashboard/credit-card-installments${query}`, session);
 }
 
+export function getCreditCards(session: ApiSession) {
+  return apiRequest<ListResponse<CreditCardRead>>("/credit-cards", session);
+}
+
+export function createCreditCard(session: ApiSession, payload: CreditCardPayload) {
+  return apiRequest<CreditCardRead>("/credit-cards", session, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function updateCreditCard(session: ApiSession, cardId: string, payload: Partial<CreditCardPayload> & { active?: boolean }) {
+  return apiRequest<CreditCardRead>(`/credit-cards/${cardId}`, session, {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
+export function getCreditCardStatements(session: ApiSession, query: string) {
+  return apiRequest<ListResponse<CreditCardStatementRead>>(`/credit-card-statements${query}`, session);
+}
+
+export function createCreditCardStatement(session: ApiSession, payload: CreditCardStatementPayload) {
+  return apiRequest<CreditCardStatementRead>("/credit-card-statements", session, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function updateCreditCardStatementSourceFile(session: ApiSession, statementId: string, sourceFileId: string | null) {
+  return apiRequest<CreditCardStatementRead>(`/credit-card-statements/${statementId}/source-file`, session, {
+    method: "PATCH",
+    body: { source_file_id: sourceFileId },
+  });
+}
+
+export function associateCreditCardSourceFile(session: ApiSession, cardId: string, sourceFileId: string) {
+  return apiRequest<CreditCardStatementRead>(`/credit-cards/${cardId}/statement-source-files/${sourceFileId}`, session, {
+    method: "POST",
+  });
+}
+
 export function getDataQuality(session: ApiSession, query: string) {
   return apiRequest<DataQuality>(`/dashboard/data-quality${query}`, session);
+}
+
+export function getCalendarEvents(session: ApiSession, query: string) {
+  return apiRequest<ListResponse<CalendarEventRead>>(`/calendar/events${query}`, session);
+}
+
+export function createCalendarEvent(session: ApiSession, payload: CalendarEventPayload) {
+  return apiRequest<CalendarEventRead>("/calendar/events", session, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function getBudgets(session: ApiSession, query: string) {
+  return apiRequest<ListResponse<BudgetRead>>(`/budgets${query}`, session);
+}
+
+export function createBudget(session: ApiSession, payload: BudgetPayload) {
+  return apiRequest<BudgetRead>("/budgets", session, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function getGoals(session: ApiSession) {
+  return apiRequest<ListResponse<GoalRead>>("/goals", session);
+}
+
+export function getPlanningProjection(session: ApiSession, query = "?horizons=30,60,90") {
+  return apiRequest<PlanningProjection>(`/planning/projection${query}`, session);
+}
+
+export function getReports(session: ApiSession, query: string) {
+  return apiRequest<ReportListResponse>(`/reports${query}`, session);
+}
+
+export function createGoal(session: ApiSession, payload: GoalPayload) {
+  return apiRequest<GoalRead>("/goals", session, {
+    method: "POST",
+    body: payload,
+  });
 }
 
 export function getImports(session: ApiSession, query = "?limit=20") {
@@ -430,10 +744,11 @@ export function previewImport(session: ApiSession, file: File, sourceKind = "aut
   return apiRequest<ImportPreviewResult>("/imports/preview", session, { method: "POST", body: data });
 }
 
-export function uploadImport(session: ApiSession, file: File, sourceKind = "auto") {
+export function uploadImport(session: ApiSession, file: File, sourceKind = "auto", creditCardStatementId?: string) {
   const data = new FormData();
   data.append("file", file);
   data.append("source_kind", sourceKind);
+  if (creditCardStatementId) data.append("credit_card_statement_id", creditCardStatementId);
   return apiRequest<{
     import_job_id: string;
     source_file_id: string;

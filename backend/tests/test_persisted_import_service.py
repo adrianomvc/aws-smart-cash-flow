@@ -10,8 +10,23 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.auth import AuthContext
-from app.db.models import Base, ImportError, ImportJob, RawTransactionLine, SourceFile, Transaction
-from app.domain.imports import ImportStatus, ParsedTransaction, TransactionDirection
+from app.db.models import (
+    Base,
+    FinancialCalendarEvent,
+    ImportError,
+    ImportJob,
+    RawTransactionLine,
+    SourceFile,
+    Transaction,
+)
+from app.domain.imports import (
+    ImportStatus,
+    ParsedCalendarEvent,
+    ParsedTransaction,
+    ParseResult,
+    SourceKind,
+    TransactionDirection,
+)
 from app.services.import_service import ImportService
 from app.services.storage_service import StoredFile
 
@@ -398,6 +413,58 @@ def test_import_persists_credit_card_installment_metadata(db_session: Session) -
     assert transaction.installment_total == 10
 
 
+def test_import_persists_excel_future_rows_as_calendar_events(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    auth = AuthContext(user_id=str(uuid4()), workspace_id=str(uuid4()))
+
+    def fake_parse_excel_bank_statement(_content: bytes) -> ParseResult:
+        return ParseResult(
+            source_kind=SourceKind.BANK_STATEMENT_EXCEL,
+            total_rows=1,
+            calendar_events=[
+                ParsedCalendarEvent(
+                    title="TED AGENDADA",
+                    event_type="expense",
+                    amount=Decimal("120.00"),
+                    due_date=date(2026, 1, 5),
+                    source_line=12,
+                    raw_payload={"descricao": "TED AGENDADA"},
+                )
+            ],
+        )
+
+    monkeypatch.setattr(
+        "app.services.import_service.parse_excel_bank_statement",
+        fake_parse_excel_bank_statement,
+    )
+
+    result = ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="extrato.xls",
+        mime_type="application/vnd.ms-excel",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato.xls",
+        content=b"fake-xls",
+        source_kind=SourceKind.BANK_STATEMENT_EXCEL.value,
+    )
+
+    event = db_session.scalars(select(FinancialCalendarEvent)).one()
+
+    assert result.status == ImportStatus.COMPLETED
+    assert result.valid_rows == 1
+    assert result.duplicate_rows == 0
+    assert db_session.scalar(select(func.count()).select_from(Transaction)) == 0
+    assert event.workspace_id == auth.workspace_id
+    assert event.title == "TED AGENDADA"
+    assert event.event_type == "expense"
+    assert event.amount == Decimal("120.00")
+    assert event.due_date == date(2026, 1, 5)
+    assert event.status == "planned"
+    assert event.recurrence == "none"
+
+
 def test_import_keeps_different_installments_as_distinct_transactions(
     db_session: Session,
 ) -> None:
@@ -428,6 +495,71 @@ def test_import_keeps_different_installments_as_distinct_transactions(
         (4, 10),
     ]
     assert len({item.natural_dedupe_key for item in transactions}) == 3
+
+
+def test_import_keeps_repeated_credit_card_rows_from_same_statement(
+    db_session: Session,
+) -> None:
+    auth = AuthContext(user_id=str(uuid4()), workspace_id=str(uuid4()))
+    content = (
+        b"data,lan\xc3\xa7amento,valor\n"
+        b"2026-05-05,METRO -CT,5.40\n"
+        b"2026-05-05,METRO -CT,5.40\n"
+    )
+
+    result = ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="fatura-maio.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/fatura-maio.csv",
+        content=content,
+    )
+
+    transactions = db_session.scalars(
+        select(Transaction).order_by(Transaction.source_line)
+    ).all()
+
+    assert result.status == ImportStatus.COMPLETED
+    assert result.valid_rows == 2
+    assert result.duplicate_rows == 0
+    assert [item.amount for item in transactions] == [Decimal("5.40"), Decimal("5.40")]
+    assert [item.source_line for item in transactions] == [2, 3]
+    assert len({item.natural_dedupe_key for item in transactions}) == 2
+
+
+def test_import_blocks_same_credit_card_file_even_with_repeated_rows(
+    db_session: Session,
+) -> None:
+    auth = AuthContext(user_id=str(uuid4()), workspace_id=str(uuid4()))
+    service = ImportService(db_session)
+    content = (
+        b"data,lan\xc3\xa7amento,valor\n"
+        b"2026-05-05,METRO -CT,5.40\n"
+        b"2026-05-05,METRO -CT,5.40\n"
+    )
+
+    first = service.import_bytes(
+        auth=auth,
+        filename="fatura-maio.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/first/fatura-maio.csv",
+        content=content,
+    )
+    duplicate = service.import_bytes(
+        auth=auth,
+        filename="fatura-maio.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/second/fatura-maio.csv",
+        content=content,
+    )
+
+    assert first.status == ImportStatus.COMPLETED
+    assert duplicate.status == ImportStatus.DUPLICATE_FILE
+    assert db_session.scalar(select(func.count()).select_from(SourceFile)) == 1
+    assert db_session.scalar(select(func.count()).select_from(Transaction)) == 2
 
 
 class FakeStorage:

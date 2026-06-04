@@ -1,0 +1,38 @@
+{
+  "workspace_id": "00000000-0000-0000-0000-000000000002",
+  "date_from": "2026-06-01",
+  "horizons": [
+    {
+      "days": 30,
+      "date_to": "2026-07-01",
+      "projected_income": "5000.00",
+      "projected_expenses": "3200.00",
+      "projected_balance": "1800.00",
+      "event_count": 4,
+      "risk_level": "healthy",
+      "risk_reason": "Folga projetada positiva no horizonte."
+    }
+  ],
+  "upcoming_events": [
+    {
+      "title": "Salario",
+      "event_type": "income",
+      "amount": "5000.00",
+      "due_date": "2026-06-05",
+      "recurrence": "monthly"
+    }
+  ],
+  "goals_due": [
+    {
+      "name": "Reserva de emergencia",
+      "target_amount": "24000.00",
+      "current_amount": "16500.00",
+      "remaining_amount": "7500.00",
+      "target_date": "2026-12-31"
+    }
+  ],
+  "assumptions": [
+    "A projecao usa eventos financeiros planejados no calendario.",
+    "IA e simulador completo ficam fora deste primeiro recorte."
+  ]
+}

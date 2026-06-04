@@ -1,0 +1,27 @@
+{
+  "workspace_id": "workspace-demo",
+  "items": [
+    {
+      "id": "transaction-demo",
+      "source_file_id": "source-file-demo",
+      "import_job_id": "import-job-demo",
+      "source_type": "bank_statement",
+      "source_name": "Conta principal",
+      "account_or_card": "Conta corrente",
+      "transaction_date": "2026-05-10",
+      "description": "MERCHANT SAMPLE",
+      "raw_description": "MERCHANT SAMPLE 123",
+      "amount": "120.50",
+      "currency": "BRL",
+      "direction": "debit",
+      "installment_current": null,
+      "installment_total": null,
+      "source_line": 12,
+      "natural_dedupe_key": "demo-natural-key",
+      "category": null
+    }
+  ],
+  "total": 1,
+  "limit": 20,
+  "offset": 0
+}

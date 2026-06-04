@@ -1,0 +1,20 @@
+{
+  "filename": "sample-statement.csv",
+  "source_kind": "credit_card_csv",
+  "duplicate_file": false,
+  "total_rows": 2,
+  "valid_rows": 2,
+  "error_rows": 0,
+  "duplicate_rows": 0,
+  "items": [
+    {
+      "source_line": 2,
+      "transaction_date": "2026-05-10",
+      "description": "MERCHANT SAMPLE",
+      "amount": "120.50",
+      "direction": "debit",
+      "duplicate": false
+    }
+  ],
+  "errors": []
+}

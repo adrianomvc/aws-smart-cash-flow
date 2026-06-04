@@ -57,14 +57,13 @@ async def signup(
         supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
 
         # Create user in Supabase Auth
-        auth_response = supabase.auth.sign_up({
+        auth_response = supabase.auth.admin.create_user({
             "email": payload.email,
             "password": payload.password,
-            "options": {
-                "data": {
-                    "display_name": payload.display_name or payload.email.split("@")[0]
-                }
-            }
+            "email_confirm": True,
+            "user_metadata": {
+                "display_name": payload.display_name or payload.email.split("@")[0],
+            },
         })
 
         if auth_response.user is None:
@@ -76,8 +75,6 @@ async def signup(
         # Create user in our database
         user_id = str(auth_response.user.id)
         from app.db.models import User
-        from app.services.workspace_service import WorkspaceService
-
         existing_user = db.scalar(select(User).where(User.supabase_user_id == user_id))
         if existing_user:
             # User already exists in our database
@@ -116,6 +113,9 @@ async def signup(
             created_at=user.created_at,
         )
 
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(
@@ -198,7 +198,11 @@ async def refresh_token(
             refresh_token=auth_response.session.refresh_token,
             user_id=str(auth_response.user.id) if auth_response.user else "",
             email=auth_response.user.email or "" if auth_response.user else "",
-            display_name=auth_response.user.user_metadata.get("display_name") if auth_response.user else None,
+            display_name=(
+                auth_response.user.user_metadata.get("display_name")
+                if auth_response.user
+                else None
+            ),
         )
 
     except HTTPException:
@@ -230,6 +234,6 @@ async def reset_password(
 
         return {"message": "Password reset email sent if account exists"}
 
-    except Exception as e:
+    except Exception:
         # Don't reveal whether email exists for security
         return {"message": "Password reset email sent if account exists"}

@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from datetime import date
+from decimal import Decimal
 from uuid import uuid4
 
 import pytest
@@ -9,7 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.auth import AuthContext, get_auth_context
-from app.db.models import Base
+from app.db.models import AccountBalance, Base, ImportJob, SourceFile
 from app.db.session import get_db
 from app.main import create_app
 from app.services.dashboard_service import (
@@ -169,6 +170,73 @@ def test_dashboard_summary_calculates_period_totals(
     assert payload["transaction_count"] == 4
 
 
+def test_dashboard_summary_returns_latest_account_balance_before_period_end(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    seed_dashboard_data(client=client, db_session=db_session, auth=auth)
+    source_file = SourceFile(
+        id=str(uuid4()),
+        workspace_id=auth.workspace_id,
+        original_filename="extrato.xls",
+        content_hash="balance-hash",
+        mime_type="application/vnd.ms-excel",
+        size_bytes=100,
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato.xls",
+        source_kind="bank_statement_excel",
+        created_by_user_id=auth.user_id,
+    )
+    import_job = ImportJob(
+        id=str(uuid4()),
+        workspace_id=auth.workspace_id,
+        source_file_id=source_file.id,
+        status="completed",
+        total_rows=2,
+        valid_rows=2,
+        error_rows=0,
+        duplicate_rows=0,
+    )
+    db_session.add_all(
+        [
+            source_file,
+            import_job,
+            AccountBalance(
+                id=str(uuid4()),
+                workspace_id=auth.workspace_id,
+                source_file_id=source_file.id,
+                import_job_id=import_job.id,
+                account_name="Itau 00740-7",
+                balance_date=date(2026, 5, 30),
+                balance_amount="10023.65",
+                source_line=21,
+                raw_payload={},
+            ),
+            AccountBalance(
+                id=str(uuid4()),
+                workspace_id=auth.workspace_id,
+                source_file_id=source_file.id,
+                import_job_id=import_job.id,
+                account_name="Itau 00740-7",
+                balance_date=date(2026, 6, 1),
+                balance_amount="9606.10",
+                source_line=22,
+                raw_payload={},
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = client.get("/v1/dashboard/summary?date_from=2026-05-01&date_to=2026-05-31")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["current_balance"] == "10023.65"
+    assert payload["current_balance_date"] == "2026-05-30"
+    assert payload["current_balance_account"] == "Itau 00740-7"
+
+
 def test_dashboard_summary_burn_rate_uses_trailing_12_months(
     client: TestClient,
     db_session: Session,
@@ -211,6 +279,125 @@ def test_dashboard_monthly_cashflow_groups_by_month(
     assert payload["items"][0]["payments"] == "800.00"
     assert payload["items"][0]["balance"] == "3474.50"
     assert payload["items"][1]["expenses"] == "40.00"
+
+
+def test_dashboard_daily_cashflow_groups_by_day_and_separates_payments(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    seed_dashboard_data(client=client, db_session=db_session, auth=auth)
+
+    response = client.get("/v1/dashboard/daily-cashflow?date_from=2026-05-01&date_to=2026-05-04")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [item["date"] for item in payload["items"]] == [
+        "2026-05-01",
+        "2026-05-02",
+        "2026-05-03",
+        "2026-05-04",
+    ]
+    assert payload["items"][0]["income"] == "5000.00"
+    assert payload["items"][0]["expenses"] == "0.00"
+    assert payload["items"][0]["payments"] == "0.00"
+    assert payload["items"][0]["balance"] == "5000.00"
+    assert payload["items"][1]["income"] == "0.00"
+    assert payload["items"][1]["expenses"] == "1500.00"
+    assert payload["items"][1]["payments"] == "0.00"
+    assert payload["items"][1]["balance"] == "-1500.00"
+    assert payload["items"][2]["income"] == "0.00"
+    assert payload["items"][2]["expenses"] == "0.00"
+    assert payload["items"][2]["payments"] == "800.00"
+    assert payload["items"][2]["balance"] == "0.00"
+    assert payload["items"][3]["expenses"] == "25.50"
+
+
+def test_dashboard_expense_size_profile_uses_expenses_without_card_payments(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    seed_dashboard_data(client=client, db_session=db_session, auth=auth)
+
+    response = client.get(
+        "/v1/dashboard/expense-size-profile?date_from=2026-05-01&date_to=2026-05-31"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert sum(Decimal(item["total"]) for item in payload["items"]) == Decimal("1525.50")
+    assert payload["items"][0]["total"] == "25.50"
+    assert payload["items"][0]["count"] == 1
+    assert payload["items"][1]["total"] == "0.00"
+    assert payload["items"][2]["total"] == "1500.00"
+    assert payload["items"][2]["count"] == 1
+
+
+def test_dashboard_cashflow_places_card_installment_on_invoice_due_month(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="fatura.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/fatura.csv",
+        content=b"data,lan\xc3\xa7amento,valor\n2026-02-23,ANGLO 03/10,6536.76\n",
+    )
+
+    february = client.get(
+        "/v1/dashboard/monthly-cashflow?date_from=2026-02-01&date_to=2026-02-28"
+    ).json()
+    april = client.get(
+        "/v1/dashboard/monthly-cashflow?date_from=2026-04-01&date_to=2026-04-30"
+    ).json()
+    april_daily = client.get(
+        "/v1/dashboard/daily-cashflow?date_from=2026-04-01&date_to=2026-04-30"
+    ).json()
+
+    assert february["items"] == []
+    assert april["items"][0]["month"] == "2026-04"
+    assert april["items"][0]["expenses"] == "6536.76"
+    assert april_daily["items"][-1]["date"] == "2026-04-30"
+    assert april_daily["items"][-1]["expenses"] == "6536.76"
+
+
+def test_dashboard_cashflow_uses_statement_due_date_from_credit_card_filename(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="fatura-20260420.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/fatura-20260420.csv",
+        content=b"data,lan\xc3\xa7amento,valor\n2026-02-24,ANGLO 04/10,6536.76\n",
+    )
+
+    february = client.get(
+        "/v1/dashboard/monthly-cashflow?date_from=2026-02-01&date_to=2026-02-28"
+    ).json()
+    april = client.get(
+        "/v1/dashboard/monthly-cashflow?date_from=2026-04-01&date_to=2026-04-30"
+    ).json()
+    june = client.get(
+        "/v1/dashboard/monthly-cashflow?date_from=2026-06-01&date_to=2026-06-30"
+    ).json()
+    april_daily = client.get(
+        "/v1/dashboard/daily-cashflow?date_from=2026-04-01&date_to=2026-04-30"
+    ).json()
+
+    assert february["items"] == []
+    assert june["items"] == []
+    assert april["items"][0]["month"] == "2026-04"
+    assert april["items"][0]["expenses"] == "6536.76"
+    assert april_daily["items"][19]["date"] == "2026-04-20"
+    assert april_daily["items"][19]["expenses"] == "6536.76"
 
 
 def test_dashboard_credit_card_payment_matches_suggests_same_amount_nearby(
@@ -446,6 +633,56 @@ def test_dashboard_category_ranking_groups_subcategories_by_parent(
     assert payload["items"][0]["amount"] == "25.50"
 
 
+def test_dashboard_subcategory_ranking_matches_parent_category_total(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="fatura.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/fatura.csv",
+        content=b"data,lan\xc3\xa7amento,valor\n"
+        b"2026-05-04,ESCOLA A,100.00\n"
+        b"2026-05-05,ESCOLA B,50.00\n"
+        b"2026-05-06,OUTRO,25.00\n",
+    )
+    parent_id = client.post("/v1/categories", json={"name": "Educacao"}).json()["id"]
+    school_id = client.post(
+        "/v1/categories",
+        json={"name": "Escola", "parent_category_id": parent_id},
+    ).json()["id"]
+    other_id = client.post(
+        "/v1/categories",
+        json={"name": "Cursos", "parent_category_id": parent_id},
+    ).json()["id"]
+    school_a = client.get("/v1/transactions?q=ESCOLA A").json()["items"][0]["id"]
+    school_b = client.get("/v1/transactions?q=ESCOLA B").json()["items"][0]["id"]
+    other = client.get("/v1/transactions?q=OUTRO").json()["items"][0]["id"]
+    client.patch(f"/v1/transactions/{school_a}/category", json={"category_id": school_id})
+    client.patch(f"/v1/transactions/{school_b}/category", json={"category_id": school_id})
+    client.patch(f"/v1/transactions/{other}/category", json={"category_id": other_id})
+
+    category_response = client.get(
+        "/v1/dashboard/category-ranking?date_from=2026-05-01&date_to=2026-05-31"
+    )
+    subcategory_response = client.get(
+        f"/v1/dashboard/subcategory-ranking?date_from=2026-05-01&date_to=2026-05-31&category_id={parent_id}"
+    )
+
+    assert category_response.status_code == 200
+    assert subcategory_response.status_code == 200
+    category_payload = category_response.json()
+    subcategory_payload = subcategory_response.json()
+    assert category_payload["items"][0]["category_id"] == parent_id
+    assert category_payload["items"][0]["amount"] == "175.00"
+    assert sum(float(item["amount"]) for item in subcategory_payload["items"]) == 175.0
+    assert subcategory_payload["items"][0]["subcategory_name"] == "Escola"
+    assert subcategory_payload["items"][0]["amount"] == "150.00"
+
+
 def test_dashboard_merchant_ranking_groups_by_normalized_description(
     client: TestClient,
     db_session: Session,
@@ -521,6 +758,45 @@ def test_dashboard_recurring_expenses_detects_probable_monthly_costs(
             "month_count": 3,
             "last_transaction_date": "2026-03-05",
             "change_ratio": "0.1543",
+            "status": "probable",
+        }
+    ]
+
+
+def test_dashboard_recurring_incomes_detects_probable_monthly_income(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="extrato.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato.txt",
+        content=b"31/01/2026;SALARIO;5.000,00\n"
+        b"28/02/2026;SALARIO;5.000,00\n"
+        b"31/03/2026;SALARIO;5.200,00\n"
+        b"10/03/2026;REEMBOLSO UNICO;250,00\n",
+    )
+
+    response = client.get(
+        "/v1/dashboard/recurring-incomes?date_from=2026-01-01&date_to=2026-03-31"
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["items"] == [
+        {
+            "description": "SALARIO",
+            "category_id": None,
+            "category_name": None,
+            "average_amount": "5066.67",
+            "last_amount": "5200.00",
+            "transaction_count": 3,
+            "month_count": 3,
+            "last_transaction_date": "2026-03-31",
+            "change_ratio": "0.0263",
             "status": "probable",
         }
     ]

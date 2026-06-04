@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import AuthContext
 from app.db.models import (
+    AccountBalance,
+    FinancialCalendarEvent,
     ImportError,
     ImportJob,
     RawTransactionLine,
@@ -19,6 +21,7 @@ from app.domain.imports import (
     ImportPreviewResult,
     ImportResult,
     ImportStatus,
+    ParsedCalendarEvent,
     ParsedTransaction,
     PreviewTransaction,
     SourceKind,
@@ -28,6 +31,7 @@ from app.services.file_classifier import classify_file
 from app.services.parsers import (
     normalize_transaction_description_for_dedupe,
     parse_credit_card_csv,
+    parse_excel_bank_statement,
     parse_txt_bank_statement,
 )
 from app.services.storage_service import StorageService
@@ -109,26 +113,19 @@ class ImportService:
         source_kind: str | None = None,
     ) -> ImportPreviewResult:
         suffix = filename.rsplit(".", maxsplit=1)[-1].lower() if "." in filename else ""
-        if suffix not in {"txt", "csv"}:
+        if suffix not in {"txt", "csv", "xls"}:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only TXT and CSV files are supported in MVP 1",
+                detail="Only TXT, CSV and XLS Excel files are supported",
             )
         if len(content) > self.max_upload_bytes:
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail="File exceeds MVP upload limit",
             )
-        try:
-            text_content = content.decode("utf-8-sig")
-        except UnicodeDecodeError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="File must be encoded as UTF-8",
-            ) from exc
-
-        parsed_source_kind = self._resolve_source_kind(filename, text_content, source_kind)
-        parse_result = self._parse(parsed_source_kind, text_content)
+        parsed_source_kind = self._resolve_source_kind(filename, content, source_kind)
+        text_content = self._decode_text_content(parsed_source_kind, content)
+        parse_result = self._parse(parsed_source_kind, content, text_content)
         _, workspace, _ = WorkspaceService(self.db).get_or_create_current_workspace(auth)
         content_hash = sha256(content).hexdigest()
         duplicate_source_file = self.db.scalar(
@@ -137,9 +134,14 @@ class ImportService:
                 SourceFile.content_hash == content_hash,
             )
         )
-        duplicate_file = (
-            duplicate_source_file is not None
-            and self._source_file_has_transactions(
+        has_valid_rows = bool(
+            parse_result.transactions
+            or parse_result.account_balances
+            or parse_result.calendar_events
+        )
+        duplicate_file = duplicate_source_file is not None and (
+            not has_valid_rows
+            or self._source_file_has_imported_data(
                 workspace_id=workspace.id,
                 source_file_id=duplicate_source_file.id,
             )
@@ -147,23 +149,39 @@ class ImportService:
         source_type = self._source_type(parsed_source_kind.value)
         duplicate_rows = 0
         preview_items: list[PreviewTransaction] = []
+        natural_key_payloads: list[dict[str, object]] = []
         for transaction in parse_result.transactions:
             natural_key = self._natural_transaction_dedupe_key(
                 workspace_id=workspace.id,
                 source_type=source_type,
                 transaction_date=transaction.transaction_date.isoformat(),
-            raw_description=transaction.raw_description,
-            amount=self._normalize_amount(transaction.amount),
-            direction=transaction.direction.value,
-            installment_current=transaction.installment_current,
-            installment_total=transaction.installment_total,
+                raw_description=transaction.raw_description,
+                amount=self._normalize_amount(transaction.amount),
+                direction=transaction.direction.value,
+                installment_current=transaction.installment_current,
+                installment_total=transaction.installment_total,
             )
-            duplicate = self.db.scalar(
-                select(Transaction.id).where(
-                    Transaction.workspace_id == workspace.id,
-                    Transaction.natural_dedupe_key == natural_key,
-                )
-            ) is not None
+            natural_key_payloads.append(
+                {
+                    "source_line": transaction.source_line,
+                    "natural_dedupe_key": natural_key,
+                }
+            )
+        self._assign_occurrence_natural_dedupe_keys(natural_key_payloads)
+        natural_keys_by_line = {
+            int(payload["source_line"]): str(payload["natural_dedupe_key"])
+            for payload in natural_key_payloads
+        }
+
+        existing_natural_keys = self._existing_transaction_natural_keys(
+            workspace_id=workspace.id,
+            natural_keys=set(natural_keys_by_line.values()),
+        )
+        seen_natural_keys: set[str] = set()
+        for transaction in parse_result.transactions:
+            natural_key = natural_keys_by_line[transaction.source_line]
+            duplicate = natural_key in existing_natural_keys or natural_key in seen_natural_keys
+            seen_natural_keys.add(natural_key)
             if duplicate:
                 duplicate_rows += 1
             if len(preview_items) < 50:
@@ -183,9 +201,13 @@ class ImportService:
             source_kind=parsed_source_kind,
             duplicate_file=duplicate_file,
             total_rows=parse_result.total_rows,
-            valid_rows=len(parse_result.transactions),
+            valid_rows=self._parse_result_valid_rows(parse_result),
             error_rows=len(parse_result.errors),
-            duplicate_rows=len(parse_result.transactions) if duplicate_file else duplicate_rows,
+            duplicate_rows=(
+                self._parse_result_valid_rows(parse_result)
+                if duplicate_file
+                else duplicate_rows
+            ),
             items=preview_items,
             errors=parse_result.errors[:50],
         )
@@ -202,10 +224,10 @@ class ImportService:
         source_kind: str | None = None,
     ) -> ImportResult:
         suffix = filename.rsplit(".", maxsplit=1)[-1].lower() if "." in filename else ""
-        if suffix not in {"txt", "csv"}:
+        if suffix not in {"txt", "csv", "xls"}:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only TXT and CSV files are supported in MVP 1",
+                detail="Only TXT, CSV and XLS Excel files are supported",
             )
         if len(content) > self.max_upload_bytes:
             raise HTTPException(
@@ -214,16 +236,9 @@ class ImportService:
             )
 
         content_hash = sha256(content).hexdigest()
-        try:
-            text_content = content.decode("utf-8-sig")
-        except UnicodeDecodeError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="File must be encoded as UTF-8",
-            ) from exc
-
-        parsed_source_kind = self._resolve_source_kind(filename, text_content, source_kind)
-        parse_result = self._parse(parsed_source_kind, text_content)
+        parsed_source_kind = self._resolve_source_kind(filename, content, source_kind)
+        text_content = self._decode_text_content(parsed_source_kind, content)
+        parse_result = self._parse(parsed_source_kind, content, text_content)
 
         _, workspace, _ = WorkspaceService(self.db).get_or_create_current_workspace(auth)
         workspace_id = workspace.id
@@ -233,9 +248,17 @@ class ImportService:
                 SourceFile.content_hash == content_hash,
             )
         )
-        if existing_source_file is not None and self._source_file_has_transactions(
-            workspace_id=workspace_id,
-            source_file_id=existing_source_file.id,
+        has_valid_rows = bool(
+            parse_result.transactions
+            or parse_result.account_balances
+            or parse_result.calendar_events
+        )
+        if existing_source_file is not None and (
+            not has_valid_rows
+            or self._source_file_has_imported_data(
+                workspace_id=workspace_id,
+                source_file_id=existing_source_file.id,
+            )
         ):
             import_job = self._create_import_job(
                 workspace_id=workspace_id,
@@ -293,23 +316,123 @@ class ImportService:
             import_job=import_job,
             source_kind=parsed_source_kind,
             content=text_content,
-            valid_lines={transaction.source_line for transaction in parse_result.transactions},
+            valid_lines={
+                transaction.source_line for transaction in parse_result.transactions
+            }
+            | {balance.source_line for balance in parse_result.account_balances}
+            | {event.source_line for event in parse_result.calendar_events},
             invalid_lines={error.source_line for error in parse_result.errors if error.source_line},
         )
         persisted_transactions = 0
         duplicate_transactions = 0
-        for parsed_transaction in parse_result.transactions:
-            transaction = self.persist_transaction(
+        persisted_balances = 0
+        persisted_calendar_events = 0
+        duplicate_calendar_events = 0
+        persisted_transaction_ids: set[str] = set()
+
+        transaction_payloads = [
+            self._transaction_payload(
                 workspace_id=workspace_id,
                 source_file=source_file,
                 import_job=import_job,
                 raw_line=raw_lines.get(parsed_transaction.source_line),
                 parsed_transaction=parsed_transaction,
             )
-            if transaction.import_job_id == import_job.id:
-                persisted_transactions += 1
-            else:
+            for parsed_transaction in parse_result.transactions
+        ]
+        self._assign_occurrence_natural_dedupe_keys(transaction_payloads)
+        existing_dedupe_keys = self._existing_transaction_dedupe_keys(
+            workspace_id=workspace_id,
+            dedupe_keys={payload["dedupe_key"] for payload in transaction_payloads},
+        )
+        existing_natural_keys = self._existing_transaction_natural_keys(
+            workspace_id=workspace_id,
+            natural_keys={payload["natural_dedupe_key"] for payload in transaction_payloads},
+        )
+        seen_dedupe_keys: set[str] = set()
+        seen_natural_keys: set[str] = set()
+        for payload in transaction_payloads:
+            dedupe_key = payload["dedupe_key"]
+            natural_dedupe_key = payload["natural_dedupe_key"]
+            duplicate = (
+                dedupe_key in existing_dedupe_keys
+                or natural_dedupe_key in existing_natural_keys
+                or dedupe_key in seen_dedupe_keys
+                or natural_dedupe_key in seen_natural_keys
+            )
+            seen_dedupe_keys.add(dedupe_key)
+            seen_natural_keys.add(natural_dedupe_key)
+            if duplicate:
                 duplicate_transactions += 1
+                continue
+            transaction_id = str(uuid4())
+            self.db.add(Transaction(id=transaction_id, **payload))
+            persisted_transaction_ids.add(transaction_id)
+            persisted_transactions += 1
+
+        existing_balances = self._existing_account_balances(
+            workspace_id=workspace_id,
+            account_names={
+                balance.account_name for balance in parse_result.account_balances
+            },
+            balance_dates={
+                balance.balance_date for balance in parse_result.account_balances
+            },
+        )
+        for parsed_balance in parse_result.account_balances:
+            balance_key = (parsed_balance.account_name, parsed_balance.balance_date)
+            existing_balance = existing_balances.get(balance_key)
+            if existing_balance is None:
+                existing_balance = AccountBalance(
+                    id=str(uuid4()),
+                    workspace_id=workspace_id,
+                    source_file_id=source_file.id,
+                    import_job_id=import_job.id,
+                    account_name=parsed_balance.account_name,
+                    balance_date=parsed_balance.balance_date,
+                    balance_amount=parsed_balance.balance_amount,
+                    source_line=parsed_balance.source_line,
+                    raw_payload=parsed_balance.raw_payload,
+                )
+                self.db.add(existing_balance)
+                existing_balances[balance_key] = existing_balance
+            else:
+                existing_balance.source_file_id = source_file.id
+                existing_balance.import_job_id = import_job.id
+                existing_balance.balance_amount = parsed_balance.balance_amount
+                existing_balance.source_line = parsed_balance.source_line
+                existing_balance.raw_payload = parsed_balance.raw_payload
+            persisted_balances += 1
+
+        existing_calendar_events = self._existing_calendar_event_keys(
+            workspace_id=workspace_id,
+            events=parse_result.calendar_events,
+        )
+        seen_calendar_events: set[tuple[str, str, Decimal, object]] = set()
+        for parsed_event in parse_result.calendar_events:
+            event_key = self._calendar_event_key(parsed_event)
+            duplicate = event_key in existing_calendar_events or event_key in seen_calendar_events
+            seen_calendar_events.add(event_key)
+            if duplicate:
+                duplicate_calendar_events += 1
+                continue
+            self.db.add(
+                FinancialCalendarEvent(
+                    id=str(uuid4()),
+                    workspace_id=workspace_id,
+                    title=parsed_event.title,
+                    event_type=parsed_event.event_type,
+                    amount=parsed_event.amount,
+                    due_date=parsed_event.due_date,
+                    recurrence="none",
+                    status="planned",
+                    notes=(
+                        "Importado do Excel: "
+                        f"{source_file.original_filename} linha {parsed_event.source_line}"
+                    ),
+                )
+            )
+            persisted_calendar_events += 1
 
         for parse_error in parse_result.errors:
             self.db.add(
@@ -325,28 +448,44 @@ class ImportService:
                 )
             )
 
-        import_job.valid_rows = persisted_transactions
-        import_job.duplicate_rows = duplicate_transactions
-        CategorizationService(self.db).apply_rules(workspace_id)
+        import_job.valid_rows = (
+            persisted_transactions + persisted_balances + persisted_calendar_events
+        )
+        import_job.duplicate_rows = duplicate_transactions + duplicate_calendar_events
+        if persisted_transaction_ids:
+            CategorizationService(self.db).apply_rules(
+                workspace_id,
+                transaction_ids=persisted_transaction_ids,
+            )
         self.db.commit()
         return ImportResult(
             import_job_id=import_job.id,
             source_file_id=source_file.id,
             status=status_value,
             total_rows=parse_result.total_rows,
-            valid_rows=persisted_transactions,
+            valid_rows=persisted_transactions + persisted_balances + persisted_calendar_events,
             error_rows=len(parse_result.errors),
-            duplicate_rows=duplicate_transactions,
+            duplicate_rows=duplicate_transactions + duplicate_calendar_events,
         )
 
-    def _source_file_has_transactions(self, workspace_id: str, source_file_id: str) -> bool:
+    def _source_file_has_imported_data(self, workspace_id: str, source_file_id: str) -> bool:
+        has_transaction = self.db.scalar(
+            select(Transaction.id)
+            .where(
+                Transaction.workspace_id == workspace_id,
+                Transaction.source_file_id == source_file_id,
+                Transaction.natural_dedupe_key.is_not(None),
+            )
+            .limit(1)
+        )
+        if has_transaction is not None:
+            return True
         return (
             self.db.scalar(
-                select(Transaction.id)
+                select(AccountBalance.id)
                 .where(
-                    Transaction.workspace_id == workspace_id,
-                    Transaction.source_file_id == source_file_id,
-                    Transaction.natural_dedupe_key.is_not(None),
+                    AccountBalance.workspace_id == workspace_id,
+                    AccountBalance.source_file_id == source_file_id,
                 )
                 .limit(1)
             )
@@ -360,7 +499,47 @@ class ImportService:
         import_job: ImportJob,
         raw_line: RawTransactionLine | None,
         parsed_transaction: ParsedTransaction,
+        flush: bool = True,
     ) -> Transaction:
+        payload = self._transaction_payload(
+            workspace_id=workspace_id,
+            source_file=source_file,
+            import_job=import_job,
+            raw_line=raw_line,
+            parsed_transaction=parsed_transaction,
+        )
+        existing_transaction = self.db.scalar(
+            select(Transaction).where(
+                Transaction.workspace_id == workspace_id,
+                Transaction.dedupe_key == payload["dedupe_key"],
+            )
+        )
+        if existing_transaction is not None:
+            return existing_transaction
+
+        existing_natural_transaction = self.db.scalar(
+            select(Transaction).where(
+                Transaction.workspace_id == workspace_id,
+                Transaction.natural_dedupe_key == payload["natural_dedupe_key"],
+            )
+        )
+        if existing_natural_transaction is not None:
+            return existing_natural_transaction
+
+        transaction = Transaction(id=str(uuid4()), **payload)
+        self.db.add(transaction)
+        if flush:
+            self.db.flush()
+        return transaction
+
+    def _transaction_payload(
+        self,
+        workspace_id: str,
+        source_file: SourceFile,
+        import_job: ImportJob,
+        raw_line: RawTransactionLine | None,
+        parsed_transaction: ParsedTransaction,
+    ) -> dict:
         dedupe_key = self._transaction_dedupe_key(
             workspace_id=workspace_id,
             source_file_id=source_file.id,
@@ -380,54 +559,144 @@ class ImportService:
             installment_current=parsed_transaction.installment_current,
             installment_total=parsed_transaction.installment_total,
         )
-        existing_transaction = self.db.scalar(
-            select(Transaction).where(
-                Transaction.workspace_id == workspace_id,
-                Transaction.dedupe_key == dedupe_key,
+        return {
+            "workspace_id": workspace_id,
+            "source_file_id": source_file.id,
+            "import_job_id": import_job.id,
+            "raw_transaction_line_id": raw_line.id if raw_line is not None else None,
+            "source_type": source_type,
+            "source_name": None,
+            "account_or_card": None,
+            "transaction_date": parsed_transaction.transaction_date,
+            "description": parsed_transaction.description,
+            "raw_description": parsed_transaction.raw_description,
+            "amount": parsed_transaction.amount,
+            "currency": "BRL",
+            "direction": parsed_transaction.direction.value,
+            "installment_current": parsed_transaction.installment_current,
+            "installment_total": parsed_transaction.installment_total,
+            "source_line": parsed_transaction.source_line,
+            "dedupe_key": dedupe_key,
+            "natural_dedupe_key": natural_dedupe_key,
+        }
+
+    def _assign_occurrence_natural_dedupe_keys(self, payloads: list[dict[str, object]]) -> None:
+        occurrences: dict[str, int] = {}
+        for payload in payloads:
+            natural_key = str(payload["natural_dedupe_key"])
+            occurrence = occurrences.get(natural_key, 0) + 1
+            occurrences[natural_key] = occurrence
+            if occurrence == 1:
+                continue
+            payload["natural_dedupe_key"] = sha256(
+                f"{natural_key}|occurrence|{occurrence}".encode("utf-8")
+            ).hexdigest()
+
+    def _existing_transaction_dedupe_keys(
+        self,
+        workspace_id: str,
+        dedupe_keys: set[str],
+    ) -> set[str]:
+        if not dedupe_keys:
+            return set()
+        return set(
+            self.db.scalars(
+                select(Transaction.dedupe_key).where(
+                    Transaction.workspace_id == workspace_id,
+                    Transaction.dedupe_key.in_(dedupe_keys),
+                )
+            ).all()
+        )
+
+    def _existing_transaction_natural_keys(
+        self,
+        workspace_id: str,
+        natural_keys: set[str],
+    ) -> set[str]:
+        if not natural_keys:
+            return set()
+        return set(
+            self.db.scalars(
+                select(Transaction.natural_dedupe_key).where(
+                    Transaction.workspace_id == workspace_id,
+                    Transaction.natural_dedupe_key.in_(natural_keys),
+                )
+            ).all()
+        )
+
+    def _existing_account_balances(
+        self,
+        workspace_id: str,
+        account_names: set[str],
+        balance_dates: set,
+    ) -> dict[tuple[str, object], AccountBalance]:
+        if not account_names or not balance_dates:
+            return {}
+        balances = self.db.scalars(
+            select(AccountBalance).where(
+                AccountBalance.workspace_id == workspace_id,
+                AccountBalance.account_name.in_(account_names),
+                AccountBalance.balance_date.in_(balance_dates),
             )
-        )
-        if existing_transaction is not None:
-            return existing_transaction
+        ).all()
+        return {
+            (balance.account_name, balance.balance_date): balance
+            for balance in balances
+        }
 
-        existing_natural_transaction = self.db.scalar(
-            select(Transaction).where(
-                Transaction.workspace_id == workspace_id,
-                Transaction.natural_dedupe_key == natural_dedupe_key,
+    def _existing_calendar_event_keys(
+        self,
+        workspace_id: str,
+        events: list[ParsedCalendarEvent],
+    ) -> set[tuple[str, str, Decimal, object]]:
+        titles = {event.title for event in events}
+        due_dates = {event.due_date for event in events}
+        if not titles or not due_dates:
+            return set()
+        existing_events = self.db.scalars(
+            select(FinancialCalendarEvent).where(
+                FinancialCalendarEvent.workspace_id == workspace_id,
+                FinancialCalendarEvent.title.in_(titles),
+                FinancialCalendarEvent.due_date.in_(due_dates),
+                FinancialCalendarEvent.amount.is_not(None),
             )
-        )
-        if existing_natural_transaction is not None:
-            return existing_natural_transaction
+        ).all()
+        return {
+            (
+                event.title,
+                event.event_type,
+                self._normalize_event_amount(event.amount),
+                event.due_date,
+            )
+            for event in existing_events
+            if event.amount is not None
+        }
 
-        transaction = Transaction(
-            id=str(uuid4()),
-            workspace_id=workspace_id,
-            source_file_id=source_file.id,
-            import_job_id=import_job.id,
-            raw_transaction_line_id=raw_line.id if raw_line is not None else None,
-            source_type=source_type,
-            source_name=None,
-            account_or_card=None,
-            transaction_date=parsed_transaction.transaction_date,
-            description=parsed_transaction.description,
-            raw_description=parsed_transaction.raw_description,
-            amount=parsed_transaction.amount,
-            currency="BRL",
-            direction=parsed_transaction.direction.value,
-            installment_current=parsed_transaction.installment_current,
-            installment_total=parsed_transaction.installment_total,
-            source_line=parsed_transaction.source_line,
-            dedupe_key=dedupe_key,
-            natural_dedupe_key=natural_dedupe_key,
+    def _calendar_event_key(
+        self,
+        event: ParsedCalendarEvent,
+    ) -> tuple[str, str, Decimal, object]:
+        return (
+            event.title,
+            event.event_type,
+            self._normalize_event_amount(event.amount),
+            event.due_date,
         )
-        self.db.add(transaction)
-        self.db.flush()
-        return transaction
 
-    def _parse(self, source_kind: SourceKind, content: str):
+    def _parse_result_valid_rows(self, parse_result) -> int:
+        return (
+            len(parse_result.transactions)
+            + len(parse_result.account_balances)
+            + len(parse_result.calendar_events)
+        )
+
+    def _parse(self, source_kind: SourceKind, raw_content: bytes, text_content: str):
         if source_kind == SourceKind.BANK_STATEMENT_TXT:
-            return parse_txt_bank_statement(content)
+            return parse_txt_bank_statement(text_content)
+        if source_kind == SourceKind.BANK_STATEMENT_EXCEL:
+            return parse_excel_bank_statement(raw_content)
         if source_kind == SourceKind.CREDIT_CARD_CSV:
-            return parse_credit_card_csv(content)
+            return parse_credit_card_csv(text_content)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Unsupported or unrecognized file layout",
@@ -436,7 +705,7 @@ class ImportService:
     def _resolve_source_kind(
         self,
         filename: str,
-        content: str,
+        content: bytes,
         source_kind: str | None,
     ) -> SourceKind:
         if not source_kind or source_kind == "auto":
@@ -446,14 +715,31 @@ class ImportService:
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid source_kind. Use auto, bank_statement_txt, or credit_card_csv.",
+                detail=(
+                    "Invalid source_kind. Use auto, bank_statement_txt, "
+                    "bank_statement_excel, or credit_card_csv."
+                ),
             ) from exc
         if resolved == SourceKind.UNKNOWN:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid source_kind. Use auto, bank_statement_txt, or credit_card_csv.",
+                detail=(
+                    "Invalid source_kind. Use auto, bank_statement_txt, "
+                    "bank_statement_excel, or credit_card_csv."
+                ),
             )
         return resolved
+
+    def _decode_text_content(self, source_kind: SourceKind, content: bytes) -> str:
+        if source_kind == SourceKind.BANK_STATEMENT_EXCEL:
+            return ""
+        try:
+            return content.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File must be encoded as UTF-8",
+            ) from exc
 
     def _create_import_job(
         self,
@@ -515,6 +801,8 @@ class ImportService:
         return raw_lines
 
     def _iter_data_lines(self, source_kind: SourceKind, content: str) -> list[tuple[int, str]]:
+        if source_kind == SourceKind.BANK_STATEMENT_EXCEL:
+            return []
         lines = list(enumerate(content.splitlines(), start=1))
         if source_kind == SourceKind.CREDIT_CARD_CSV:
             return [(line_number, line) for line_number, line in lines if line_number > 1]
@@ -576,8 +864,14 @@ class ImportService:
     def _normalize_amount(self, value: Decimal) -> str:
         return str(value.quantize(Decimal("0.01")))
 
+    def _normalize_event_amount(self, value: Decimal) -> Decimal:
+        return value.quantize(Decimal("0.01"))
+
     def _source_type(self, source_kind: str) -> str:
-        if source_kind == SourceKind.BANK_STATEMENT_TXT.value:
+        if source_kind in {
+            SourceKind.BANK_STATEMENT_TXT.value,
+            SourceKind.BANK_STATEMENT_EXCEL.value,
+        }:
             return "bank_statement"
         if source_kind == SourceKind.CREDIT_CARD_CSV.value:
             return "credit_card_statement"

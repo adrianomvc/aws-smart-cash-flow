@@ -36,7 +36,8 @@ class User(Base):
     supabase_user_id: Mapped[str | None] = mapped_column(UUID_TYPE, unique=True, nullable=True)
     email: Mapped[str] = mapped_column(Text, nullable=False)
     display_name: Mapped[str | None] = mapped_column(Text)
-    password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)  # Local auth only - dev only
+    # Local auth only - dev only.
+    password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -75,7 +76,9 @@ class SourceFile(Base):
     __table_args__ = (
         UniqueConstraint("workspace_id", "content_hash", name="uq_source_file_workspace_hash"),
         CheckConstraint(
-            "source_kind in ('bank_statement_txt', 'credit_card_csv', 'unknown')",
+            "source_kind in ("
+            "'bank_statement_txt', 'bank_statement_excel', 'credit_card_csv', 'unknown'"
+            ")",
             name="ck_source_file_source_kind",
         ),
     )
@@ -215,6 +218,109 @@ class Transaction(Base):
     )
 
 
+class AccountBalance(Base):
+    __tablename__ = "account_balances"
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id",
+            "account_name",
+            "balance_date",
+            name="uq_account_balance_workspace_account_date",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), nullable=False
+    )
+    source_file_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("source_files.id"), nullable=False
+    )
+    import_job_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("import_jobs.id"), nullable=False
+    )
+    account_name: Mapped[str] = mapped_column(Text, nullable=False)
+    balance_date: Mapped[date] = mapped_column(Date, nullable=False)
+    balance_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    source_line: Mapped[int] = mapped_column(Integer, nullable=False)
+    raw_payload: Mapped[dict[str, object]] = mapped_column(JSONB_TYPE, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class CreditCard(Base):
+    __tablename__ = "credit_cards"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "name", name="uq_credit_card_workspace_name"),
+        CheckConstraint(
+            "closing_day >= 1 and closing_day <= 31",
+            name="ck_credit_card_closing_day",
+        ),
+        CheckConstraint("due_day >= 1 and due_day <= 31", name="ck_credit_card_due_day"),
+        CheckConstraint(
+            "limit_amount is null or limit_amount > 0",
+            name="ck_credit_card_limit_amount_positive",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    issuer: Mapped[str | None] = mapped_column(Text)
+    brand: Mapped[str | None] = mapped_column(Text)
+    last_four: Mapped[str | None] = mapped_column(String(4))
+    closing_day: Mapped[int] = mapped_column(Integer, nullable=False)
+    due_day: Mapped[int] = mapped_column(Integer, nullable=False)
+    limit_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class CreditCardStatement(Base):
+    __tablename__ = "credit_card_statements"
+    __table_args__ = (
+        UniqueConstraint("credit_card_id", "due_date", name="uq_credit_card_statement_due_date"),
+        CheckConstraint(
+            "status in ('open', 'closed', 'paid', 'partial')",
+            name="ck_credit_card_statement_status",
+        ),
+        CheckConstraint(
+            "total_amount is null or total_amount >= 0",
+            name="ck_credit_card_statement_total_non_negative",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), nullable=False
+    )
+    credit_card_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("credit_cards.id"), nullable=False
+    )
+    source_file_id: Mapped[str | None] = mapped_column(UUID_TYPE, ForeignKey("source_files.id"))
+    statement_month: Mapped[date] = mapped_column(Date, nullable=False)
+    closing_date: Mapped[date | None] = mapped_column(Date)
+    due_date: Mapped[date] = mapped_column(Date, nullable=False)
+    total_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="open",
+        server_default="open",
+    )
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class ImportError(Base):
     __tablename__ = "import_errors"
 
@@ -331,6 +437,106 @@ class CategorizationRule(Base):
     )
     active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class FinancialCalendarEvent(Base):
+    __tablename__ = "financial_calendar_events"
+    __table_args__ = (
+        CheckConstraint(
+            "event_type in ('income', 'expense', 'card_payment', 'subscription', 'goal', 'other')",
+            name="ck_financial_calendar_event_type",
+        ),
+        CheckConstraint(
+            "status in ('planned', 'paid', 'skipped')",
+            name="ck_financial_calendar_event_status",
+        ),
+        CheckConstraint(
+            "recurrence in ('none', 'monthly')",
+            name="ck_financial_calendar_event_recurrence",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    due_date: Mapped[date] = mapped_column(Date, nullable=False)
+    recurrence: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="none", server_default="none"
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="planned", server_default="planned"
+    )
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Budget(Base):
+    __tablename__ = "budgets"
+    __table_args__ = (
+        CheckConstraint("limit_amount > 0", name="ck_budget_limit_amount_positive"),
+        CheckConstraint(
+            "alert_threshold > 0 and alert_threshold <= 1",
+            name="ck_budget_alert_threshold_range",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), nullable=False
+    )
+    category_id: Mapped[str | None] = mapped_column(UUID_TYPE, ForeignKey("categories.id"))
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    limit_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    alert_threshold: Mapped[Decimal] = mapped_column(
+        Numeric(5, 4), nullable=False, default=Decimal("0.8500"), server_default="0.8500"
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Goal(Base):
+    __tablename__ = "goals"
+    __table_args__ = (
+        CheckConstraint("target_amount > 0", name="ck_goal_target_amount_positive"),
+        CheckConstraint("current_amount >= 0", name="ck_goal_current_amount_non_negative"),
+        CheckConstraint(
+            "status in ('active', 'paused', 'completed')",
+            name="ck_goal_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    target_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    current_amount: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2), nullable=False, default=Decimal("0"), server_default="0"
+    )
+    target_date: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="active", server_default="active"
+    )
+    priority: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=100, server_default="100"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://smartcashflow.local/contracts/events/import-events.schema.json",
+  "title": "SmartCashFlow Import Events",
+  "description": "Planned import event contracts. These events are not yet published by the current MVP.",
+  "oneOf": [
+    { "$ref": "#/$defs/importStarted" },
+    { "$ref": "#/$defs/importCompleted" },
+    { "$ref": "#/$defs/importFailed" }
+  ],
+  "$defs": {
+    "baseEvent": {
+      "type": "object",
+      "required": ["event_id", "event_type", "event_version", "occurred_at", "workspace_id", "import_job_id"],
+      "properties": {
+        "event_id": { "type": "string" },
+        "event_type": { "type": "string" },
+        "event_version": { "type": "integer", "const": 1 },
+        "occurred_at": { "type": "string", "format": "date-time" },
+        "workspace_id": { "type": "string" },
+        "import_job_id": { "type": "string" },
+        "source_file_id": { "type": ["string", "null"] }
+      }
+    },
+    "importStarted": {
+      "allOf": [
+        { "$ref": "#/$defs/baseEvent" },
+        {
+          "type": "object",
+          "properties": {
+            "event_type": { "const": "import.started" }
+          }
+        }
+      ]
+    },
+    "importCompleted": {
+      "allOf": [
+        { "$ref": "#/$defs/baseEvent" },
+        {
+          "type": "object",
+          "required": ["totals"],
+          "properties": {
+            "event_type": { "const": "import.completed" },
+            "totals": {
+              "type": "object",
+              "required": ["total_rows", "valid_rows", "error_rows", "duplicate_rows"],
+              "properties": {
+                "total_rows": { "type": "integer", "minimum": 0 },
+                "valid_rows": { "type": "integer", "minimum": 0 },
+                "error_rows": { "type": "integer", "minimum": 0 },
+                "duplicate_rows": { "type": "integer", "minimum": 0 }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
+    },
+    "importFailed": {
+      "allOf": [
+        { "$ref": "#/$defs/baseEvent" },
+        {
+          "type": "object",
+          "required": ["error_code"],
+          "properties": {
+            "event_type": { "const": "import.failed" },
+            "error_code": { "type": "string" }
+          }
+        }
+      ]
+    }
+  }
+}

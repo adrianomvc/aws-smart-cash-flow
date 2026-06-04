@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://smartcashflow.local/contracts/events/ledger-events.schema.json",
+  "title": "SmartCashFlow Ledger Events",
+  "description": "Planned ledger event contracts. These events are not yet published by the current MVP.",
+  "oneOf": [
+    { "$ref": "#/$defs/transactionCreated" },
+    { "$ref": "#/$defs/transactionCategorized" },
+    { "$ref": "#/$defs/categoryCreated" }
+  ],
+  "$defs": {
+    "baseEvent": {
+      "type": "object",
+      "required": ["event_id", "event_type", "event_version", "occurred_at", "workspace_id"],
+      "properties": {
+        "event_id": { "type": "string" },
+        "event_type": { "type": "string" },
+        "event_version": { "type": "integer", "const": 1 },
+        "occurred_at": { "type": "string", "format": "date-time" },
+        "workspace_id": { "type": "string" }
+      }
+    },
+    "transactionCreated": {
+      "allOf": [
+        { "$ref": "#/$defs/baseEvent" },
+        {
+          "type": "object",
+          "required": ["transaction_id", "source_type"],
+          "properties": {
+            "event_type": { "const": "transaction.created" },
+            "transaction_id": { "type": "string" },
+            "source_type": { "type": "string", "enum": ["bank_statement", "credit_card_statement", "unknown"] }
+          }
+        }
+      ]
+    },
+    "transactionCategorized": {
+      "allOf": [
+        { "$ref": "#/$defs/baseEvent" },
+        {
+          "type": "object",
+          "required": ["transaction_id", "category_id", "source"],
+          "properties": {
+            "event_type": { "const": "transaction.categorized" },
+            "transaction_id": { "type": "string" },
+            "category_id": { "type": "string" },
+            "source": { "type": "string", "enum": ["manual", "rule", "embedding", "llm"] }
+          }
+        }
+      ]
+    },
+    "categoryCreated": {
+      "allOf": [
+        { "$ref": "#/$defs/baseEvent" },
+        {
+          "type": "object",
+          "required": ["category_id"],
+          "properties": {
+            "event_type": { "const": "category.created" },
+            "category_id": { "type": "string" },
+            "parent_category_id": { "type": ["string", "null"] }
+          }
+        }
+      ]
+    }
+  }
+}

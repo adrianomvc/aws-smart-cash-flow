@@ -23,7 +23,142 @@ Status usados:
 - `Publicado`: disponivel no ambiente online.
 - `Backlog evolucao`: registrado para fase futura, fora do pacote atual.
 
-### Pacote Atual: Qualidade da Base e Duplicidades
+### Pacote Atual: Alinhamento Visual com Prototipo
+
+Objetivo: alinhar as telas ja funcionais ao prototipo visual enviado, garantindo
+que a validacao passe a cobrir layout, hierarquia, indicadores e narrativa de
+produto, nao apenas funcionamento tecnico.
+
+Status: `Em andamento`
+
+Itens do pacote:
+
+- `Feito local` Documentar plano AI-DLC do pacote em
+  `aidlc-docs/19-visual-prototype-alignment-plan.md`.
+- `Feito local` Criar matriz de comparacao visual contra os PNGs e spec v3.
+- `Feito local` Definir criterios de aceite visuais para Dashboard, Planejamento
+  e Relatorios.
+- `Feito local` Revisar indicadores esperados vs indicadores atuais na primeira
+  dobra do Dashboard.
+- `Feito local` Implementar primeira fatia visual do Dashboard sem criar novas
+  funcionalidades.
+- `Feito local` Criar checklist de validacao visual.
+- `Validacao usuario` Validar localmente a primeira dobra do Dashboard contra
+  os prototipos `1a - Dashboard.png` e `1b - dashboard2.png`.
+
+Rastreabilidade do pacote atual:
+
+| Pacote | US relacionada | Status | Observacao |
+| --- | --- | --- | --- |
+| Alinhamento Visual com Prototipo | US-055 | `Feito local` | Primeira dobra do Dashboard ajustada. |
+| Alinhamento Visual com Prototipo | US-056 | `Em andamento` | Hierarquia visual consistente. |
+| Alinhamento Visual com Prototipo | US-056A | `Em andamento` | Revisao transversal UX/UI/Product/UX Writing. |
+| Alinhamento Visual com Prototipo | US-074 | `Validacao usuario` | Dashboard narrativo alinhado ao cockpit financeiro. |
+| Alinhamento Visual com Prototipo | US-076 | `Todo` | Estrutura moderna e consistente de navegacao. |
+
+### Pacote Anterior: Relatorios
+
+Objetivo: criar a primeira tela real de relatorios consolidados do
+SmartCashFlow, agrupando leituras existentes de fluxo de caixa, receitas,
+despesas, cartoes, orcamentos, metas e qualidade de dados.
+
+Status: `Validacao usuario`
+
+Itens do pacote:
+
+- `Feito local` Documentar plano AI-DLC do pacote em
+  `aidlc-docs/17-reports-execution-plan.md`.
+- `Feito local` Criar contrato inicial de leitura para relatorios consolidados.
+- `Feito local` Criar backend minimo de relatorios usando agregados ja existentes.
+- `Feito local` Habilitar tela real de Relatorios no frontend.
+- `Feito local` Exibir relatorios por tipo sem exportacao real neste primeiro recorte.
+- `Feito local` Adicionar testes unitarios e PBT quando houver transformacao testavel.
+- `Validacao usuario` Validar localmente navegacao, filtros e leitura dos cards.
+
+Rastreabilidade do pacote anterior:
+
+| Pacote | US relacionada | Status | Observacao |
+| --- | --- | --- | --- |
+| Relatorios | US-076 | `Validacao usuario` | Navegacao para tela real de relatorios. |
+| Relatorios | US-037 | `Feito local` | Resumo executivo mensal como relatorio consolidado. |
+| Relatorios | US-038 | `Feito local` | Fluxo de caixa mensal como relatorio. |
+| Relatorios | US-041 | `Feito local` | Despesas por categoria como relatorio. |
+| Relatorios | US-046 | `Feito local` | Qualidade de dados como secao de relatorio. |
+
+### Pacote Anterior: Planejamento e Projecao
+
+Objetivo: transformar calendario, orcamentos, metas, fluxo de caixa e cartoes em
+uma primeira visao de planejamento financeiro projetado, com horizontes de 30,
+60 e 90 dias e premissas claras para o usuario.
+
+Status: `Validado usuario`
+
+Itens do pacote:
+
+- `Feito local` Documentar plano AI-DLC do pacote em
+  `aidlc-docs/15-planning-projection-execution-plan.md`.
+- `Feito local` Criar contrato inicial de leitura para projecao financeira.
+- `Feito local` Criar backend minimo de projecao usando dados reais ja disponiveis.
+- `Feito local` Habilitar tela real de Planejamento / Projecao no frontend.
+- `Feito local` Exibir premissas, horizontes e alertas de risco sem usar IA ainda.
+- `Feito local` Adicionar testes unitarios e PBT para calculos de projecao.
+- `Validado usuario` Validar localmente a navegacao e os cenarios principais.
+
+Rastreabilidade do pacote atual:
+
+| Pacote | US relacionada | Status | Observacao |
+| --- | --- | --- | --- |
+| Planejamento e Projecao | US-071 | `Validado usuario` | Fluxo de caixa projetado para 30, 60 e 90 dias. |
+| Planejamento e Projecao | US-044 | `Feito local` | Orcamento segue como insumo da jornada, sem regra completa de consumo por categoria neste recorte. |
+| Planejamento e Projecao | US-045 | `Feito local` | Alertas deterministas de risco por horizonte, sem IA. |
+| Planejamento e Projecao | US-068 | `Feito local` | Burn rate segue no contexto do dashboard; projecao explicita premissas sem saldo real integrado. |
+
+### Pacote Anterior: Fase 1 - Planejamento Multirepo e Produto Base
+
+Objetivo: preparar o SmartCashFlow para evoluir ate o prototipo final usando
+AI-DLC, com documentacao ativa em `aidlc-docs/`, arquitetura multirepo planejada
+e primeira fatia de produto focada em calendario, orcamentos e metas.
+
+Status: `Validado usuario`
+
+Itens do pacote:
+
+- `Feito local` Copiar `aidlc-docs-bkp/` para `aidlc-docs/` e tornar
+  `aidlc-docs/` a fonte ativa do fluxo AI-DLC.
+- `Feito local` Documentar arquitetura alvo multirepo em
+  `aidlc-docs/11-target-architecture-multirepo.md`.
+- `Feito local` Documentar plano de execucao da Fase 1 em
+  `aidlc-docs/12-phase-1-execution-plan.md`.
+- `Feito local` Criar estrutura inicial de contratos em `contracts/`.
+- `Feito local` Mapear endpoints atuais por dominio: identity, workspaces, imports,
+  ledger, dashboard e planning.
+- `Feito local` Habilitar telas reais para calendario, orcamentos e metas no
+  frontend, usando dados derivados das APIs atuais e mocks isolados para metas.
+- `Feito local` Criar backend minimo de planning para calendario, orcamentos e
+  metas persistentes.
+- `Feito local` Adicionar formularios simples de criacao nas telas de calendario,
+  orcamentos e metas para permitir validacao local do fluxo persistente.
+- `Validado usuario` Validacao local aprovada para seguir ao proximo pacote.
+
+Rastreabilidade do pacote atual:
+
+| Pacote | US relacionada | Status | Observacao |
+| --- | --- | --- | --- |
+| Fase 1 - Planejamento Multirepo e Produto Base | US-057 | `Validado usuario` | Estrategia multirepo documentada sem iniciar microservicos prematuros. |
+| Fase 1 - Planejamento Multirepo e Produto Base | US-060 | `Feito local` | Contratos iniciais criados em `contracts/` e endpoints mapeados por dominio. |
+| Fase 1 - Planejamento Multirepo e Produto Base | US-061 | `Feito local` | Telas de calendario, orcamentos e metas habilitadas no frontend com leitura da Planning API. |
+| Fase 1 - Planejamento Multirepo e Produto Base | US-062 | `Feito local` | Backend Planning minimo criado com eventos de calendario, orcamentos e metas. |
+| Fase 1 - Planejamento Multirepo e Produto Base | US-063 | `Validado usuario` | Formularios simples adicionados para validar criacao persistente em localhost. |
+
+Decisao operacional:
+
+- O fluxo ativo deve usar `aidlc-docs/`.
+- `aidlc-docs-bkp/` pode ser removido manualmente pelo usuario quando nao quiser
+  manter copia historica local.
+- A arquitetura recomendada para a proxima etapa e modular monolith preparado
+  para multirepo, sem microservicos reais neste momento.
+
+### Pacote Anterior: Qualidade da Base e Duplicidades
 
 Objetivo: permitir que o usuario encontre, entenda e limpe possiveis duplicidades
 sem inflar indicadores financeiros e sem excluir dados por acidente.
@@ -207,12 +342,11 @@ P3, experiencia e produto:
   idioma/regiao, meta de poupanca, limite de comprometimento, perfil de risco,
   categorias prioritarias e canais de alerta, para alimentar indicadores,
   alertas e Copilot.
-- `Backlog evolucao` Cadastro de cartoes e fatura: permitir cadastrar cartoes
-  com nome, bandeira, fechamento da fatura (`closing_day`) e vencimento
-  (`due_day`) por workspace/usuario. No MVP o usuario deve poder informar esses
-  dias manualmente em Configuracoes ou na tela de Cartoes; evolucao futura pode
-  sugerir fechamento/vencimento automaticamente a partir de padroes das faturas,
-  mas sempre com confirmacao manual antes de alterar calculos.
+- `Backlog evolucao` Cartoes e faturas automation-first: o sistema deve
+  detectar cartao, competencia, fechamento, vencimento, total e status da fatura
+  a partir de CSV/PDF/Excel sempre que o arquivo trouxer essas informacoes.
+  Cadastro manual deve ser excecao para correcao, complemento ou casos sem
+  arquivo, nao fluxo obrigatorio.
 - `Backlog evolucao` AI Copilot / Chat Financeiro: usar a tela
   `aidlc-docs/prototipo de telas/AI COpilot.png` como referencia para uma
   experiencia propria de chat financeiro, com conversas recentes, novo chat,
@@ -299,6 +433,18 @@ Aceite:
 - Parser le formato `dd/MM/yyyy;descricao;valor`.
 - Valor brasileiro com virgula e convertido corretamente.
 - Linhas invalidas geram `ImportError`.
+
+US-003A: Como usuario, quero importar extratos de conta corrente em Excel para carregar lancamentos e saldos diarios.
+
+Aceite:
+
+- Importacao aceita arquivos `.xlsx` e `.xls` de extrato de conta corrente quando o layout for suportado.
+- Parser identifica data, descricao, valor e tipo de movimento quando disponiveis.
+- Quando o arquivo trouxer saldo do dia, o sistema deve armazenar ou derivar o saldo diario para uso em graficos e indicadores.
+- Saldo diario deve ficar separado de transacoes para evitar criar lancamentos artificiais.
+- Preview da importacao deve mostrar lancamentos extraidos e saldos diarios detectados antes de gravar.
+- Falhas de layout, colunas ausentes e linhas ambiguas devem ficar disponiveis para revisao.
+- Evolucao deve considerar fixtures reais anonimizadas antes de liberar o parser em producao.
 
 ## Epic 3: Ingestao CSV
 
@@ -833,20 +979,28 @@ Aceite:
   competencia correta. Enquanto nao houver cadastro, o sistema usa fallback
   configuravel e deve indicar essa premissa quando relevante.
 
-US-043A: Como usuario, quero cadastrar dados basicos do meu cartao para melhorar a previsao de fatura.
+US-043A: Como usuario, quero que o sistema detecte dados basicos do meu cartao e faturas para melhorar a previsao com minimo input manual.
 
 Aceite:
 
-- Cadastro permite informar nome/apelido do cartao, bandeira opcional, dia de
-  fechamento da fatura e dia de vencimento.
-- Fechamento e vencimento sao validados como dias de 1 a 31.
-- Usuario pode editar esses dados sem reimportar arquivos.
+- Importacoes de fatura devem tentar identificar cartao, emissor/bandeira,
+  competencia, fechamento, vencimento, total e status quando esses dados
+  existirem no arquivo.
+- Quando uma fatura for identificada com confianca suficiente, o sistema deve
+  criar ou atualizar a fatura automaticamente para o workspace.
+- Quando o cartao ainda nao existir, o sistema deve sugerir/criar um cartao
+  derivado da fatura, pedindo confirmacao apenas quando houver ambiguidade.
+- Cadastro manual de cartao/fatura fica disponivel como correcao ou fallback,
+  mas nao deve ser caminho obrigatorio para importacoes normais.
+- Fechamento e vencimento sao validados como dias/datas validas antes de afetar
+  parcelas e previsoes.
+- Usuario pode editar dados detectados sem reimportar arquivos.
 - Projecao de parcelas e parcelado futuro passam a usar `closing_day` do cartao
   quando o cartao da transacao for conhecido.
 - Quando nao houver cartao identificado, o sistema usa configuracao padrao do
   workspace e mostra a premissa.
-- Evolucao futura pode sugerir fechamento/vencimento por analise das faturas,
-  mas a sugestao precisa de confirmacao manual antes de afetar indicadores.
+- Status da fatura (`aberta`, `fechada`, `paga`, `parcial`) deve ser inferido
+  quando possivel e permanecer editavel pelo usuario.
 
 US-044: Como usuario, quero comparar gasto real contra orcamento para agir antes de estourar limites.
 
