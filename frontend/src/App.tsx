@@ -300,7 +300,7 @@ type BatchPreviewResult =
 
 function projectionFeedToInputs(feed: ProjectionFeed) {
   return {
-    currentBalance: feed.current_balance !== null ? Number(feed.current_balance) : 0,
+    currentBalance: feed.current_balance !== null ? Number(feed.current_balance) : undefined,
     knownEvents: feed.known_events.map((ev) => ({
       amount: ev.amount,
       date: ev.date,
