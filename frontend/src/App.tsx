@@ -1461,7 +1461,7 @@ function CashflowPage({
   const categories = useCategories(session);
   const subcategoryQuery = useMemo(
     () =>
-      selectedExpenseCategoryId
+      selectedExpenseCategoryId && selectedExpenseCategoryId !== "__uncategorized__"
         ? withQueryParams(period.query, { category_id: selectedExpenseCategoryId, limit: "10" })
         : withQueryParams(period.query, { limit: "10" }),
     [period.query, selectedExpenseCategoryId],
@@ -1535,11 +1535,25 @@ function CashflowPage({
     () => buildExpenseCategoryOptions(expenseTransactions.data?.items ?? [], categories.data?.items ?? []),
     [categories.data?.items, expenseTransactions.data?.items],
   );
-  const selectedExpenseCategory = expenseCategoryOptions.find((item) => item.id === selectedExpenseCategoryId) ?? null;
-  const subcategoryRows = useMemo(
-    () => buildSubcategoryRows(subcategoryRanking.data?.items ?? []),
-    [subcategoryRanking.data?.items],
+  const subcategoryFilterOptions = useMemo(
+    () => categoryItems.map((item) => ({
+      id: item.category_id ?? "__uncategorized__",
+      label: item.category_name,
+    })),
+    [categoryItems],
   );
+  const selectedExpenseCategory = subcategoryFilterOptions.find((item) => item.id === selectedExpenseCategoryId) ?? null;
+  const categoriesById = useMemo(
+    () => new Map((categories.data?.items ?? []).map((c) => [c.id, c])),
+    [categories.data?.items],
+  );
+  const subcategoryRows = useMemo(() => {
+    const raw = subcategoryRanking.data?.items ?? [];
+    const filtered = selectedExpenseCategoryId === "__uncategorized__"
+      ? raw.filter((item) => item.category_id === null)
+      : raw;
+    return buildSubcategoryRows(filtered, categoriesById);
+  }, [categoriesById, selectedExpenseCategoryId, subcategoryRanking.data?.items]);
 
   function openCashflowPointTransactions(data: { activeLabel?: string } | null) {
     if (!data?.activeLabel) return;
@@ -1723,14 +1737,14 @@ function CashflowPage({
               Categoria
               <select value={selectedExpenseCategoryId} onChange={(event) => setSelectedExpenseCategoryId(event.target.value)}>
                 <option value="">Todas</option>
-                {expenseCategoryOptions.filter((item) => item.id !== "__uncategorized__").map((item) => (
+                {subcategoryFilterOptions.map((item) => (
                   <option key={item.id} value={item.id}>{item.label}</option>
                 ))}
               </select>
             </label>
             <SubcategoryBreakdown
               categoryColorMap={new Map(categoryItems.map((item, index) => [item.category_id, chartPalette[index % chartPalette.length]]))}
-              categoryLabelMap={new Map(expenseCategoryOptions.map((item) => [item.id, item.label]))}
+              categoryLabelMap={new Map(subcategoryFilterOptions.map((item) => [item.id, item.label]))}
               items={subcategoryRows}
               loading={subcategoryRanking.isLoading}
               showCategoryLabel={!selectedExpenseCategoryId}
@@ -1822,6 +1836,7 @@ type ExpenseCategoryOption = {
 type SubcategorySummary = {
   averageTicket: number;
   categoryId: string | null;
+  parentCategoryId: string | null;
   direction: string;
   percentageOfCategory: number;
   subcategory: string;
@@ -2058,8 +2073,9 @@ function SubcategoryBreakdown({
   return (
     <div className="subcategory-list">
       {visibleItems.map((item) => {
-        const color = categoryColorMap?.get(item.categoryId) ?? "#8b5cf6";
-        const categoryLabel = showCategoryLabel && item.categoryId ? categoryLabelMap?.get(item.categoryId) : null;
+        const color = categoryColorMap?.get(item.parentCategoryId) ?? "#64748b";
+        const lookupId = item.parentCategoryId ?? "__uncategorized__";
+        const categoryLabel = showCategoryLabel ? (categoryLabelMap?.get(lookupId) ?? null) : null;
         return (
         <button className="subcategory-row" key={`${item.subcategory}-${item.categoryId ?? "none"}`} onClick={() => onOpen(item)} type="button">
           <span>
@@ -2348,16 +2364,21 @@ function buildExpenseCategoryOptions(transactions: TransactionRead[], categories
   return Array.from(grouped.values()).sort((left, right) => left.label.localeCompare(right.label, "pt-BR"));
 }
 
-function buildSubcategoryRows(items: SubcategoryRankingItem[]): SubcategorySummary[] {
-  return items.map((item) => ({
-    averageTicket: Number(item.average_amount ?? 0),
-    categoryId: item.category_id,
-    direction: "debit",
-    percentageOfCategory: Number(item.share_ratio ?? 0),
-    subcategory: item.subcategory_name,
-    total: Number(item.amount ?? 0),
-    transactionCount: item.count,
-  }));
+function buildSubcategoryRows(items: SubcategoryRankingItem[], categoriesById: Map<string, CategoryRead>): SubcategorySummary[] {
+  return items.map((item) => {
+    const cat = item.category_id ? categoriesById.get(item.category_id) : null;
+    const parentCategoryId = cat?.parent_category_id ?? item.category_id;
+    return {
+      averageTicket: Number(item.average_amount ?? 0),
+      categoryId: item.category_id,
+      parentCategoryId,
+      direction: "debit",
+      percentageOfCategory: Number(item.share_ratio ?? 0),
+      subcategory: item.subcategory_name,
+      total: Number(item.amount ?? 0),
+      transactionCount: item.count,
+    };
+  });
 }
 
 function transactionCategoryParts(transaction: TransactionRead, categories: CategoryRead[]) {
