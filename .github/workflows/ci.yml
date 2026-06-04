@@ -29,6 +29,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  pull-requests: write
 
 jobs:
   changes:
@@ -296,3 +297,51 @@ jobs:
 
           aws lambda wait function-updated-v2 \
             --function-name "${BACKEND_LAMBDA_FUNCTION_NAME}"
+
+  auto-pr:
+    name: Abrir PR automático
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' &&
+      (startsWith(github.ref_name, 'feature/') || startsWith(github.ref_name, 'codex/'))
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Criar PR draft se não existir
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_BODY: |
+            ## O que muda
+            <!-- Descreva as alterações desta branch -->
+
+            ## Como testar
+            <!-- Passos para validar localmente -->
+
+            ---
+            *PR criado automaticamente pelo CI ao fazer push nesta branch.*
+        run: |
+          set -euo pipefail
+
+          branch="${{ github.ref_name }}"
+
+          # Verifica se já existe PR aberto para esta branch
+          existing=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number' 2>/dev/null || echo "")
+
+          if [ -n "$existing" ]; then
+            echo "PR #$existing ja existe para $branch — nenhuma acao necessaria."
+            exit 0
+          fi
+
+          # Gera titulo legivel a partir do nome da branch
+          # Ex: feature/ajuste-duplicados → Ajuste Duplicados
+          raw_title=$(echo "$branch" | sed 's|feature/||;s|codex/||;s|[_-]| |g')
+          title=$(echo "$raw_title" | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2); print}')
+
+          gh pr create \
+            --title "$title" \
+            --body "$PR_BODY" \
+            --base main \
+            --draft
+
+          echo "Draft PR criado: $branch -> main"
