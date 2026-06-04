@@ -1,5 +1,5 @@
 import type { Dispatch, FormEvent, ReactNode, SetStateAction } from "react";
-import { useState } from "react";
+import { useRef, useEffect, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -489,6 +489,103 @@ function ProtectedApp({
 }
 
 // ---------------------------------------------------------------------------
+// DashboardPeriodPicker
+// ---------------------------------------------------------------------------
+
+function DashboardPeriodPicker({ period, onChange }: { period: PeriodState; onChange: (p: PeriodState) => void }) {
+  const [popoverOpen, setPopoverOpen] = useState(false);
+  const [tempFrom, setTempFrom] = useState(period.dateFrom);
+  const [tempTo, setTempTo] = useState(period.dateTo);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!popoverOpen) return;
+    setTempFrom(period.dateFrom);
+    setTempTo(period.dateTo);
+    function handleOutside(e: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) setPopoverOpen(false);
+    }
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, [popoverOpen, period.dateFrom, period.dateTo]);
+
+  function applyPreset(preset: TransactionPeriodPreset) {
+    const range = periodRange(preset);
+    onChange({ ...range, periodPreset: preset });
+    setPopoverOpen(false);
+  }
+
+  function applyCustom() {
+    if (!tempFrom || !tempTo) return;
+    onChange({ dateFrom: tempFrom, dateTo: tempTo, periodPreset: "custom" });
+    setPopoverOpen(false);
+  }
+
+  function apply3Months() {
+    const to = new Date();
+    const from = new Date();
+    from.setMonth(from.getMonth() - 3);
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+    onChange({ dateFrom: fmt(from), dateTo: fmt(to), periodPreset: "custom" });
+    setPopoverOpen(false);
+  }
+
+  const isM0 = period.periodPreset === "current_month";
+  const isM1 = period.periodPreset === "previous_month";
+  const is3M = period.periodPreset === "custom" && (() => {
+    const diff = Math.round((new Date(period.dateTo).getTime() - new Date(period.dateFrom).getTime()) / 86400000);
+    return diff >= 88 && diff <= 93;
+  })();
+  const isCustom = period.periodPreset === "custom" && !is3M;
+
+  return (
+    <div className="dash-period-picker" ref={wrapperRef}>
+      <div className="dash-period-segments">
+        <button className={`dash-seg-btn${isM0 ? " active" : ""}`} onClick={() => applyPreset("current_month")} type="button" title="Mês atual">M0</button>
+        <button className={`dash-seg-btn${isM1 ? " active" : ""}`} onClick={() => applyPreset("previous_month")} type="button" title="Mês anterior">M-1</button>
+        <button className={`dash-seg-btn${is3M ? " active" : ""}`} onClick={apply3Months} type="button" title="Últimos 3 meses">3M</button>
+        <button className={`dash-seg-btn${period.periodPreset === "current_year" ? " active" : ""}`} onClick={() => applyPreset("current_year")} type="button" title="Este ano">1A</button>
+        <button className={`dash-seg-btn dash-seg-cal${isCustom ? " active" : ""}`} onClick={() => setPopoverOpen(v => !v)} type="button" title="Período personalizado">
+          <CalendarDays size={14} />
+          {isCustom ? <span>{period.dateFrom.slice(5).replace("-", "/")} → {period.dateTo.slice(5).replace("-", "/")}</span> : null}
+        </button>
+      </div>
+
+      {popoverOpen && (
+        <div className="dash-period-popover">
+          <p className="dash-period-popover-title">Período personalizado</p>
+          <div className="dash-period-presets">
+            <button className="dash-period-preset-btn" onClick={() => applyPreset("current_month")} type="button">Mês atual</button>
+            <button className="dash-period-preset-btn" onClick={() => applyPreset("previous_month")} type="button">Mês anterior</button>
+            <button className="dash-period-preset-btn" onClick={apply3Months} type="button">Últimos 3 meses</button>
+            <button className="dash-period-preset-btn" onClick={() => applyPreset("current_year")} type="button">Este ano</button>
+            <button className="dash-period-preset-btn" onClick={() => applyPreset("previous_year")} type="button">Ano anterior</button>
+            <button className="dash-period-preset-btn" onClick={() => applyPreset("all")} type="button">Tudo</button>
+          </div>
+          <div className="dash-period-divider" />
+          <p className="dash-period-popover-label">Intervalo customizado</p>
+          <div className="dash-period-inputs">
+            <div className="dash-period-input-group">
+              <label>De</label>
+              <input type="date" value={tempFrom} onChange={e => setTempFrom(e.target.value)} />
+            </div>
+            <span className="dash-period-arrow">→</span>
+            <div className="dash-period-input-group">
+              <label>Até</label>
+              <input type="date" value={tempTo} onChange={e => setTempTo(e.target.value)} />
+            </div>
+          </div>
+          <div className="dash-period-popover-actions">
+            <button className="dash-period-cancel" onClick={() => setPopoverOpen(false)} type="button">Cancelar</button>
+            <button className="dash-period-apply" onClick={applyCustom} type="button" disabled={!tempFrom || !tempTo}>Aplicar</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Topbar
 // ---------------------------------------------------------------------------
 
@@ -524,14 +621,7 @@ function Topbar({
       </div>
       <div className="topbar-actions">
         {page === "dashboard" ? (
-          <PeriodFilter
-            dateFrom={dashboardPeriod.dateFrom}
-            dateTo={dashboardPeriod.dateTo}
-            periodPreset={dashboardPeriod.periodPreset}
-            onPreset={topbarSetPreset}
-            onDateFrom={(d) => setDashboardPeriod((p) => ({ ...p, dateFrom: d, periodPreset: "custom" }))}
-            onDateTo={(d) => setDashboardPeriod((p) => ({ ...p, dateTo: d, periodPreset: "custom" }))}
-          />
+          <DashboardPeriodPicker period={dashboardPeriod} onChange={setDashboardPeriod} />
         ) : null}
 
         <div className="notif-wrapper">
