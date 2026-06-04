@@ -326,12 +326,20 @@ def test_dashboard_expense_size_profile_uses_expenses_without_card_payments(
 
     assert response.status_code == 200
     payload = response.json()
+    assert len(payload["items"]) == 5
     assert sum(Decimal(item["total"]) for item in payload["items"]) == Decimal("1525.50")
+    assert payload["items"][0]["key"] == "cotidiana"
     assert payload["items"][0]["total"] == "25.50"
     assert payload["items"][0]["count"] == 1
+    assert payload["items"][1]["key"] == "pequena"
     assert payload["items"][1]["total"] == "0.00"
-    assert payload["items"][2]["total"] == "1500.00"
-    assert payload["items"][2]["count"] == 1
+    assert payload["items"][2]["key"] == "media"
+    assert payload["items"][2]["total"] == "0.00"
+    assert payload["items"][3]["key"] == "alta"
+    assert payload["items"][3]["total"] == "1500.00"
+    assert payload["items"][3]["count"] == 1
+    assert payload["items"][4]["key"] == "premium"
+    assert payload["items"][4]["total"] == "0.00"
 
 
 def test_dashboard_cashflow_places_card_installment_on_invoice_due_month(

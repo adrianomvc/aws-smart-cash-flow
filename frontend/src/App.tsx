@@ -2335,9 +2335,11 @@ function buildIncomeCategoryRows(transactions: TransactionRead[], categories: Ca
 
 function buildExpenseSizeProfile(items: ExpenseSizeProfileItem[]): ExpenseSizeSegment[] {
   const toneByKey = new Map([
-    ["small", "info" as const],
-    ["medium", "warning" as const],
-    ["large", "negative" as const],
+    ["cotidiana", "info" as const],
+    ["pequena", "info" as const],
+    ["media", "warning" as const],
+    ["alta", "negative" as const],
+    ["premium", "negative" as const],
   ]);
   return items.map((item) => ({
     average: Number(item.average_amount ?? 0),

@@ -435,15 +435,11 @@ class DashboardService:
         ]
         total_expenses = sum(debits, ZERO)
         segments = [
-            ("small", "Pequenas saídas", "Até R$ 100", ZERO, Decimal("100.00")),
-            (
-                "medium",
-                "Saídas médias",
-                "De R$ 100,01 a R$ 1.000",
-                Decimal("100.00"),
-                Decimal("1000.00"),
-            ),
-            ("large", "Grandes saídas", "Acima de R$ 1.000", Decimal("1000.00"), None),
+            ("cotidiana", "Cotidiana", "Até R$ 50", ZERO, Decimal("50.00")),
+            ("pequena", "Pequena", "De R$ 50,01 a R$ 200", Decimal("50.00"), Decimal("200.00")),
+            ("media", "Média", "De R$ 200,01 a R$ 1.000", Decimal("200.00"), Decimal("1000.00")),
+            ("alta", "Alta", "De R$ 1.000,01 a R$ 5.000", Decimal("1000.00"), Decimal("5000.00")),
+            ("premium", "Premium", "Acima de R$ 5.000", Decimal("5000.00"), None),
         ]
         items: list[dict[str, object]] = []
         for key, label, helper, minimum, maximum in segments:
