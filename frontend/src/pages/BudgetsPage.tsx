@@ -10,6 +10,7 @@ import {
 } from "../lib/api";
 import {
   apiErrorMessage,
+  buildBudgetRows,
   commitmentTone,
   formatPercentNumber,
   moneyAbs,
@@ -37,20 +38,6 @@ import { categoryPath } from "../lib/utils";
 // Helpers
 // ---------------------------------------------------------------------------
 
-function buildBudgetRows(items: CategoryRankingItem[]) {
-  return items.slice(0, 8).map((item, index) => {
-    const spent = Number(item.amount ?? 0);
-    const multiplier = [1.18, 1.05, 0.92, 1.28, 1.12, 0.88, 1.2, 1.1][index] ?? 1.1;
-    const limit = Math.max(100, Math.round((spent * multiplier) / 10) * 10);
-    return {
-      categoryId: item.category_id,
-      categoryName: item.category_name,
-      limit,
-      ratio: spent / Math.max(limit, 1),
-      spent,
-    };
-  });
-}
 
 function buildPersistedBudgetRows({
   budgets,

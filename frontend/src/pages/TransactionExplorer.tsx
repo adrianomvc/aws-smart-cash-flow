@@ -19,6 +19,7 @@ import {
 import {
   createManualTransaction,
   deleteTransaction,
+  getActiveAccounts,
   getDashboardSummary,
   getTransactionDuplicates,
   getTransactions,
@@ -61,6 +62,7 @@ import {
   SortHeader,
 } from "../components/ui";
 import type {
+  ActiveAccountItem,
   ApiSession,
   CategoryRead,
   DuplicateTransactionGroup,
@@ -74,6 +76,45 @@ import type { TransactionDrilldown, TransactionPeriodPreset } from "../types";
 
 function DirectionBadge({ direction }: { direction: string }) {
   return <span className={`direction-badge ${direction}`}>{directionLabel(direction)}</span>;
+}
+
+function ActiveAccountsPanel({ accounts, loading }: { accounts: ActiveAccountItem[]; loading: boolean }) {
+  if (loading) {
+    return <div className="loading-state"><Loader2 className="spin" size={16} />Carregando contas...</div>;
+  }
+  if (!accounts.length) {
+    return <div className="account-item"><span className="account-item-meta">Nenhuma conta ativa encontrada.</span></div>;
+  }
+  return (
+    <div className="accounts-panel">
+      {accounts.map((account, idx) => (
+        <div className="account-item" key={idx}>
+          <div className="account-item-header">
+            <span className="account-item-name">{account.account_name}</span>
+          </div>
+          {account.kind === "bank" ? (
+            <>
+              <div className="account-item-balance">{money(account.current_balance)}</div>
+              {account.balance_date ? <div className="account-item-meta">Extrato: {account.balance_date}</div> : null}
+            </>
+          ) : (
+            <>
+              <div className="account-item-balance">{money(account.used_amount)} <span className="account-item-meta">/ {money(account.limit_amount)}</span></div>
+              <div className="account-item-track">
+                <div
+                  className="account-item-track-fill"
+                  style={{ width: `${account.limit_amount ? Math.min(100, ((account.used_amount ?? 0) / account.limit_amount) * 100) : 0}%` }}
+                />
+              </div>
+              {account.available_amount != null ? (
+                <div className="account-item-available">Disponível: {money(account.available_amount)}</div>
+              ) : null}
+            </>
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function CategoryPicker({ categoryOptions, transaction, session, onCategorized }: {
@@ -433,6 +474,7 @@ export function TransactionExplorer({
   const transactions = useQuery({ queryKey: ["transactions", session.token, query], queryFn: () => getTransactions(session, query) });
   const duplicatesQuery = `?limit=${duplicatePageSize}&offset=${duplicatePage * duplicatePageSize}`;
   const duplicates = useQuery({ queryKey: ["transaction-duplicates", session.token, duplicatesQuery], queryFn: () => getTransactionDuplicates(session, duplicatesQuery), enabled: showDuplicates });
+  const activeAccounts = useQuery({ queryKey: ["active-accounts", session.token], queryFn: () => getActiveAccounts(session), staleTime: 2 * 60 * 1000 });
   const remove = useMutation({
     mutationFn: (transactionId: string) => deleteTransaction(session, transactionId),
     onSuccess: () => {
@@ -599,6 +641,12 @@ export function TransactionExplorer({
 
         {!reviewMode && showDuplicates ? (
           <DuplicateTransactionsPanel groups={duplicates.data?.groups ?? []} loading={duplicates.isLoading} onReviewGroup={openGroupReview} onAutoResolveAll={autoResolveAllGroups} onNextPage={() => setDuplicatePage((c) => c + 1)} onPreviousPage={() => setDuplicatePage((c) => Math.max(c - 1, 0))} onRefresh={() => void duplicates.refetch()} page={duplicatePage} pageSize={duplicatePageSize} resolving={removeDuplicateReviewItems.isPending} totalGroups={duplicates.data?.total_groups ?? 0} totalTransactions={duplicates.data?.total_transactions ?? 0} />
+        ) : null}
+
+        {!reviewMode ? (
+          <Panel title="Contas ativas">
+            <ActiveAccountsPanel accounts={activeAccounts.data?.items ?? []} loading={activeAccounts.isLoading} />
+          </Panel>
         ) : null}
 
         <Panel title={reviewMode ? "Pendências" : "Lançamentos"}>

@@ -54,6 +54,11 @@ import {
   getTransactions,
 } from "../lib/api";
 import {
+  buildBudgetRows,
+  buildCalendarEvents,
+  calendarEventStatusLabel,
+  calendarEventTone,
+  calendarEventTypeLabel,
   compactMoneyAbs,
   compactMoneyAxis,
   commitmentTone,
@@ -182,43 +187,6 @@ function alertSeverityLabel(tone: "info" | "negative" | "warning") {
   if (tone === "negative") return "Crítico";
   if (tone === "warning") return "Atenção";
   return "Informação";
-}
-
-function calendarEventTone(event: CalendarEventRead): "info" | "negative" | "positive" | "warning" {
-  if (event.status === "paid") return "positive";
-  if (event.event_type === "income") return "positive";
-  if (event.event_type === "card_payment" || event.event_type === "subscription") return "warning";
-  if (event.event_type === "expense") return "negative";
-  return "info";
-}
-
-function calendarEventTypeLabel(eventType: string) {
-  const labels: Record<string, string> = { card_payment: "Fatura", expense: "Despesa", goal: "Meta", income: "Receita", other: "Outro", subscription: "Assinatura" };
-  return labels[eventType] ?? eventType;
-}
-
-function calendarEventStatusLabel(eventStatus: string) {
-  const labels: Record<string, string> = { paid: "Pago", planned: "Planejado", skipped: "Ignorado" };
-  return labels[eventStatus] ?? eventStatus;
-}
-
-function buildCalendarEvents({ apiEvents, installments, recurring, transactions }: { apiEvents?: CalendarEventRead[]; installments: CreditCardInstallmentItem[]; recurring: RecurringExpenseItem[]; transactions: TransactionRead[] }): CalendarEvent[] {
-  if (apiEvents?.length) {
-    return apiEvents.map((event) => ({ amount: event.amount ?? 0, date: event.due_date, detail: `${calendarEventTypeLabel(event.event_type)} · ${calendarEventStatusLabel(event.status)}`, direction: event.event_type === "income" ? "credit" : "debit", kind: event.recurrence === "monthly" ? "Recorrente" : "Planejado", label: event.title, search: event.title, tone: calendarEventTone(event) })).sort((a, b) => a.date.localeCompare(b.date));
-  }
-  const recurringEvents: CalendarEvent[] = recurring.slice(0, 5).map((item) => ({ amount: item.last_amount || item.average_amount, date: item.last_transaction_date, detail: `${item.transaction_count} ocorrências em ${item.month_count} mês${item.month_count === 1 ? "" : "es"}`, direction: "debit", kind: item.category_name ?? "Recorrência provável", label: item.description, search: item.description, tone: Number(item.change_ratio ?? 0) >= 0.3 ? "warning" : "info" }));
-  const installmentEvents: CalendarEvent[] = installments.slice(0, 4).map((item) => ({ amount: item.amount, date: item.last_transaction_date, detail: `${item.installment_current}/${item.installment_total} · faltam ${item.remaining_installments}`, direction: "debit", kind: "Parcela de cartão", label: item.description, search: item.description, tone: item.remaining_installments >= 3 ? "warning" : "info" }));
-  const transactionEvents: CalendarEvent[] = transactions.filter((t) => t.direction !== "payment").slice(0, 4).map((t) => ({ amount: t.amount, date: t.transaction_date, detail: sourceTypeLabel(t.source_type), direction: t.direction, kind: t.direction === "credit" ? "Entrada recente" : "Saída recente", label: t.description, search: t.description, tone: t.direction === "credit" ? "positive" : "negative" }));
-  return [...recurringEvents, ...installmentEvents, ...transactionEvents].filter((item) => item.date).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 10);
-}
-
-function buildBudgetRows(items: CategoryRankingItem[]) {
-  return items.slice(0, 8).map((item, index) => {
-    const spent = Number(item.amount ?? 0);
-    const multiplier = [1.18, 1.05, 0.92, 1.28, 1.12, 0.88, 1.2, 1.1][index] ?? 1.1;
-    const limit = Math.max(100, Math.round((spent * multiplier) / 10) * 10);
-    return { categoryId: item.category_id, categoryName: item.category_name, limit, ratio: spent / Math.max(limit, 1), spent };
-  });
 }
 
 function buildPersistedBudgetRows({ budgets, categories, ranking }: { budgets?: BudgetRead[]; categories: CategoryRead[]; ranking: CategoryRankingItem[] }) {
@@ -607,26 +575,73 @@ export function DashboardPage({
     onOpenTransactions({ categoryId: item.category_id, dateFrom: period.dateFrom, dateTo: period.dateTo, label: item.category_name, periodPreset: period.periodPreset });
   }
 
+  const healthTone = healthScore === null ? "info" : financialHealthTone(healthScore);
+  const healthScoreClass = healthTone === "positive" ? "" : healthTone === "warning" ? " warning" : " negative";
+  const projectionRiskDays = projectionRisk ? Math.floor((new Date(projectionRisk.date).getTime() - new Date(isoDate(new Date())).getTime()) / 86400000) : null;
+
   return (
     <section className="page-stack">
-      <DashboardFlowStory futureCommitments={projection30Loading ? null : projection30KnownCommitments} onOpenAnalysis={() => onNavigate("reports")} periodLabel={periodSummary(period)} projectionLoading={projection30Loading} projectedBalance={projection30Loading ? null : projection30FinalBalance} summaryLoading={summary.isLoading} summary={summary.data} />
+      {/* DashboardHero — substitui os dois blocos de MetricCards */}
+      <div className="dashboard-hero" aria-label="Resumo financeiro">
+        <div className="hero-top">
+          <div className="hero-greeting">
+            <strong>Olá, {session.workspace_name} 👋</strong>
+            <span>Resumo financeiro do período</span>
+          </div>
+          {healthScore !== null ? (
+            <div className="health-badge">
+              <span className={`health-score${healthScoreClass}`}>{healthScore}</span>
+              <div className="health-label">
+                <span>Saúde financeira</span>
+                <strong className={healthScoreClass.trim()}>{financialHealthLabel(healthScore)}</strong>
+              </div>
+            </div>
+          ) : null}
+        </div>
 
-      <div className="metric-grid executive dashboard-kpis" aria-label="Indicadores principais do Dashboard">
-        <MetricCard icon={CreditCard} label="Saldo atual" value={currentBalanceValue === null ? "Sem saldo" : formatCurrencyCompact(currentBalanceValue)} title={currentBalanceValue === null ? undefined : money(currentBalanceValue)} helper={summary.data?.current_balance_date ? `Extrato em ${dateInputLabel(summary.data.current_balance_date)}` : "Sem saldo importado"} helpText={summary.data?.current_balance_date ? `Quanto havia na conta no último saldo importado do extrato: ${summary.data.current_balance_account ?? "Conta corrente"}.` : "Mostra quanto há na conta. Para preencher, importe o extrato Excel."} tone={currentBalanceValue === null ? "info" : currentBalanceValue >= 0 ? "positive" : "negative"} />
-        <MetricCard icon={BarChart3} label="Fluxo líquido" title={money(summary.data?.balance)} value={formatCurrencyCompactSigned(summary.data?.balance)} helper="Receitas - despesas" helpText="Mostra se entrou mais dinheiro do que saiu no período selecionado." tone={balance < 0 ? "negative" : "positive"} />
-        <MetricCard icon={Gauge} label="Burn rate" title={moneyAbs(summary.data?.burn_rate)} value={compactMoneyAbs(summary.data?.burn_rate)} helper="Gasto médio mensal" helpText={`Quanto você costuma gastar por mês, calculado pela média de ${summary.data?.burn_rate_months ?? 0} mês${summary.data?.burn_rate_months === 1 ? "" : "es"}.`} tone="warning" onClick={() => openMetricTransactions("debit", "Burn rate")} />
-        <MetricCard icon={PiggyBank} label="Saving rate" title={percent(summary.data?.savings_rate)} value={percentAbs(summary.data?.savings_rate)} helper="Sobra / receitas" helpText="Mostra qual parte do dinheiro que entrou ainda sobrou no período." tone={Number(summary.data?.savings_rate ?? 0) < 0 ? "negative" : "positive"} />
-        <MetricCard icon={Percent} label="% comprometimento" title={percent(summary.data?.commitment_rate)} value={percentAbs(summary.data?.commitment_rate)} helper="Despesas / receitas" helpText="Mostra quanto da sua renda já foi consumida por despesas no período." tone={commitmentTone(summary.data?.commitment_rate)} onClick={() => openMetricTransactions("debit", "Comprometimento da receita")} />
-        <MetricCard icon={ArrowUpCircle} label="Receitas" title={moneyAbs(summary.data?.income)} value={compactMoneyAbs(summary.data?.income)} helper="Entradas do período" helpText="Todo dinheiro que entrou no período selecionado." tone="positive" onClick={() => openMetricTransactions("credit", "Receitas do período")} />
+        <div className="hero-cards">
+          <div className="hero-card">
+            <small>Saldo atual em conta</small>
+            <strong>{currentBalanceValue === null ? "Sem saldo" : formatCurrencyCompact(currentBalanceValue)}</strong>
+            <p>{summary.data?.current_balance_date ? `Extrato em ${dateInputLabel(summary.data.current_balance_date)}` : "Sem saldo importado"}</p>
+          </div>
+          <div className="hero-card highlight">
+            <small>Pode gastar com segurança</small>
+            <strong>{safeSpendValue === null ? "Sem cálculo" : formatCurrencyCompact(safeSpend)}</strong>
+            <p>Após compromissos</p>
+          </div>
+          <div className={`hero-card${runwayMonths !== null && runwayMonths < 6 ? " warn" : ""}`}>
+            <small>Fôlego financeiro</small>
+            <strong>{runwayMonths === null ? "Sem cálculo" : `${formatNumber(runwayMonths)} meses`}</strong>
+            <p>{runwayMonths === null ? "Sem saldo atual" : "Saldo atual / gastos"}</p>
+          </div>
+        </div>
+
+        {!projection30Loading ? (
+          projectionRisk ? (
+            <div className="hero-conclusion risk">
+              ⚠️ Atenção: saldo pode ficar negativo em {projectionRiskDays} dia{projectionRiskDays === 1 ? "" : "s"}.
+            </div>
+          ) : (
+            <div className="hero-conclusion">
+              ✅ Nenhum risco de saldo negativo nos próximos 30 dias. Menor saldo: {money(projection30Result.lowestProjectedBalance)}.
+            </div>
+          )
+        ) : null}
       </div>
 
-      <section className="dashboard-section reserved-indicators" aria-label="Indicadores avançados reservados">
-        <DashboardSectionHeader eyebrow="Leituras avançadas" title="Indicadores em evolução" description="Verde indica situação saudável, amarelo pede atenção e vermelho sinaliza risco." />
-        <div className="metric-grid executive reserved-kpis">
-          <MetricCard className="reserved" icon={ShieldCheck} label="Fôlego financeiro" value={runwayMonths === null ? "Sem cálculo" : `${formatNumber(runwayMonths)} meses`} helper={runwayMonths === null ? "Sem saldo atual" : "Saldo atual / gastos"} helpText={`Tempo estimado que seu saldo sustenta seus gastos. Gasto base: ${moneyAbs(runwayBurnRate)}/mês.`} tone={runwayMonths === null ? "info" : runwayMonths >= 6 ? "positive" : runwayMonths >= 3 ? "warning" : "negative"} />
-          <MetricCard className="reserved" icon={Gauge} label="Gasto médio mensal" value={burnRate90Days > 0 ? `${compactMoneyAbs(burnRate90Days)}/mês` : "Sem histórico"} helper={burnRate90Days > 0 ? "Últimos 90 dias" : "Sem histórico recente"} helpText={`Média das saídas dos últimos ${summary.data?.burn_rate_90_days_window ?? 0} dias, dividida por 3 meses.`} tone={burnRate90Days > 0 && safeSpendValue !== null && safeSpendValue < 0 ? "negative" : burnRate90Days > 0 ? "warning" : "info"} />
-          <MetricCard className="reserved" icon={ShieldCheck} label="Pode gastar com segurança" value={safeSpendValue === null ? "Sem cálculo" : formatCurrencyCompactSigned(safeSpend)} helper={safeSpendValue === null ? "Configure reserva" : "Após compromissos"} helpText={`Mostra quanto poderia gastar nos próximos 30 dias considerando saldo atual, entradas previstas, compromissos, parcelas e reserva mínima de ${moneyAbs(summary.data?.safe_spend_reserve_minimum)}.`} tone={safeSpendValue === null ? "info" : safeSpendValue < 0 ? "negative" : "positive"} />
-          <MetricCard className="reserved" icon={Brain} label="Saúde financeira" value={healthScore === null ? "Sem score" : `${healthScore}/100`} helper={healthScore === null ? "Sem base suficiente" : financialHealthLabel(healthScore)} helpText="Resume sua saúde financeira em uma nota: saldo, ritmo de gastos, sobra, comprometimento e gasto seguro." tone={healthScore === null ? "info" : financialHealthTone(healthScore)} />
+      <DashboardFlowStory futureCommitments={projection30Loading ? null : projection30KnownCommitments} onOpenAnalysis={() => onNavigate("reports")} periodLabel={periodSummary(period)} projectionLoading={projection30Loading} projectedBalance={projection30Loading ? null : projection30FinalBalance} summaryLoading={summary.isLoading} summary={summary.data} />
+
+
+      <section className="dashboard-section">
+        <DashboardSectionHeader eyebrow="Cartões e projeção" title="Caixa projetado, fatura e parcelado" description="Veja primeiro o caixa dos próximos dias e depois o impacto dos cartões." />
+        <div className="dashboard-grid operations-grid">
+          <Panel title="Fluxo de caixa projetado — próximos 30 dias" description="Parte do saldo atual e projeta entradas, saídas e saldo dia a dia.">
+            <ProjectedCashflowSnapshot data={projection30Cashflow} loading={projection30Loading} lowestProjectedBalance={projection30Result.lowestProjectedBalance} onNavigatePlanning={() => onNavigate("planning")} risk={projectionRisk} />
+          </Panel>
+          <Panel title="Cartões de crédito" description="Resumo executivo da fatura e do parcelado futuro." action={<PanelLink label="Ver detalhes" onClick={() => onNavigate("cards")} />}>
+            <CreditCardSnapshot commitmentRate={cardCommitment} currentStatementTotal={currentStatementTotal} futureInstallments={installments.data?.total_future_amount ?? "0"} installmentCount={installments.data?.active_count ?? 0} loading={statements.isLoading || installments.isLoading || summary.isLoading} />
+          </Panel>
         </div>
       </section>
 
@@ -683,18 +698,6 @@ export function DashboardPage({
               <CategoryDonut items={categoryItems} loading={ranking.isLoading} onOpenCategory={openCategoryTransactions} />
             </Panel>
           </div>
-        </div>
-      </section>
-
-      <section className="dashboard-section">
-        <DashboardSectionHeader eyebrow="Cartões e projeção" title="Caixa projetado, fatura e parcelado" description="Veja primeiro o caixa dos próximos dias e depois o impacto dos cartões." />
-        <div className="dashboard-grid operations-grid">
-          <Panel title="Fluxo de caixa projetado — próximos 30 dias" description="Parte do saldo atual e projeta entradas, saídas e saldo dia a dia.">
-            <ProjectedCashflowSnapshot data={projection30Cashflow} loading={projection30Loading} lowestProjectedBalance={projection30Result.lowestProjectedBalance} onNavigatePlanning={() => onNavigate("planning")} risk={projectionRisk} />
-          </Panel>
-          <Panel title="Cartões de crédito" description="Resumo executivo da fatura e do parcelado futuro." action={<PanelLink label="Ver detalhes" onClick={() => onNavigate("cards")} />}>
-            <CreditCardSnapshot commitmentRate={cardCommitment} currentStatementTotal={currentStatementTotal} futureInstallments={installments.data?.total_future_amount ?? "0"} installmentCount={installments.data?.active_count ?? 0} loading={statements.isLoading || installments.isLoading || summary.isLoading} />
-          </Panel>
         </div>
       </section>
 

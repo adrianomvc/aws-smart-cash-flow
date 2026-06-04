@@ -497,6 +497,16 @@ export type ProjectionFeed = {
   }>;
 };
 
+export type ActiveAccountItem = {
+  kind: "bank" | "credit_card";
+  account_name: string;
+  current_balance?: number | null;
+  balance_date?: string | null;
+  limit_amount?: number | null;
+  used_amount?: number | null;
+  available_amount?: number | null;
+};
+
 export type ReportCardRead = {
   id: string;
   title: string;
@@ -998,4 +1008,8 @@ export async function resetPassword(email: string) {
   }
 
   return response.json() as Promise<{ message: string }>;
+}
+
+export function getActiveAccounts(session: ApiSession) {
+  return apiRequest<{ items: ActiveAccountItem[]; total: number }>("/accounts/active", session);
 }

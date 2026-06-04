@@ -4449,3 +4449,120 @@ td small {
   font-size: 10px;
   font-weight: 600;
 }
+
+/* Dashboard Hero v3 */
+.dashboard-hero {
+  background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%);
+  border-radius: 16px;
+  padding: 24px;
+  margin-bottom: 20px;
+  color: #fff;
+}
+.dashboard-hero .hero-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.dashboard-hero .hero-greeting strong {
+  display: block;
+  font-size: 18px;
+  color: #fff;
+}
+.dashboard-hero .hero-greeting span {
+  font-size: 12px;
+  color: #a5b4fc;
+}
+.dashboard-hero .health-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255,255,255,.12);
+  border-radius: 12px;
+  padding: 10px 16px;
+  text-align: right;
+}
+.dashboard-hero .health-score {
+  font-size: 28px;
+  font-weight: 800;
+  color: #4ade80;
+}
+.dashboard-hero .health-score.warning { color: #fbbf24; }
+.dashboard-hero .health-score.negative { color: #f87171; }
+.dashboard-hero .health-label {
+  font-size: 11px;
+  color: #a5b4fc;
+}
+.dashboard-hero .health-label strong {
+  display: block;
+  font-size: 13px;
+  color: #4ade80;
+}
+.dashboard-hero .health-label strong.warning { color: #fbbf24; }
+.dashboard-hero .health-label strong.negative { color: #f87171; }
+.dashboard-hero .hero-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.dashboard-hero .hero-card {
+  background: rgba(255,255,255,.10);
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+.dashboard-hero .hero-card.highlight {
+  background: rgba(74,222,128,.15);
+  border-color: rgba(74,222,128,.3);
+}
+.dashboard-hero .hero-card.warn {
+  background: rgba(251,191,36,.12);
+  border-color: rgba(251,191,36,.25);
+}
+.dashboard-hero .hero-card small {
+  font-size: 11px;
+  color: #a5b4fc;
+  display: block;
+  margin-bottom: 4px;
+}
+.dashboard-hero .hero-card strong {
+  font-size: 20px;
+  font-weight: 800;
+  display: block;
+  color: #fff;
+}
+.dashboard-hero .hero-card.highlight strong { color: #4ade80; }
+.dashboard-hero .hero-card.warn strong { color: #fbbf24; }
+.dashboard-hero .hero-card p {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+.hero-conclusion {
+  padding: 10px 14px;
+  background: rgba(74,222,128,.15);
+  border-left: 3px solid #4ade80;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #bbf7d0;
+}
+.hero-conclusion.risk {
+  background: rgba(239,68,68,.15);
+  border-left-color: #ef4444;
+  color: #fca5a5;
+}
+
+/* Active Accounts Panel */
+.accounts-panel { display: flex; flex-direction: column; gap: 8px; }
+.account-item { padding: 10px 12px; background: #f8fafc; border-radius: 10px; border: 1px solid #e2e8f0; }
+.account-item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.account-item-name { font-size: 12px; font-weight: 600; color: #1e293b; }
+.account-item-balance { font-size: 14px; font-weight: 800; color: #0f172a; }
+.account-item-meta { font-size: 11px; color: #94a3b8; }
+.account-item-track { height: 5px; background: #e2e8f0; border-radius: 3px; margin: 6px 0 2px; overflow: hidden; }
+.account-item-track-fill { height: 100%; border-radius: 3px; background: #8b5cf6; }
+.account-item-available { font-size: 11px; color: #16a34a; font-weight: 600; }

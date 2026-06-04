@@ -16,6 +16,7 @@ import {
 import {
   amountClass,
   apiErrorMessage,
+  cardLabel,
   compactMoneyAbs,
   dateLabel,
   directionLabel,
@@ -51,10 +52,6 @@ import type { PeriodState, TransactionDrilldown } from "../types";
 // Helpers
 // ---------------------------------------------------------------------------
 
-function cardLabel(card: CreditCardRead) {
-  const suffix = card.last_four ? ` final ${card.last_four}` : "";
-  return `${card.name}${suffix}`;
-}
 
 function statementStatusLabel(status: string) {
   const labels: Record<string, string> = {
