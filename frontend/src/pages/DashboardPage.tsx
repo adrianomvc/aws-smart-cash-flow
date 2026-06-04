@@ -487,6 +487,7 @@ export function DashboardPage({
   onOpenTransactions,
   session,
   setDashboardPeriod,
+  workspaceName,
 }: {
   dashboardPeriod: PeriodState;
   onNavigate: (page: Page) => void;
@@ -494,6 +495,7 @@ export function DashboardPage({
   onOpenTransactions: (drilldown?: TransactionDrilldown) => void;
   session: ApiSession;
   setDashboardPeriod: Dispatch<SetStateAction<PeriodState>>;
+  workspaceName?: string;
 }) {
   const period = usePeriod(dashboardPeriod, setDashboardPeriod);
   const [cashflowView, setCashflowView] = useState<"day" | "month">("day");
@@ -585,7 +587,7 @@ export function DashboardPage({
       <div className="dashboard-hero" aria-label="Resumo financeiro">
         <div className="hero-top">
           <div className="hero-greeting">
-            <strong>Olá, {session.workspace_name} 👋</strong>
+            <strong>Olá{workspaceName ? `, ${workspaceName}` : ""} 👋</strong>
             <span>Resumo financeiro do período</span>
           </div>
           {healthScore !== null ? (
@@ -605,10 +607,10 @@ export function DashboardPage({
             <strong>{currentBalanceValue === null ? "Sem saldo" : formatCurrencyCompact(currentBalanceValue)}</strong>
             <p>{summary.data?.current_balance_date ? `Extrato em ${dateInputLabel(summary.data.current_balance_date)}` : "Sem saldo importado"}</p>
           </div>
-          <div className="hero-card highlight">
+          <div className={`hero-card${safeSpendValue === null ? "" : safeSpendValue >= 0 ? " highlight" : " warn"}`}>
             <small>Pode gastar com segurança</small>
-            <strong>{safeSpendValue === null ? "Sem cálculo" : formatCurrencyCompact(safeSpend)}</strong>
-            <p>Após compromissos</p>
+            <strong>{safeSpendValue === null ? "Sem cálculo" : formatCurrencyCompactSigned(safeSpend)}</strong>
+            <p>{safeSpendValue !== null && safeSpendValue < 0 ? "⚠️ Comprometimento alto" : "Após compromissos · 30 dias"}</p>
           </div>
           <div className={`hero-card${runwayMonths !== null && runwayMonths < 6 ? " warn" : ""}`}>
             <small>Fôlego financeiro</small>

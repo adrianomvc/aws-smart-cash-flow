@@ -469,6 +469,7 @@ function ProtectedApp({
           onOpenTransactions={onOpenTransactions}
           session={session}
           setDashboardPeriod={setDashboardPeriod}
+          workspaceName={workspace.workspace_name}
         />
       ) : null}
       {page === "cashflow" ? <CashflowPage onNavigate={onNavigate} onOpenTransactions={onOpenTransactions} session={session} /> : null}
