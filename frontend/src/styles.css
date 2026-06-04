@@ -3252,14 +3252,27 @@ td small {
   gap: 6px;
 }
 
-.filters .date-filter {
+.filters .date-filter,
+.transactions-filter-bar .date-filter {
+  align-items: center;
+  background: white;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
   color: #475569;
+  display: flex;
   font-size: 12px;
   font-weight: 800;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 10px;
 }
 
-.filters .date-filter input {
-  min-width: 128px;
+.filters .date-filter input,
+.transactions-filter-bar .date-filter input {
+  border: 0;
+  box-shadow: none;
+  min-width: 120px;
+  padding: 0;
 }
 
 .filter-clear {
