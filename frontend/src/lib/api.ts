@@ -593,7 +593,6 @@ async function apiRequest<T>(path: string, session: ApiSession, options: ApiOpti
   }
 
   const url = `${API_BASE_URL}${path}`;
-  console.log(`Fazendo requisição para: ${url}`);
 
   const response = await fetch(url, {
     method: options.method ?? "GET",
@@ -601,11 +600,8 @@ async function apiRequest<T>(path: string, session: ApiSession, options: ApiOpti
     body,
   });
 
-  console.log(`Resposta status: ${response.status}`);
-
   if (!response.ok) {
     const detail = await response.text();
-    console.error(`Erro na requisição: ${detail}`);
     throw new Error(detail || `API request failed: ${response.status}`);
   }
 
@@ -617,8 +613,6 @@ async function apiRequest<T>(path: string, session: ApiSession, options: ApiOpti
 }
 
 export function getCurrentWorkspace(session: ApiSession) {
-  console.log("getCurrentWorkspace chamado com token:", session.token);
-  console.log("API_BASE_URL:", API_BASE_URL);
   return apiRequest<WorkspaceCurrent>("/workspaces/current", session);
 }
 

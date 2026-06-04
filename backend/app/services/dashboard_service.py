@@ -590,9 +590,8 @@ class DashboardService:
         ).all()
         categories_by_id = {
             category.id: category
-            for category in self.db.scalars(
-                select(Category).where(Category.workspace_id == workspace_id)
-            ).all()
+            for _, category in rows
+            if category is not None
         }
         grouped: dict[str, dict[str, object]] = {}
         for transaction, category in rows:
@@ -1166,9 +1165,8 @@ class DashboardService:
 
         categories_by_id = {
             cat.id: cat
-            for cat in self.db.scalars(
-                select(Category).where(Category.workspace_id == workspace_id)
-            ).all()
+            for _, cat in rows
+            if cat is not None
         }
 
         grouped: dict[tuple[str | None, str], dict[str, object]] = {}

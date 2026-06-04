@@ -296,7 +296,12 @@ function recurringSource(description: string): ProjectionEventSource {
 }
 
 function addEvent(byDate: Map<string, CashFlowProjectionEvent[]>, date: string, event: CashFlowProjectionEvent) {
-  byDate.set(date, [...(byDate.get(date) ?? []), event]);
+  const existing = byDate.get(date);
+  if (existing) {
+    existing.push(event);
+  } else {
+    byDate.set(date, [event]);
+  }
 }
 
 function sumEvents(events: CashFlowProjectionEvent[], type: "income" | "expense") {

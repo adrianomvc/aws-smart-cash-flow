@@ -11,7 +11,7 @@ def normalize_database_url(database_url: str) -> str:
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_env: str = "local"
     log_level: str = "INFO"
@@ -22,8 +22,8 @@ class Settings(BaseSettings):
     supabase_service_role_key: str = ""
     supabase_storage_bucket: str = "financial-files"
     allow_local_auth: bool = Field(default=False, alias="ALLOW_LOCAL_AUTH")
-    database_pool_size: int = 1
-    database_max_overflow: int = 2
+    database_pool_size: int = 5
+    database_max_overflow: int = 10
     database_pool_recycle_seconds: int = 300
     default_credit_card_closing_day: int = Field(default=23, ge=1, le=31)
     default_credit_card_due_day: int = Field(default=30, ge=1, le=31)

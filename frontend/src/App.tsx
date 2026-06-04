@@ -654,13 +654,6 @@ function ProtectedApp({
     queryFn: () => getCurrentWorkspace(session),
   });
 
-  console.log("Workspace query state:", {
-    isLoading: workspaceQuery.isLoading,
-    isError: workspaceQuery.isError,
-    error: workspaceQuery.error,
-    data: workspaceQuery.data,
-  });
-
   if (workspaceQuery.isLoading) {
     return <PageState icon={Loader2} title="Carregando workspace" description="Preparando seu ambiente." spin />;
   }
@@ -788,16 +781,6 @@ function DashboardPage({
     () => projectionRangeFromPeriod(period.dateFrom, period.dateTo),
     [period.dateFrom, period.dateTo],
   );
-  const evolutionProjectionQuery = useMemo(
-    () =>
-      evolutionProjectionRange
-        ? withQueryParams("", {
-            date_from: evolutionProjectionRange.dateFrom,
-            date_to: evolutionProjectionRange.dateTo,
-          })
-        : "",
-    [evolutionProjectionRange],
-  );
   const projection30Range = useMemo(() => nextDaysRange(30), []);
   const projection30Query = useMemo(
     () =>
@@ -851,11 +834,6 @@ function DashboardPage({
     queryKey: ["dashboard-projection-30-credit-card-installments", session.token, projection30Range.dateTo],
     queryFn: () => getCreditCardInstallments(session, withQueryParams(projection30Query, { limit: "100" })),
   });
-  const evolutionProjectionInstallments = useQuery({
-    enabled: Boolean(evolutionProjectionRange),
-    queryKey: ["dashboard-evolution-projection-credit-card-installments", session.token, evolutionProjectionQuery],
-    queryFn: () => getCreditCardInstallments(session, withQueryParams(evolutionProjectionQuery, { limit: "100" })),
-  });
   const statements = useQuery({
     queryKey: ["dashboard-credit-card-statements", session.token, period.query],
     queryFn: () => getCreditCardStatements(session, period.query),
@@ -868,22 +846,20 @@ function DashboardPage({
   const goals = useQuery({
     queryKey: ["dashboard-goals", session.token],
     queryFn: () => getGoals(session),
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
   });
   const persistedEvents = useQuery({
     queryKey: ["dashboard-calendar-events", session.token, period.query],
     queryFn: () => getCalendarEvents(session, period.query),
+    staleTime: 2 * 60 * 1000,
   });
   const projection30PersistedEvents = useQuery({
     queryKey: ["dashboard-projection-30-calendar-events", session.token, projection30Query],
     queryFn: () => getCalendarEvents(session, projection30Query),
   });
-  const evolutionProjectionPersistedEvents = useQuery({
-    enabled: Boolean(evolutionProjectionRange),
-    queryKey: ["dashboard-evolution-projection-calendar-events", session.token, evolutionProjectionQuery],
-    queryFn: () => getCalendarEvents(session, evolutionProjectionQuery),
-  });
   const projectionFeed = useQuery({
-    queryKey: ["dashboard-projection-feed", session.token],
+    queryKey: ["projection-feed", session.token],
     queryFn: () => getProjectionFeed(session, 90),
     staleTime: 5 * 60 * 1000,
   });
@@ -894,12 +870,12 @@ function DashboardPage({
   });
   const balance = Number(summary.data?.balance ?? 0);
   const categoryItems = ranking.data?.items ?? [];
-  const calendarEvents = buildCalendarEvents({
+  const calendarEvents = useMemo(() => buildCalendarEvents({
     apiEvents: persistedEvents.data?.items,
     installments: installments.data?.items ?? [],
     recurring: recurring.data?.items ?? [],
     transactions: recentTransactions.data?.items ?? [],
-  });
+  }), [installments.data?.items, persistedEvents.data?.items, recurring.data?.items, recentTransactions.data?.items]);
   const currentBalance = summary.data?.current_balance;
   const currentBalanceValue = currentBalance === null || currentBalance === undefined ? null : Number(currentBalance);
   const monthlyBurnRate = Number(summary.data?.burn_rate ?? 0);
@@ -1402,16 +1378,6 @@ function CashflowPage({
     () => projectionRangeFromPeriod(period.dateFrom, period.dateTo),
     [period.dateFrom, period.dateTo],
   );
-  const evolutionProjectionQuery = useMemo(
-    () =>
-      evolutionProjectionRange
-        ? withQueryParams("", {
-            date_from: evolutionProjectionRange.dateFrom,
-            date_to: evolutionProjectionRange.dateTo,
-          })
-        : "",
-    [evolutionProjectionRange],
-  );
   const summary = useQuery({
     queryKey: ["cashflow-summary", session.token, period.query],
     queryFn: () => getDashboardSummary(session, period.query),
@@ -1432,12 +1398,8 @@ function CashflowPage({
     queryKey: ["cashflow-recurring-expenses", session.token, period.recurringQuery],
     queryFn: () => getRecurringExpenses(session, withQueryParams(period.recurringQuery, { limit: "6", min_months: "3" })),
   });
-  const recurringIncome = useQuery({
-    queryKey: ["cashflow-recurring-incomes", session.token, period.recurringQuery],
-    queryFn: () => getRecurringIncomes(session, withQueryParams(period.recurringQuery, { limit: "6", min_months: "3" })),
-  });
   const projectionFeed = useQuery({
-    queryKey: ["cashflow-projection-feed", session.token],
+    queryKey: ["projection-feed", session.token],
     queryFn: () => getProjectionFeed(session, 90),
     staleTime: 5 * 60 * 1000,
   });
@@ -1531,10 +1493,6 @@ function CashflowPage({
     () => buildExpenseSizeProfile(expenseSizeProfileQuery.data?.items ?? []),
     [expenseSizeProfileQuery.data?.items],
   );
-  const expenseCategoryOptions = useMemo(
-    () => buildExpenseCategoryOptions(expenseTransactions.data?.items ?? [], categories.data?.items ?? []),
-    [categories.data?.items, expenseTransactions.data?.items],
-  );
   const subcategoryFilterOptions = useMemo(
     () => categoryItems.map((item) => ({
       id: item.category_id ?? "__uncategorized__",
@@ -1554,6 +1512,14 @@ function CashflowPage({
       : raw;
     return buildSubcategoryRows(filtered, categoriesById);
   }, [categoriesById, selectedExpenseCategoryId, subcategoryRanking.data?.items]);
+  const subcategoryColorMap = useMemo(
+    () => new Map(categoryItems.map((item, index) => [item.category_id, chartPalette[index % chartPalette.length]])),
+    [categoryItems],
+  );
+  const subcategoryLabelMap = useMemo(
+    () => new Map(subcategoryFilterOptions.map((item) => [item.id, item.label])),
+    [subcategoryFilterOptions],
+  );
 
   function openCashflowPointTransactions(data: { activeLabel?: string } | null) {
     if (!data?.activeLabel) return;
@@ -1743,8 +1709,8 @@ function CashflowPage({
               </select>
             </label>
             <SubcategoryBreakdown
-              categoryColorMap={new Map(categoryItems.map((item, index) => [item.category_id, chartPalette[index % chartPalette.length]]))}
-              categoryLabelMap={new Map(subcategoryFilterOptions.map((item) => [item.id, item.label]))}
+              categoryColorMap={subcategoryColorMap}
+              categoryLabelMap={subcategoryLabelMap}
               items={subcategoryRows}
               loading={subcategoryRanking.isLoading}
               showCategoryLabel={!selectedExpenseCategoryId}
@@ -1826,11 +1792,6 @@ type ExpenseSizeSegment = {
   share: number;
   tone: "info" | "negative" | "warning";
   total: number;
-};
-
-type ExpenseCategoryOption = {
-  id: string;
-  label: string;
 };
 
 type SubcategorySummary = {
@@ -2352,19 +2313,6 @@ function buildExpenseSizeProfile(items: ExpenseSizeProfileItem[]): ExpenseSizeSe
   }));
 }
 
-function buildExpenseCategoryOptions(transactions: TransactionRead[], categories: CategoryRead[]): ExpenseCategoryOption[] {
-  const grouped = new Map<string, ExpenseCategoryOption>();
-  transactions
-    .filter(isCategorizedExpenseTransaction)
-    .forEach((transaction) => {
-      const parts = transactionCategoryParts(transaction, categories);
-      grouped.set(parts.categoryId ?? "__uncategorized__", {
-        id: parts.categoryId ?? "__uncategorized__",
-        label: parts.category,
-      });
-    });
-  return Array.from(grouped.values()).sort((left, right) => left.label.localeCompare(right.label, "pt-BR"));
-}
 
 function buildSubcategoryRows(items: SubcategoryRankingItem[], categoriesById: Map<string, CategoryRead>): SubcategorySummary[] {
   return items.map((item) => {
@@ -2383,41 +2331,8 @@ function buildSubcategoryRows(items: SubcategoryRankingItem[], categoriesById: M
   });
 }
 
-function transactionCategoryParts(transaction: TransactionRead, categories: CategoryRead[]) {
-  const assignedCategory = transaction.category?.category_id
-    ? categories.find((category) => category.id === transaction.category?.category_id)
-    : null;
-  if (!assignedCategory) {
-    return {
-      category: "Sem categoria",
-      categoryId: null,
-      subcategory: "Sem subcategoria",
-      subcategoryId: null,
-    };
-  }
-  if (!assignedCategory.parent_category_id) {
-    return {
-      category: assignedCategory.name,
-      categoryId: assignedCategory.id,
-      subcategory: "Sem subcategoria",
-      subcategoryId: assignedCategory.id,
-    };
-  }
-  const parent = categories.find((category) => category.id === assignedCategory.parent_category_id);
-  return {
-    category: parent?.name ?? "Outros",
-    categoryId: parent?.id ?? assignedCategory.parent_category_id,
-    subcategory: assignedCategory.name,
-    subcategoryId: assignedCategory.id,
-  };
-}
-
 function isOutflowTransaction(transaction: TransactionRead) {
   return transaction.direction === "debit" || transaction.direction === "payment" || Number(transaction.amount ?? 0) < 0;
-}
-
-function isCategorizedExpenseTransaction(transaction: TransactionRead) {
-  return transaction.direction === "debit";
 }
 
 function maxBy<T>(items: T[], getter: (item: T) => number) {
@@ -3951,14 +3866,14 @@ function CalendarPage({
     queryKey: ["calendar-recent-transactions", session.token, period.query],
     queryFn: () => getTransactions(session, withQueryParams(period.query, { limit: "6", sort_by: "transaction_date", sort_dir: "desc" })),
   });
-  const calendarEvents = buildCalendarEvents({
+  const calendarEvents = useMemo(() => buildCalendarEvents({
     apiEvents: persistedEvents.data?.items,
     installments: installments.data?.items ?? [],
     recurring: recurring.data?.items ?? [],
     transactions: recentTransactions.data?.items ?? [],
-  });
-  const totalPlannedOutflow = calendarEvents.reduce((total, item) => total + Number(item.amount ?? 0), 0);
-  const riskEvents = calendarEvents.filter((item) => item.tone === "warning" || item.tone === "negative").length;
+  }), [installments.data?.items, persistedEvents.data?.items, recurring.data?.items, recentTransactions.data?.items]);
+  const totalPlannedOutflow = useMemo(() => calendarEvents.reduce((total, item) => total + Number(item.amount ?? 0), 0), [calendarEvents]);
+  const riskEvents = useMemo(() => calendarEvents.filter((item) => item.tone === "warning" || item.tone === "negative").length, [calendarEvents]);
 
   return (
     <section className="page-stack">
@@ -5526,7 +5441,7 @@ function CategoriesPage({ session }: { session: ApiSession }) {
 function RulesPage({ session }: { session: ApiSession }) {
   const queryClient = useQueryClient();
   const categories = useCategories(session);
-  const categoryOptions = orderedCategoryOptions(categories.data?.items ?? []);
+  const categoryOptions = useMemo(() => orderedCategoryOptions(categories.data?.items ?? []), [categories.data?.items]);
   const rules = useQuery({
     queryKey: ["rules", session.token],
     queryFn: () => getRules(session),
@@ -6103,6 +6018,7 @@ function TransactionExplorer({
   const pageSize = 50;
   const duplicatePageSize = 10;
   const categories = useCategories(session);
+  const categoryOptions = useMemo(() => orderedCategoryOptions(categories.data?.items ?? []), [categories.data?.items]);
   const queryClient = useQueryClient();
   const query = useMemo(() => {
     const params = new URLSearchParams();
@@ -6578,6 +6494,7 @@ function TransactionExplorer({
             {visibleTransactions.map((transaction) => (
               <TransactionRow
                 categories={categories.data?.items ?? []}
+                categoryOptions={categoryOptions}
                 key={transaction.id}
                 onDelete={() => {
                   if (window.confirm(`Excluir a transação "${transaction.description}"? Esta ação não pode ser desfeita no MVP.`)) {
@@ -6615,6 +6532,7 @@ function TransactionExplorer({
         <Drawer title="Detalhe da transação" onClose={() => onSelect(null)}>
           <TransactionDetail
             categories={categories.data?.items ?? []}
+            categoryOptions={categoryOptions}
             deleting={remove.isPending}
             onDelete={() => {
               if (window.confirm(`Excluir a transação "${selected.description}"? Esta ação não pode ser desfeita no MVP.`)) {
@@ -6878,6 +6796,7 @@ function DuplicateTransactionsPanel({
 function TransactionRow({
   transaction,
   categories,
+  categoryOptions,
   session,
   onDelete,
   onSelect,
@@ -6888,6 +6807,7 @@ function TransactionRow({
 }: {
   transaction: TransactionRead;
   categories: CategoryRead[];
+  categoryOptions: ReturnType<typeof orderedCategoryOptions>;
   session: ApiSession;
   onDelete: () => void;
   onSelect: () => void;
@@ -6910,7 +6830,7 @@ function TransactionRow({
       <td><DirectionPicker session={session} transaction={transaction} /></td>
       <td className={amountClass(transaction)}>{moneyAbs(transaction.amount)}</td>
       <td>{installmentLabel(transaction)}</td>
-      <td><CategoryPicker categories={categories} onCategorized={onCategorized} session={session} transaction={transaction} /></td>
+      <td><CategoryPicker categoryOptions={categoryOptions} onCategorized={onCategorized} session={session} transaction={transaction} /></td>
       <td><SourceBadge source={transaction.category?.source} label={categoryLabel} /></td>
       {showDedupeStatus ? (
         <td>
@@ -6932,18 +6852,17 @@ function TransactionRow({
 }
 
 function CategoryPicker({
+  categoryOptions,
   transaction,
-  categories,
   session,
   onCategorized,
 }: {
+  categoryOptions: ReturnType<typeof orderedCategoryOptions>;
   transaction: TransactionRead;
-  categories: CategoryRead[];
   session: ApiSession;
   onCategorized?: (transaction: TransactionRead, categoryId: string | null) => void;
 }) {
   const queryClient = useQueryClient();
-  const categoryOptions = orderedCategoryOptions(categories);
   const mutation = useMutation({
     mutationFn: (categoryId: string | null) => updateTransactionCategory(session, transaction.id, categoryId),
     onSuccess: (updatedTransaction, categoryId) => {
@@ -7001,6 +6920,7 @@ function DirectionPicker({ transaction, session }: { transaction: TransactionRea
 function TransactionDetail({
   transaction,
   categories,
+  categoryOptions,
   deleting = false,
   onDelete,
   onCategorized,
@@ -7008,6 +6928,7 @@ function TransactionDetail({
 }: {
   transaction: TransactionRead;
   categories: CategoryRead[];
+  categoryOptions: ReturnType<typeof orderedCategoryOptions>;
   deleting?: boolean;
   onDelete?: () => void;
   onCategorized?: (transaction: TransactionRead, categoryId: string | null) => void;
@@ -7045,7 +6966,7 @@ function TransactionDetail({
       <QualityRow label="Fonte" value={transaction.category?.source ?? "Pendente"} />
       <div>
         <p className="field-label">Alterar categoria</p>
-        <CategoryPicker categories={categories} onCategorized={onCategorized} session={session} transaction={transaction} />
+        <CategoryPicker categoryOptions={categoryOptions} onCategorized={onCategorized} session={session} transaction={transaction} />
       </div>
       {onDelete ? (
         <div className="danger-zone">
@@ -7674,17 +7595,6 @@ function projectionRangeFromPeriod(dateFrom: string, dateTo: string) {
   };
 }
 
-function creditCardDueDateInRange(dateFrom: string, dateTo: string, dueDay?: number) {
-  const start = parseIsoDate(dateFrom);
-  const end = parseIsoDate(dateTo);
-  if (!start || !end || !dueDay) return dateFrom;
-  const candidates = [
-    new Date(start.getFullYear(), start.getMonth(), dueDay),
-    new Date(start.getFullYear(), start.getMonth() + 1, dueDay),
-  ];
-  const match = candidates.find((candidate) => candidate >= start && candidate <= end);
-  return isoDate(match ?? start);
-}
 
 function daysFromToday(value: string) {
   const target = parseIsoDate(value);
@@ -8046,13 +7956,14 @@ function reportMetricLabel(report: ReportCardRead) {
   return money(report.primary_metric);
 }
 
+const BRL_FORMATTER = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+
 function money(value?: string | number | null) {
-  const numeric = Number(value ?? 0);
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(numeric);
+  return BRL_FORMATTER.format(Number(value ?? 0));
 }
 
 function moneyAbs(value?: string | number | null) {
-  return money(Math.abs(Number(value ?? 0)));
+  return BRL_FORMATTER.format(Math.abs(Number(value ?? 0)));
 }
 
 function formatCurrencyCompact(value?: string | number | null) {
@@ -8258,12 +8169,15 @@ function signedPercent(value?: string | null) {
   return `${sign}${formatPercentNumber(numberValue)}%`;
 }
 
+const PERCENT_FORMATTER = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 });
+const NUMBER_FORMATTER = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 });
+
 function formatPercentNumber(value: number) {
-  return new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 }).format(value);
+  return PERCENT_FORMATTER.format(value);
 }
 
 function formatNumber(value: number) {
-  return new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(value);
+  return NUMBER_FORMATTER.format(value);
 }
 
 function commitmentTone(value?: string | null): "positive" | "negative" | "warning" {
