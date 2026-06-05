@@ -265,6 +265,7 @@ async def list_transactions(
     date_from: date | None = None,
     date_to: date | None = None,
     category_id: str | None = None,
+    uncategorized: bool = Query(default=False),
     import_job_id: str | None = None,
     ids: str | None = None,
     source_type: str | None = None,
@@ -273,7 +274,7 @@ async def list_transactions(
     q: str | None = None,
     sort_by: str = Query(default="transaction_date"),
     sort_dir: str = Query(default="desc"),
-    limit: int = Query(default=50, ge=1, le=100),
+    limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> TransactionListResponse:
     sort_columns = {
@@ -330,7 +331,15 @@ async def list_transactions(
                 Transaction.raw_description.ilike(search),
             )
         )
-    if category_id is not None:
+    if uncategorized:
+        filters.append(
+            Transaction.id.not_in(
+                select(TransactionCategoryAssignment.transaction_id).where(
+                    TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+                )
+            )
+        )
+    elif category_id is not None:
         category_ids = [category_id]
         child_category_ids = db.scalars(
             select(Category.id).where(
