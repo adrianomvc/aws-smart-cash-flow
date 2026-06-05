@@ -1169,7 +1169,7 @@ select:focus {
 }
 
 .category-bar-list {
-  max-height: 250px;
+  max-height: 460px;
   overflow: hidden;
 }
 

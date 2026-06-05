@@ -281,7 +281,7 @@ class DashboardService:
                     Category.workspace_id == workspace_id,
                 ),
             )
-            .where(*filters, Transaction.direction.in_(["debit", "payment"]))
+            .where(*filters, Transaction.direction == "debit")
         ).all()
         categories_by_id = {
             category.id: category
