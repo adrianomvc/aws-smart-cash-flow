@@ -4733,3 +4733,15 @@ td small {
 .dash-period-apply { padding: 7px 16px; border-radius: 8px; border: none; background: #4f46e5; color: #fff; font-size: 12px; font-weight: 600; cursor: pointer; transition: background .15s; }
 .dash-period-apply:hover { background: #4338ca; }
 .dash-period-apply:disabled { background: #c7d2fe; cursor: not-allowed; }
+
+/* Rule Suggestions */
+.panel-title-with-icon { display: inline-flex; align-items: center; gap: 6px; }
+.rule-suggestions-list { display: flex; flex-direction: column; gap: 10px; }
+.rule-suggestion-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.rule-suggestion-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.rule-suggestion-pattern { background: #eff6ff; border-radius: 4px; color: #1d4ed8; font-size: 14px; font-weight: 700; padding: 2px 8px; }
+.rule-suggestion-meta { display: flex; align-items: center; gap: 12px; }
+.rule-suggestion-count { color: #64748b; font-size: 13px; font-weight: 600; }
+.rule-suggestion-amount { color: #0f172a; font-size: 13px; font-weight: 600; }
+.rule-suggestion-samples { display: flex; flex-wrap: wrap; gap: 4px; }
+.rule-suggestion-sample { background: #f1f5f9; border-radius: 4px; color: #475569; font-size: 11px; padding: 2px 6px; }

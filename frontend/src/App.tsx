@@ -137,6 +137,7 @@ function App() {
   });
   const [transactionDrilldown, setTransactionDrilldown] = useState<TransactionDrilldown>(null);
   const [importDrilldown, setImportDrilldown] = useState<ImportDrilldown>(null);
+  const [rulePrefillPattern, setRulePrefillPattern] = useState<string | null>(null);
 
   async function handleSession(nextSession: ApiSession | null) {
     if (!nextSession && session?.mode === "supabase" && supabase) {
@@ -202,7 +203,9 @@ function App() {
         onNavigate={navigate}
         onOpenImports={openImports}
         onOpenTransactions={openTransactions}
+        onCreateRule={(pattern) => { setRulePrefillPattern(pattern); navigate("rules"); }}
         page={page}
+        rulePrefillPattern={rulePrefillPattern}
         session={session}
         setDashboardPeriod={setDashboardPeriod}
         transactionDrilldown={transactionDrilldown}
@@ -403,7 +406,9 @@ function ProtectedApp({
   onNavigate,
   onOpenImports,
   onOpenTransactions,
+  onCreateRule,
   page,
+  rulePrefillPattern,
   session,
   setDashboardPeriod,
   transactionDrilldown,
@@ -412,6 +417,8 @@ function ProtectedApp({
   duplicateCount?: number;
   importDrilldown: ImportDrilldown;
   onNavigate: (page: Page) => void;
+  onCreateRule: (pattern: string) => void;
+  rulePrefillPattern: string | null;
   onOpenImports: (drilldown?: ImportDrilldown) => void;
   onOpenTransactions: (drilldown?: TransactionDrilldown) => void;
   page: Page;
@@ -481,8 +488,8 @@ function ProtectedApp({
       {page === "imports" ? <ImportsPage drilldown={importDrilldown} onOpenTransactions={onOpenTransactions} session={session} /> : null}
       {page === "transactions" ? <TransactionsPage drilldown={transactionDrilldown} session={session} /> : null}
       {page === "categories" ? <CategoriesPage session={session} /> : null}
-      {page === "rules" ? <RulesPage session={session} /> : null}
-      {page === "review" ? <ReviewPage session={session} /> : null}
+      {page === "rules" ? <RulesPage session={session} prefillPattern={rulePrefillPattern} /> : null}
+      {page === "review" ? <ReviewPage session={session} onCreateRule={onCreateRule} /> : null}
       {page === "settings" ? <SettingsPage onNavigate={onNavigate} workspaceName={workspace.workspace_name} session={session} /> : null}
     </>
   );
