@@ -67,6 +67,8 @@ export type RecurringProjectionInput = {
   categoryId?: string | null;
   description: string;
   frequency?: "monthly" | "weekly";
+  /** Explicitly marked as recurring by the user or backend (is_recurring flag). */
+  isRecurring?: boolean;
   lastDate: string;
   monthCount?: number;
   transactionCount?: number;
@@ -86,6 +88,14 @@ export type CashFlowProjectionInput = {
   currentBalance: number | string;
   horizonDays?: number;
   knownEvents?: KnownProjectionEventInput[];
+  /**
+   * How many months of history were used to detect recurring transactions.
+   * Affects `isReliableRecurring`: with 6-month lookback the recurrence threshold
+   * stays at 3 months, but items from older history are already excluded by the
+   * backend so the frontend just documents the intent here.
+   * @default 3
+   */
+  lookbackMonths?: 3 | 6;
   recurringItems?: RecurringProjectionInput[];
   startDate: string;
   variableCategories?: VariableCategoryProjectionInput[];
@@ -103,6 +113,7 @@ export function buildRollingCashFlowProjection({
   currentBalance,
   horizonDays = 30,
   knownEvents = [],
+  lookbackMonths = 3,
   recurringItems = [],
   startDate,
   variableCategories = [],
@@ -133,7 +144,7 @@ export function buildRollingCashFlowProjection({
   }
 
   for (const recurring of recurringItems) {
-    if (!isReliableRecurring(recurring)) continue;
+    if (!isReliableRecurring(recurring, lookbackMonths)) continue;
     for (const dueDate of recurringDates(recurring, dates)) {
       addEvent(byDate, dueDate, {
         amount: absoluteNumber(recurring.amount),
@@ -144,7 +155,7 @@ export function buildRollingCashFlowProjection({
     }
   }
 
-  distributeVariableExpenses(byDate, dates, variableCategories);
+  distributeVariableExpenses(byDate, dates, variableCategories, lookbackMonths);
 
   const points: CashFlowProjectionPoint[] = [];
   let balance = Number(currentBalance) || 0;
@@ -208,8 +219,12 @@ function distributeVariableExpenses(
   byDate: Map<string, CashFlowProjectionEvent[]>,
   dates: string[],
   categories: VariableCategoryProjectionInput[],
+  lookbackMonths: 3 | 6 = 3,
 ) {
   for (const category of categories) {
+    // Only project variable expenses for categories that show recurring spend:
+    // they must have appeared in at least 2 of the lookback months (heuristic).
+    if (!isRecurringVariableCategory(category, lookbackMonths)) continue;
     const monthlyAverage = robustMonthlyAverage(category);
     const currentSpent = absoluteNumber(category.currentMonthSpent);
     const remaining = Math.max(0, monthlyAverage - currentSpent);
@@ -278,15 +293,49 @@ function confidenceForEvents(events: CashFlowProjectionEvent[]): ProjectionConfi
   return "medium";
 }
 
-function isReliableRecurring(recurring: RecurringProjectionInput) {
+/**
+ * Returns true if this recurring item is reliable enough to include in the projection.
+ *
+ * An item qualifies when:
+ * - It is explicitly flagged as recurring (`isRecurring === true`), OR
+ * - It appeared in at least 2 of the `lookbackMonths` most recent months
+ *   (i.e., monthCount >= 2 when lookbackMonths === 3, or >= 3 when lookbackMonths === 6).
+ *
+ * Additionally the last occurrence must be within 60 days to avoid projecting
+ * items that have clearly stopped.
+ */
+function isReliableRecurring(recurring: RecurringProjectionInput, lookbackMonths: 3 | 6 = 3) {
+  const minMonths = lookbackMonths === 6 ? 3 : 2;
   const hasEnoughHistory =
-    (recurring.monthCount ?? 0) >= 3 || (recurring.transactionCount ?? 0) >= 3;
+    recurring.isRecurring === true ||
+    (recurring.monthCount ?? 0) >= minMonths ||
+    (recurring.transactionCount ?? 0) >= minMonths;
   if (!hasEnoughHistory) return false;
   const lastDate = parseIsoDate(recurring.lastDate);
   if (!lastDate) return false;
   const today = new Date();
   const daysSinceLast = Math.floor((today.getTime() - lastDate.getTime()) / 86_400_000);
   return daysSinceLast <= 60;
+}
+
+/**
+ * Returns true if a variable category has enough recurring history to justify
+ * projecting its average spend forward.
+ *
+ * Requires at least 2 non-zero months in `historicalMonthlyAmounts` (representing
+ * the lookback window). Categories that appear in only 1 month are one-offs and
+ * should NOT be included in the projection.
+ */
+function isRecurringVariableCategory(
+  category: VariableCategoryProjectionInput,
+  lookbackMonths: 3 | 6,
+): boolean {
+  const history = (category.historicalMonthlyAmounts ?? []).map(absoluteNumber);
+  const nonZeroMonths = history.filter((value) => value > 0).length;
+  // For 3-month lookback: must appear in ≥2 months.
+  // For 6-month lookback: must appear in ≥3 months.
+  const minMonths = lookbackMonths === 6 ? 3 : 2;
+  return nonZeroMonths >= minMonths;
 }
 
 function recurringSource(description: string): ProjectionEventSource {

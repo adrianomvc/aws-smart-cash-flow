@@ -146,6 +146,111 @@ test("detects first negative day, lowest projected balance, 30-day horizon and c
   assert.deepEqual(result.chartPoints[1].eventos, ["Conta: 150"]);
 });
 
+test("excludes one-off variable category with only 1 non-zero month from projection", () => {
+  const result = buildRollingCashFlowProjection({
+    currentBalance: 1000,
+    horizonDays: 10,
+    startDate: "2026-06-01",
+    variableCategories: [
+      {
+        // Only appeared in 1 month — should be treated as a one-off and excluded
+        categoryName: "Viagem",
+        currentMonthSpent: 0,
+        historicalMonthlyAmounts: [0, 0, 1500],
+        monthlyAverage: "1500",
+      },
+    ],
+  });
+
+  const totalEstimated = result.points.reduce((total, point) => total + point.estimatedVariableExpenses, 0);
+  assert.equal(totalEstimated, 0, "one-off category must not contribute estimated expenses");
+});
+
+test("includes recurring variable category that appears in ≥2 of 3 lookback months", () => {
+  const result = buildRollingCashFlowProjection({
+    currentBalance: 1000,
+    horizonDays: 10,
+    startDate: "2026-06-01",
+    variableCategories: [
+      {
+        // Appeared in 2 of 3 months — qualifies as recurring under default lookbackMonths: 3
+        categoryName: "Mercado",
+        currentMonthSpent: 0,
+        historicalMonthlyAmounts: [0, 500, 480],
+        monthlyAverage: "490",
+      },
+    ],
+  });
+
+  const totalEstimated = result.points.reduce((total, point) => total + point.estimatedVariableExpenses, 0);
+  assert.ok(totalEstimated > 0, "recurring category must contribute estimated expenses");
+});
+
+test("with lookbackMonths: 6 excludes category that appears in only 2 of 6 months", () => {
+  const result = buildRollingCashFlowProjection({
+    currentBalance: 1000,
+    horizonDays: 10,
+    lookbackMonths: 6,
+    startDate: "2026-06-01",
+    variableCategories: [
+      {
+        // Appeared in only 2 months — below the ≥3 threshold for 6-month lookback
+        categoryName: "Dentista",
+        currentMonthSpent: 0,
+        historicalMonthlyAmounts: [0, 0, 0, 0, 300, 300],
+        monthlyAverage: "300",
+      },
+    ],
+  });
+
+  const totalEstimated = result.points.reduce((total, point) => total + point.estimatedVariableExpenses, 0);
+  assert.equal(totalEstimated, 0, "2 months in 6-month window is not enough to be considered recurring");
+});
+
+test("isRecurring flag bypasses month count check for recurring items", () => {
+  const result = buildRollingCashFlowProjection({
+    currentBalance: 1000,
+    horizonDays: 30,
+    recurringItems: [
+      {
+        amount: 200,
+        description: "Streaming",
+        isRecurring: true,
+        lastDate: "2026-05-15",
+        // Only 1 month of history — would normally be excluded without isRecurring
+        monthCount: 1,
+        transactionCount: 1,
+        type: "expense",
+      },
+    ],
+    startDate: "2026-06-01",
+  });
+
+  const recurrenceDay = result.points.find((point) => point.date === "2026-06-15");
+  assert.equal(recurrenceDay?.recurringExpenses, 200, "isRecurring flag must allow item with low month count");
+});
+
+test("recurring item with only 1 month of history and no isRecurring flag is excluded", () => {
+  const result = buildRollingCashFlowProjection({
+    currentBalance: 1000,
+    horizonDays: 30,
+    recurringItems: [
+      {
+        amount: 500,
+        description: "Compra única",
+        lastDate: "2026-05-15",
+        monthCount: 1,
+        transactionCount: 1,
+        type: "expense",
+      },
+    ],
+    startDate: "2026-06-01",
+  });
+
+  const totalRecurring = result.points.reduce((total, point) => total + point.recurringExpenses, 0);
+  assert.equal(totalRecurring, 0, "item with only 1 month of history must be excluded as one-off");
+});
+
 test("future income appears as positive bar and increases projected balance", () => {
   const result = buildRollingCashFlowProjection({
     currentBalance: 1000,

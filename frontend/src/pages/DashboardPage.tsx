@@ -14,6 +14,8 @@ import {
   Loader2,
   RefreshCw,
   ShieldCheck,
+  Sparkles,
+  PlusCircle,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -52,6 +54,9 @@ import {
 import {
   buildBudgetRows,
   buildCalendarEvents,
+  calendarEventStatusLabel,
+  calendarEventTone,
+  calendarEventTypeLabel,
   compactMoneyAbs,
   compactMoneyAxis,
   dateInputLabel,
@@ -401,9 +406,18 @@ function CompactTimelineList({ items, loading, onOpenTransactions, onShowAll, to
   );
 }
 
-function BudgetSnapshot({ loading, onOpenCategory, rows }: { loading: boolean; onOpenCategory: (row: ReturnType<typeof buildBudgetRows>[number]) => void; rows: ReturnType<typeof buildBudgetRows> }) {
+function BudgetSnapshot({ loading, onNavigateBudgets, onOpenCategory, rows }: { loading: boolean; onNavigateBudgets: () => void; onOpenCategory: (row: ReturnType<typeof buildPersistedBudgetRows>[number]) => void; rows: ReturnType<typeof buildPersistedBudgetRows> }) {
   if (loading) return <PageState icon={Loader2} title="Carregando orçamento" description="Aguarde um momento." spin compact />;
-  if (!rows.length) return <EmptyInline message="Sem categorias para sugerir orçamento." />;
+  if (!rows.length) return (
+    <div className="budget-empty-cta">
+      <PiggyBank size={32} className="budget-empty-icon" />
+      <p>Nenhum orçamento cadastrado</p>
+      <button className="primary-button" onClick={onNavigateBudgets} type="button">
+        <PlusCircle size={16} />
+        Cadastrar orçamento
+      </button>
+    </div>
+  );
   const planned = rows.reduce((total, row) => total + row.limit, 0);
   const realized = rows.reduce((total, row) => total + row.spent, 0);
   const consumed = realized / Math.max(planned, 1);
@@ -536,8 +550,7 @@ export function DashboardPage({
   const statementTotal = (statements.data?.items ?? []).reduce((total, statement) => total + Number(statement.total_amount ?? 0), 0);
   const currentStatementTotal = statementTotal || Number(summary.data?.payments ?? 0);
   const cardCommitment = Number(summary.data?.income ?? 0) > 0 ? currentStatementTotal / Number(summary.data?.income ?? 0) : null;
-  const budgetRows = buildPersistedBudgetRows({ budgets: budgets.data?.items, categories: categories.data?.items ?? [], ranking: categoryItems });
-  const dashboardBudgetRows = budgetRows.length ? budgetRows : buildBudgetRows(categoryItems);
+  const dashboardBudgetRows = buildPersistedBudgetRows({ budgets: budgets.data?.items, categories: categories.data?.items ?? [], ranking: categoryItems });
   const dashboardGoalRows = buildGoalRows(summary.data, goals.data?.items);
   const projectionRisk = projection30Result.firstNegativeDay;
   const projection30Loading = summary.isLoading || projection30PersistedEvents.isLoading || projection30Installments.isLoading || recurring.isLoading || recurringIncome.isLoading || ranking.isLoading;
@@ -690,7 +703,7 @@ export function DashboardPage({
         <DashboardSectionHeader eyebrow="Planejamento" title="Orçamento, metas e alertas" description="Blocos compactos para acompanhar o mês sem quebrar a primeira visão." />
         <div className="dashboard-grid insight-grid">
           <Panel title="Orçamento do mês" description="Categorias monitoradas no período." action={<PanelLink label="Ver orçamento" onClick={() => onNavigate("budgets")} />}>
-            <BudgetSnapshot loading={ranking.isLoading || budgets.isLoading || categories.isLoading} rows={dashboardBudgetRows.slice(0, 4)} onOpenCategory={(row) => onOpenTransactions({ categoryId: row.categoryId ?? undefined, dateFrom: period.dateFrom, dateTo: period.dateTo, direction: "debit", label: row.categoryName, periodPreset: period.periodPreset })} />
+            <BudgetSnapshot loading={ranking.isLoading || budgets.isLoading || categories.isLoading} rows={dashboardBudgetRows.slice(0, 4)} onNavigateBudgets={() => onNavigate("budgets")} onOpenCategory={(row) => onOpenTransactions({ categoryId: row.categoryId ?? undefined, dateFrom: period.dateFrom, dateTo: period.dateTo, direction: "debit", label: row.categoryName, periodPreset: period.periodPreset })} />
           </Panel>
           <Panel title="Metas em andamento" description="Progresso das metas financeiras principais." action={<PanelLink label="Ver todas" onClick={() => onNavigate("goals")} />}>
             <GoalSnapshot loading={goals.isLoading || summary.isLoading} rows={(goals.data?.items ?? []).length ? dashboardGoalRows.slice(0, 3) : []} />

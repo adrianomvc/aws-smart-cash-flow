@@ -4566,3 +4566,50 @@ td small {
 .account-item-track { height: 5px; background: #e2e8f0; border-radius: 3px; margin: 6px 0 2px; overflow: hidden; }
 .account-item-track-fill { height: 100%; border-radius: 3px; background: #8b5cf6; }
 .account-item-available { font-size: 11px; color: #16a34a; font-weight: 600; }
+
+/* Dashboard period quick-select buttons */
+.dashboard-period-bar { display: flex; gap: 6px; align-items: center; }
+.dashboard-period-btn { padding: 6px 14px; border-radius: 8px; border: 1px solid #e2e8f0; background: #fff; font-size: 12px; font-weight: 500; color: #475569; cursor: pointer; transition: all .15s; white-space: nowrap; }
+.dashboard-period-btn:hover { background: #f1f5f9; border-color: #cbd5e1; }
+.dashboard-period-btn.active { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+
+/* Dashboard period custom input */
+.dashboard-period-custom { display: flex; align-items: center; gap: 6px; }
+.dashboard-period-input { padding: 5px 8px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 12px; color: #374151; background: #fff; cursor: pointer; }
+.dashboard-period-input:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 2px #e0e7ff; }
+.dashboard-period-sep { font-size: 12px; color: #94a3b8; }
+
+/* ============================================================
+   DashboardPeriodPicker — segmented control + popover
+   ============================================================ */
+.dash-period-picker { position: relative; }
+
+/* Segmented control */
+.dash-period-segments { display: flex; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; background: #f8fafc; }
+.dash-seg-btn { padding: 6px 13px; font-size: 12px; font-weight: 600; color: #64748b; background: transparent; border: none; border-right: 1px solid #e2e8f0; cursor: pointer; transition: all .15s; white-space: nowrap; display: flex; align-items: center; gap: 5px; }
+.dash-seg-btn:last-child { border-right: none; }
+.dash-seg-btn:hover { background: #f1f5f9; color: #1e293b; }
+.dash-seg-btn.active { background: #4f46e5; color: #fff; }
+.dash-seg-btn.active:hover { background: #4338ca; }
+.dash-seg-cal { padding: 6px 10px; }
+
+/* Popover */
+.dash-period-popover { position: absolute; top: calc(100% + 8px); right: 0; background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; box-shadow: 0 8px 32px rgba(0,0,0,.12); padding: 16px; z-index: 100; min-width: 280px; }
+.dash-period-popover-title { font-size: 12px; font-weight: 700; color: #0f172a; margin-bottom: 10px; }
+.dash-period-presets { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px; }
+.dash-period-preset-btn { padding: 7px 10px; border-radius: 8px; border: 1px solid #e2e8f0; background: #f8fafc; font-size: 12px; color: #374151; cursor: pointer; text-align: left; transition: all .12s; }
+.dash-period-preset-btn:hover { background: #ede9fe; border-color: #c4b5fd; color: #4f46e5; }
+.dash-period-divider { height: 1px; background: #f1f5f9; margin: 12px 0; }
+.dash-period-popover-label { font-size: 11px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; }
+.dash-period-inputs { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.dash-period-input-group { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.dash-period-input-group label { font-size: 10px; color: #94a3b8; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.dash-period-input-group input { padding: 6px 8px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 12px; color: #1e293b; width: 100%; }
+.dash-period-input-group input:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 2px #ede9fe; }
+.dash-period-arrow { font-size: 14px; color: #cbd5e1; margin-top: 14px; flex-shrink: 0; }
+.dash-period-popover-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.dash-period-cancel { padding: 7px 14px; border-radius: 8px; border: 1px solid #e2e8f0; background: #fff; font-size: 12px; color: #64748b; cursor: pointer; }
+.dash-period-cancel:hover { background: #f8fafc; }
+.dash-period-apply { padding: 7px 16px; border-radius: 8px; border: none; background: #4f46e5; color: #fff; font-size: 12px; font-weight: 600; cursor: pointer; transition: background .15s; }
+.dash-period-apply:hover { background: #4338ca; }
+.dash-period-apply:disabled { background: #c7d2fe; cursor: not-allowed; }
