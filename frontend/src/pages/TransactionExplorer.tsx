@@ -17,12 +17,14 @@ import {
 } from "lucide-react";
 
 import {
+  acceptCategoryReview,
   createManualTransaction,
   deleteTransaction,
   getActiveAccounts,
   getDashboardSummary,
   getTransactionDuplicates,
   getTransactions,
+  rejectCategoryReview,
   updateTransactionCategory,
   updateTransactionDirection,
 } from "../lib/api";
@@ -135,6 +137,57 @@ function CategoryPicker({ categoryOptions, transaction, session, onCategorized }
   );
 }
 
+function AiReviewBadge({ transaction, session }: { transaction: TransactionRead; session: ApiSession }) {
+  const queryClient = useQueryClient();
+  const isAiPending =
+    (transaction.category_source === "embedding" || transaction.category_source === "llm") &&
+    transaction.category_review_status === "pending";
+
+  const acceptMutation = useMutation({
+    mutationFn: () => acceptCategoryReview(session, transaction.id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["data-quality"] });
+    },
+  });
+
+  const rejectMutation = useMutation({
+    mutationFn: () => rejectCategoryReview(session, transaction.id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["data-quality"] });
+    },
+  });
+
+  if (!isAiPending) return null;
+
+  const busy = acceptMutation.isPending || rejectMutation.isPending;
+
+  return (
+    <span className="ai-review-badge" title="Sugestão da IA aguardando revisão">
+      <span className="ai-review-badge-label">IA ⏳</span>
+      <button
+        className="ai-review-accept"
+        disabled={busy}
+        onClick={(e) => { e.stopPropagation(); acceptMutation.mutate(); }}
+        title="Aceitar sugestão"
+        type="button"
+      >
+        ✓
+      </button>
+      <button
+        className="ai-review-reject"
+        disabled={busy}
+        onClick={(e) => { e.stopPropagation(); rejectMutation.mutate(); }}
+        title="Rejeitar sugestão"
+        type="button"
+      >
+        ✗
+      </button>
+    </span>
+  );
+}
+
 function DirectionPicker({ transaction, session }: { transaction: TransactionRead; session: ApiSession }) {
   const queryClient = useQueryClient();
   const mutation = useMutation({
@@ -188,7 +241,10 @@ function TransactionRow({ transaction, categories, categoryOptions, session, onD
       <td><DirectionPicker session={session} transaction={transaction} /></td>
       <td className={amountClass(transaction)}>{moneyAbs(transaction.amount)}</td>
       <td>{installmentLabel(transaction)}</td>
-      <td><CategoryPicker categoryOptions={categoryOptions} onCategorized={onCategorized} session={session} transaction={transaction} /></td>
+      <td>
+        <CategoryPicker categoryOptions={categoryOptions} onCategorized={onCategorized} session={session} transaction={transaction} />
+        <AiReviewBadge session={session} transaction={transaction} />
+      </td>
       <td>{transaction.category ? <span className="status-badge confirmed">Confirmado</span> : <span className="status-badge pending">Pendente</span>}</td>
       {showDedupeStatus ? <td><DedupeStatusBadge status={dedupeStatus(transaction, expectedDedupeKey, primaryDedupeId)} /></td> : null}
       <td>

@@ -9,6 +9,7 @@ import {
   deleteCategory,
   deleteRule,
   getRulePreview,
+  getRuleSuggestions,
   getRules,
   updateCategory,
   updateRule,
@@ -40,6 +41,7 @@ import type {
   CategorizationRuleRead,
   CategoryRead,
   RulePreview,
+  RuleSuggestion,
   TransactionRead,
 } from "../lib/api";
 import type { RuleFormState } from "../types";
@@ -213,12 +215,18 @@ export function CategoriesPage({ session }: { session: ApiSession }) {
   );
 }
 
-export function RulesPage({ session }: { session: ApiSession }) {
+export function RulesPage({ session, prefillPattern }: { session: ApiSession; prefillPattern?: string | null }) {
   const queryClient = useQueryClient();
   const categories = useCategories(session);
   const categoryOptions = useMemo(() => orderedCategoryOptions(categories.data?.items ?? []), [categories.data?.items]);
   const rules = useQuery({ queryKey: ["rules", session.token], queryFn: () => getRules(session) });
-  const [form, setForm] = useState<RuleFormState>(emptyRuleForm);
+  const [form, setForm] = useState<RuleFormState>(() => prefillPattern ? { ...emptyRuleForm, pattern: prefillPattern } : emptyRuleForm);
+
+  useEffect(() => {
+    if (prefillPattern) {
+      setForm((prev) => ({ ...prev, pattern: prefillPattern }));
+    }
+  }, [prefillPattern]);
   const [ruleFormError, setRuleFormError] = useState("");
   const [ruleFormSuccess, setRuleFormSuccess] = useState("");
   const [previewRule, setPreviewRule] = useState<CategorizationRuleRead | null>(null);
@@ -347,15 +355,63 @@ export function RulesPage({ session }: { session: ApiSession }) {
   );
 }
 
-export function ReviewPage({ session }: { session: ApiSession }) {
-  const [selected, setSelected] = useState<TransactionRead | null>(null);
+function RuleSuggestionCard({ suggestion, onCreateRule }: { suggestion: RuleSuggestion; onCreateRule: (pattern: string) => void }) {
+  const totalAbs = Math.abs(parseFloat(suggestion.total_amount));
+  const formatted = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(totalAbs);
   return (
-    <TransactionExplorer
-      session={session}
-      fixedQuery="category_id=__uncategorized__"
-      onSelect={setSelected}
-      selected={selected}
-      reviewMode
-    />
+    <div className="rule-suggestion-card">
+      <div className="rule-suggestion-header">
+        <code className="rule-suggestion-pattern">{suggestion.pattern}</code>
+        <div className="rule-suggestion-meta">
+          <span className="rule-suggestion-count">{suggestion.transaction_count} transações</span>
+          <span className="rule-suggestion-amount">{formatted}</span>
+        </div>
+      </div>
+      <div className="rule-suggestion-samples">
+        {suggestion.sample_descriptions.map((desc) => (
+          <span className="rule-suggestion-sample" key={desc}>{desc}</span>
+        ))}
+      </div>
+      <button className="primary-button compact-button" type="button" onClick={() => onCreateRule(suggestion.pattern)}>
+        <Plus size={14} /> Criar regra
+      </button>
+    </div>
+  );
+}
+
+export function ReviewPage({ session, onCreateRule }: { session: ApiSession; onCreateRule?: (pattern: string) => void }) {
+  const [selected, setSelected] = useState<TransactionRead | null>(null);
+  const suggestions = useQuery({
+    queryKey: ["rule-suggestions", session.token],
+    queryFn: () => getRuleSuggestions(session),
+  });
+
+  return (
+    <div className="page-stack">
+      <Panel title="Sugestões de Regras" action={suggestions.data ? <span className="impact-badge">{suggestions.data.total_uncategorized} sem categoria</span> : undefined}>
+        {suggestions.isLoading ? <PageState icon={Loader2} title="Carregando sugestões" description="Analisando padrões de descrição." spin compact /> : null}
+        {suggestions.data?.suggestions.length === 0 ? (
+          <EmptyInline message="Nenhum padrão recorrente encontrado." />
+        ) : null}
+        {suggestions.data?.suggestions.length ? (
+          <div className="rule-suggestions-list">
+            {suggestions.data.suggestions.map((s) => (
+              <RuleSuggestionCard
+                key={s.pattern}
+                suggestion={s}
+                onCreateRule={onCreateRule ?? (() => undefined)}
+              />
+            ))}
+          </div>
+        ) : null}
+      </Panel>
+      <TransactionExplorer
+        session={session}
+        fixedQuery="category_id=__uncategorized__"
+        onSelect={setSelected}
+        selected={selected}
+        reviewMode
+      />
+    </div>
   );
 }
