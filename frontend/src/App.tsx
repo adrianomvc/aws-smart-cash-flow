@@ -16,7 +16,6 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
-  Percent,
   PiggyBank,
   Presentation,
   ReceiptText,
@@ -44,7 +43,7 @@ import smartCashFlowIcon from "./assets/smartcashflow-icon.png";
 import smartCashFlowLogo from "./assets/smartcashflow-logo.png";
 import type { ImportDrilldown, PeriodState, TransactionDrilldown, TransactionPeriodPreset } from "./types";
 import type { Page } from "./types";
-import { PageState, PeriodFilter } from "./components/ui";
+import { PageState } from "./components/ui";
 
 // Pages
 import { DashboardPage } from "./pages/DashboardPage";
@@ -607,11 +606,6 @@ function Topbar({
 }) {
   const [showNotifPopover, setShowNotifPopover] = useState(false);
   const meta = pageMeta(page);
-
-  function topbarSetPreset(preset: TransactionPeriodPreset) {
-    const range = periodRange(preset);
-    setDashboardPeriod({ ...range, periodPreset: preset });
-  }
 
   return (
     <header className="topbar">

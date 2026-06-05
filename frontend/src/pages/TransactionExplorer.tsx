@@ -1,5 +1,5 @@
 import type { FormEvent } from "react";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownCircle,
@@ -33,7 +33,6 @@ import {
   compactMoneyAbs,
   dateLabel,
   dedupeStatus,
-  directionLabel,
   duplicatePrimaryId,
   exportTransactionsCSV,
   installmentLabel,
@@ -44,17 +43,14 @@ import {
   periodRange,
   sourceTypeLabel,
   transactionFilterSummary,
-  withQueryParams,
 } from "../lib/utils";
 import { useCategories } from "../hooks";
 import {
   DedupeStatusBadge,
   Drawer,
-  EmptyInline,
   InlineError,
   InlineSuccess,
   MetricCard,
-  PageState,
   Panel,
   PeriodFilter,
   QualityRow,
@@ -68,15 +64,12 @@ import type {
   DuplicateTransactionGroup,
   TransactionRead,
 } from "../lib/api";
-import type { TransactionDrilldown, TransactionPeriodPreset } from "../types";
+import type { TransactionPeriodPreset } from "../types";
 
 // ---------------------------------------------------------------------------
 // Private sub-components
 // ---------------------------------------------------------------------------
 
-function DirectionBadge({ direction }: { direction: string }) {
-  return <span className={`direction-badge ${direction}`}>{directionLabel(direction)}</span>;
-}
 
 function ActiveAccountsPanel({ accounts, loading }: { accounts: ActiveAccountItem[]; loading: boolean }) {
   if (loading) {
@@ -460,7 +453,9 @@ export function TransactionExplorer({
     if (sourceType) params.set("source_type", sourceType);
     if (direction) params.set("direction", direction);
     if (importJobId) params.set("import_job_id", importJobId);
-    if (categoryId && fixedQuery !== "category_id=__uncategorized__" && !categoryId.startsWith("__")) params.set("category_id", categoryId);
+    const isUncategorized = categoryId === "__uncategorized__" || fixedQuery === "category_id=__uncategorized__";
+    if (isUncategorized) params.set("uncategorized", "true");
+    else if (categoryId && !categoryId.startsWith("__")) params.set("category_id", categoryId);
     if (dateFrom) params.set("date_from", dateFrom);
     if (dateTo) params.set("date_to", dateTo);
     if (weekday !== undefined) params.set("weekday", String(weekday));
@@ -520,12 +515,11 @@ export function TransactionExplorer({
 
   const visibleTransactions = (() => {
     const items = transactions.data?.items ?? [];
-    if (fixedQuery === "category_id=__uncategorized__") return items.filter((t) => !t.category);
     if (categoryId === "__pending__") return items.filter((t) => !t.category);
     if (categoryId === "__confirmed__") return items.filter((t) => Boolean(t.category));
     return items;
   })();
-  const totalTransactions = fixedQuery === "category_id=__uncategorized__" ? visibleTransactions.length : transactions.data?.total ?? 0;
+  const totalTransactions = transactions.data?.total ?? 0;
   const pageIncome = visibleTransactions.filter((t) => t.direction === "credit").reduce((total, t) => total + Math.abs(Number(t.amount)), 0);
   const pageExpenses = visibleTransactions.filter((t) => t.direction === "debit").reduce((total, t) => total + Math.abs(Number(t.amount)), 0);
   const pagePayments = visibleTransactions.filter((t) => t.direction === "payment").reduce((total, t) => total + Math.abs(Number(t.amount)), 0);
@@ -534,7 +528,7 @@ export function TransactionExplorer({
   void pagePayments; void pageBalance;
   const allPageSelected = visibleTransactions.length > 0 && visibleTransactions.every((t) => selectedIds.has(t.id));
   const somePageSelected = visibleTransactions.some((t) => selectedIds.has(t.id));
-  const nextPageDisabled = transactions.isLoading || fixedQuery === "category_id=__uncategorized__" ? visibleTransactions.length < pageSize : (page + 1) * pageSize >= totalTransactions;
+  const nextPageDisabled = transactions.isLoading || (page + 1) * pageSize >= totalTransactions;
   const activeFilterCount = [search, sourceType, direction, importJobId, !reviewMode ? categoryId : "", dateFrom || dateTo, weekday !== undefined ? String(weekday) : ""].filter(Boolean).length;
   const emptyMessage = activeFilterCount ? "Nenhuma transação encontrada para os filtros selecionados." : reviewMode ? "Nenhuma transação pendente de categoria." : "Nenhuma transação encontrada.";
   const filterSummary = transactionFilterSummary({ categoryId, categories: categories.data?.items ?? [], dateFrom, dateTo, direction, duplicateGroupCount: 0, importJobId, periodPreset, reviewMode, search, sourceType, weekday });

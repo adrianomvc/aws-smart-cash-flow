@@ -5,7 +5,6 @@ import {
   AlertCircle,
   ArrowUpCircle,
   BarChart3,
-  Brain,
   CalendarDays,
   CheckCircle2,
   ChevronRight,
@@ -13,23 +12,18 @@ import {
   FileWarning,
   Gauge,
   Loader2,
-  Percent,
   PiggyBank,
   RefreshCw,
   ShieldCheck,
-  Sparkles,
   PlusCircle,
   type LucideIcon,
 } from "lucide-react";
 import {
   Bar,
   CartesianGrid,
-  Cell,
   ComposedChart,
   Legend,
   Line,
-  Pie,
-  PieChart,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -56,12 +50,7 @@ import {
 } from "../lib/api";
 import {
   buildCalendarEvents,
-  calendarEventStatusLabel,
-  calendarEventTone,
-  calendarEventTypeLabel,
-  compactMoneyAbs,
   compactMoneyAxis,
-  commitmentTone,
   dateInputLabel,
   dateLabel,
   dayTickLabel,
@@ -76,11 +65,9 @@ import {
   monthTickLabel,
   nextDaysRange,
   percent,
-  percentAbs,
   periodSummary,
   projectionFeedToInputs,
   projectionRangeFromPeriod,
-  sourceTypeLabel,
   withQueryParams,
   yearQueryFromDate,
   categoryPath,
@@ -93,25 +80,21 @@ import {
   DashboardSectionHeader,
   EmptyInline,
   InlineSuccess,
-  MetricCard,
   PageState,
   Panel,
   PanelLink,
 } from "../components/ui";
-import { CategoryBarList, PersonalizedTip, compactCategoryDistribution } from "./CashflowPage";
+import { CategoryBarList, PersonalizedTip } from "./CashflowPage";
 import type {
   ApiSession,
   BudgetRead,
-  CalendarEventRead,
   CategoryGrowthAlertItem,
   CategoryRankingItem,
   CategoryRead,
-  CreditCardInstallmentItem,
   DataQuality,
   DashboardSummary,
   GoalRead,
   RecurringExpenseItem,
-  TransactionRead,
 } from "../lib/api";
 import type {
   CalendarEvent,
@@ -126,7 +109,6 @@ import type { CashFlowProjectionChartPoint, CashFlowProjectionPoint } from "../l
 // Constants
 // ---------------------------------------------------------------------------
 
-const chartPalette = ["#8b5cf6", "#ef4444", "#f59e0b", "#22c55e", "#38bdf8", "#64748b", "#2563eb", "#14b8a6"];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -267,53 +249,6 @@ function DashboardFlowStory({ futureCommitments, onOpenAnalysis, periodLabel, pr
   );
 }
 
-function CategoryDonutTooltip({ active, payload, total }: { active?: boolean; payload?: Array<{ payload?: CategoryRankingItem & { amountValue?: number } }>; total: number }) {
-  const item = payload?.[0]?.payload;
-  if (!active || !item) return null;
-  const amount = Number((item as any).amountValue ?? item.amount ?? 0);
-  const ratio = total > 0 ? amount / total : Number(item.share_ratio ?? 0);
-  return (
-    <div className="chart-tooltip donut-tooltip">
-      <strong>{item.category_name}</strong>
-      <span>{moneyAbs(String(amount))}</span>
-      <small>{percent(String(ratio))} do total</small>
-    </div>
-  );
-}
-
-function CategoryDonut({ items, loading, onOpenCategory }: { items: CategoryRankingItem[]; loading: boolean; onOpenCategory: (item: CategoryRankingItem) => void }) {
-  if (loading) return <PageState icon={Loader2} title="Carregando categorias" description="Aguarde um momento." spin compact />;
-  if (!items.length) return <EmptyInline message="Sem categorias para o período." />;
-  const chartItems = compactCategoryDistribution(items);
-  const total = chartItems.reduce((sum, item) => sum + (item as any).amountValue, 0);
-  return (
-    <div className="donut-summary">
-      <div className="donut-chart">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart margin={{ top: 4, right: 28, bottom: 4, left: 28 }}>
-            <Pie data={chartItems} dataKey="amountValue" nameKey="category_name" innerRadius="62%" outerRadius="86%" paddingAngle={2} stroke="none">
-              {chartItems.map((item: any, index: number) => (
-                <Cell key={item.category_id ?? item.category_name} fill={chartPalette[index % chartPalette.length]} />
-              ))}
-            </Pie>
-            <Tooltip allowEscapeViewBox={{ x: true, y: true }} content={<CategoryDonutTooltip total={total} />} wrapperStyle={{ pointerEvents: "none", zIndex: 30 }} />
-          </PieChart>
-        </ResponsiveContainer>
-        <div className="donut-center"><strong>{compactMoneyAbs(total)}</strong><span>Total</span></div>
-      </div>
-      <div className="donut-legend">
-        {chartItems.slice(0, 6).map((item: any, index: number) => (
-          <button className="donut-legend-row" key={item.category_id ?? item.category_name} onClick={() => onOpenCategory(item)} type="button">
-            <i style={{ background: chartPalette[index % chartPalette.length] }} />
-            <span>{item.category_name}</span>
-            <strong>{percent(item.share_ratio)}</strong>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function CreditCardSnapshot({ commitmentRate, currentStatementTotal, futureInstallments, installmentCount, loading }: { commitmentRate: number | null; currentStatementTotal: number; futureInstallments: string | number; installmentCount: number; loading: boolean }) {
   if (loading) return <PageState icon={Loader2} title="Carregando cartões" description="Aguarde um momento." spin compact />;
   const status = commitmentStatus(commitmentRate);
@@ -329,6 +264,51 @@ function CreditCardSnapshot({ commitmentRate, currentStatementTotal, futureInsta
           <i className={status.tone} style={{ width: `${Math.min((commitmentRate ?? 0) * 100, 100)}%` }} />
         </span>
       </div>
+    </div>
+  );
+}
+
+function RecurringSnapshot({ items, loading, onOpenTransactions, period }: {
+  items: RecurringExpenseItem[];
+  loading: boolean;
+  onOpenTransactions: (drilldown: { dateFrom?: string; dateTo?: string; direction?: string; label?: string; periodPreset?: import("../types").TransactionPeriodPreset; search?: string }) => void;
+  period: { dateFrom: string; dateTo: string; periodPreset: import("../types").TransactionPeriodPreset };
+}) {
+  if (loading) return <PageState icon={Loader2} title="Carregando recorrentes" description="Aguarde um momento." spin compact />;
+  if (!items.length) return <EmptyInline message="Nenhum gasto recorrente detectado no período." />;
+  const allSorted = [...items].sort((a, b) => Math.abs(Number(b.average_amount ?? 0)) - Math.abs(Number(a.average_amount ?? 0)));
+  const sorted = allSorted.slice(0, 10);
+  const hiddenCount = Math.max(allSorted.length - 10, 0);
+  const totalMonthly = sorted.reduce((sum, item) => sum + Math.abs(Number(item.average_amount ?? 0)), 0);
+  const maxAmount = Math.max(...sorted.map((item) => Math.abs(Number(item.average_amount ?? 0))), 1);
+  return (
+    <div className="category-bar-list">
+      {sorted.map((item, index) => {
+        const avg = Math.abs(Number(item.average_amount ?? 0));
+        const barWidth = Math.max((avg / maxAmount) * 100, 4);
+        const changed = Number(item.change_ratio ?? 0);
+        return (
+          <button
+            key={item.description}
+            className="category-bar-row"
+            type="button"
+            onClick={() => onOpenTransactions({ dateFrom: period.dateFrom, dateTo: period.dateTo, direction: "debit", label: item.description, periodPreset: period.periodPreset, search: item.description })}
+          >
+            <span>
+              {item.description}
+              {Math.abs(changed) >= 0.1 ? <small style={{ color: changed > 0 ? "#dc2626" : "#16a34a", marginLeft: 4 }}>{changed > 0 ? "▲" : "▼"}{Math.round(Math.abs(changed) * 100)}%</small> : null}
+            </span>
+            <div className="category-bar-track">
+              <i style={{ background: ["#6366f1","#f59e0b","#10b981","#3b82f6","#ec4899"][index % 5], width: `${barWidth}%` }} />
+            </div>
+            <b><strong>{moneyAbs(avg)}</strong><small>/mês</small></b>
+          </button>
+        );
+      })}
+      {hiddenCount > 0 && (
+        <p className="text-xs text-gray-400 text-center py-1">+{hiddenCount} gasto{hiddenCount === 1 ? "" : "s"} recorrente{hiddenCount === 1 ? "" : "s"} não exibido{hiddenCount === 1 ? "" : "s"}</p>
+      )}
+      <div className="category-total-row"><span>Total recorrente/mês</span><strong>{moneyAbs(totalMonthly)}</strong></div>
     </div>
   );
 }
@@ -383,7 +363,7 @@ function ProjectedCashflowSnapshot({ data, loading, lowestProjectedBalance, onNa
             <Tooltip allowEscapeViewBox={{ x: true, y: true }} content={<ProjectionTooltip />} wrapperStyle={{ maxWidth: 240, pointerEvents: "none", zIndex: 30 }} />
             <Bar name="Entradas previstas" dataKey="entradas" fill="#0f9f6e" radius={[4, 4, 0, 0]} stackId="flow" />
             <Bar name="Saídas previstas" dataKey="saidas" fill="#dc2626" radius={[0, 0, 4, 4]} stackId="flow" />
-            <Line activeDot={{ r: 5 }} name="Saldo projetado" type="monotone" dataKey="saldoProjetado" stroke="#64748b" strokeDasharray="6 5" strokeWidth={2} dot={(props: any) => { const payload = props.payload as CashFlowProjectionChartPoint | undefined; if (!payload || payload.saldoProjetado >= 0) return <g />; return <circle cx={props.cx} cy={props.cy} fill="#dc2626" r={3} />; }} />
+            <Line activeDot={{ r: 5 }} name="Saldo projetado" type="monotone" dataKey="saldoProjetado" stroke="#64748b" strokeDasharray="6 5" strokeWidth={2} dot={(props: { cx?: number; cy?: number; index?: number; key?: string; payload?: CashFlowProjectionChartPoint }) => { const payload = props.payload; if (!payload || payload.saldoProjetado >= 0) return <g key={props.key ?? props.index} />; return <circle key={props.key ?? props.index} cx={props.cx} cy={props.cy} fill="#dc2626" r={3} />; }} />
           </ComposedChart>
         </ResponsiveContainer>
       </ChartBox>
@@ -433,7 +413,7 @@ function BudgetSnapshot({ loading, onNavigateBudgets, onOpenCategory, rows }: { 
   return (
     <div className="budget-list compact">
       <div className="budget-summary-line">
-        <span><strong>{moneyAbs(realized)}</strong><small>realizado de {moneyAbs(planned)} planejado</small></span>
+        <span><small>Total geral</small><strong>{moneyAbs(realized)}</strong><small>realizado de {moneyAbs(planned)} planejado</small></span>
         <b className={budgetTone(consumed)}>{formatPercentNumber(consumed * 100)}%</b>
       </div>
       {rows.map((row) => (
@@ -516,8 +496,8 @@ export function DashboardPage({
   const summary = useQuery({ queryKey: ["dashboard-summary", session.token, period.query], queryFn: () => getDashboardSummary(session, period.query) });
   const cashflow = useQuery({ queryKey: ["monthly-cashflow", session.token, cashflowYearQuery], queryFn: () => getMonthlyCashflow(session, cashflowYearQuery) });
   const dailyCashflowQuery = useQuery({ queryKey: ["daily-cashflow", session.token, period.query], queryFn: () => getDailyCashflow(session, period.query) });
-  const ranking = useQuery({ queryKey: ["category-ranking", session.token, period.query], queryFn: () => getCategoryRanking(session, withQueryParams(period.query, { limit: "8" })) });
-  const recurring = useQuery({ queryKey: ["recurring-expenses", session.token, period.recurringQuery], queryFn: () => getRecurringExpenses(session, withQueryParams(period.recurringQuery, { limit: "6", min_months: "3" })) });
+  const ranking = useQuery({ queryKey: ["category-ranking", session.token, period.query], queryFn: () => getCategoryRanking(session, withQueryParams(period.query, { limit: "50" })) });
+  const recurring = useQuery({ queryKey: ["recurring-expenses", session.token, period.recurringQuery], queryFn: () => getRecurringExpenses(session, withQueryParams(period.recurringQuery, { limit: "50", min_months: "3" })) });
   const recurringIncome = useQuery({ queryKey: ["recurring-incomes", session.token, period.recurringQuery], queryFn: () => getRecurringIncomes(session, withQueryParams(period.recurringQuery, { limit: "6", min_months: "3" })) });
   const quality = useQuery({ queryKey: ["data-quality", session.token, period.query], queryFn: () => getDataQuality(session, period.query) });
   const categoryGrowth = useQuery({ queryKey: ["category-growth-alerts", session.token, period.query], queryFn: () => getCategoryGrowthAlerts(session, withQueryParams(period.query, { limit: "3" })) });
@@ -576,9 +556,6 @@ export function DashboardPage({
     const range = monthRange(data.activeLabel);
     if (!range) return;
     onOpenTransactions({ dateFrom: range.dateFrom, dateTo: range.dateTo, label: `Fluxo mensal ${monthTickLabel(data.activeLabel)}`, periodPreset: "custom" });
-  }
-  function openMetricTransactions(direction?: string, label = "Indicador") {
-    onOpenTransactions({ dateFrom: period.dateFrom, dateTo: period.dateTo, direction, label, periodPreset: period.periodPreset });
   }
   function openCategoryTransactions(item: CategoryRankingItem) {
     if (!item.category_id) { onNavigate("review"); return; }
@@ -697,15 +674,15 @@ export function DashboardPage({
               </ChartBox>
             </Panel>
             <Panel title="Top categorias" description="Maiores gastos classificados no período." action={<PanelLink label="Ver todas" onClick={() => onNavigate("cashflow")} />}>
-              <CategoryBarList items={categoryItems} loading={ranking.isLoading} onOpenCategory={openCategoryTransactions} />
+              <CategoryBarList items={categoryItems} loading={ranking.isLoading} onOpenCategory={openCategoryTransactions} displayLimit={5} />
             </Panel>
           </div>
           <div className="cockpit-right">
             <Panel title="Próximos compromissos" description="Eventos, recorrências e parcelas que aparecem no horizonte do filtro." action={<PanelLink label="Ver calendário" onClick={() => onNavigate("calendar")} />}>
               <CompactTimelineList items={calendarEvents.slice(0, 5)} total={calendarEvents.length} onShowAll={() => onNavigate("calendar")} loading={persistedEvents.isLoading || recurring.isLoading || installments.isLoading || recentTransactions.isLoading} onOpenTransactions={(event) => onOpenTransactions({ dateFrom: period.dateFrom, dateTo: period.dateTo, direction: event.direction, label: event.label, periodPreset: period.periodPreset, search: event.search })} />
             </Panel>
-            <Panel title="Distribuição das despesas" description="Participação das categorias no total de gastos do período.">
-              <CategoryDonut items={categoryItems} loading={ranking.isLoading} onOpenCategory={openCategoryTransactions} />
+            <Panel title="Gastos recorrentes" description="Compromissos fixos detectados automaticamente no período." action={<PanelLink label="Ver fluxo" onClick={() => onNavigate("cashflow")} />}>
+              <RecurringSnapshot items={recurring.data?.items ?? []} loading={recurring.isLoading} onOpenTransactions={onOpenTransactions} period={period} />
             </Panel>
           </div>
         </div>
