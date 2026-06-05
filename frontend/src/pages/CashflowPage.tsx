@@ -1,8 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  ArrowDownCircle,
-  ArrowUpCircle,
   BarChart3,
   ChevronDown,
   ChevronRight,
@@ -19,7 +17,6 @@ import {
 } from "lucide-react";
 import {
   Bar,
-  BarChart,
   CartesianGrid,
   Cell,
   ComposedChart,
@@ -50,9 +47,7 @@ import {
   compactMoneyAxis,
   dateInputLabel,
   dateLabel,
-  formatCurrencyCompactSigned,
   formatPercentNumber,
-  isSingleMonthRange,
   money,
   moneyAbs,
   moneyAxisDomain,
@@ -73,13 +68,9 @@ import { buildRollingCashFlowProjection } from "../lib/cashflowProjection";
 import { useCategories, usePeriod } from "../hooks";
 import {
   ChartBox,
-  DashboardSectionHeader,
   EmptyInline,
   DashboardPeriodPicker,
-  MetricCard,
   PageState,
-  Panel,
-  PanelLink,
 } from "../components/ui";
 import type {
   ApiSession,
@@ -113,40 +104,6 @@ const chartPalette = ["#8b5cf6", "#ef4444", "#f59e0b", "#22c55e", "#38bdf8", "#6
 // Helpers
 // ---------------------------------------------------------------------------
 
-function cashflowDescription(period: ReturnType<typeof usePeriod>) {
-  if (period.periodPreset === "current_month" || period.periodPreset === "previous_month" || isSingleMonthRange(period.dateFrom, period.dateTo)) {
-    const [year] = (period.dateFrom || period.dateTo).split("-");
-    return year ? `Tendência mensal do ano ${year}, mantendo o mês selecionado nos demais indicadores.` : "Receitas, despesas e saldo por mês.";
-  }
-  return "Receitas, despesas e saldo por mês.";
-}
-
-function cashflowPageDescription(period: ReturnType<typeof usePeriod>, view: "day" | "month") {
-  if (view === "day") return "Receitas e despesas por dia, com saldo acumulado partindo do saldo inicial.";
-  return cashflowDescription(period);
-}
-
-function averageMonthlyCashflow(items: Array<{ expenses: number; income: number }>) {
-  if (!items.length) return { expenses: null, income: null };
-  const income = items.reduce((total, item) => total + Number(item.income ?? 0), 0) / items.length;
-  const expenses = items.reduce((total, item) => total + Math.abs(Number(item.expenses ?? 0)), 0) / items.length;
-  return { expenses, income };
-}
-
-function comparisonHelper(current: number | null, previous: number | null, previousMonth?: string, average?: number | null, lowerIsBetter = false) {
-  if (previous !== null && previous !== undefined && previous !== 0) {
-    const variation = ((Number(current ?? 0) - previous) / Math.abs(previous)) * 100;
-    const sign = variation >= 0 ? "+" : "";
-    const suffix = lowerIsBetter && variation < 0 ? " melhor" : "";
-    return `${sign}${formatPercentNumber(variation)}% vs ${monthTickLabel(previousMonth ?? "")}${suffix}`;
-  }
-  if (average !== null && average !== undefined && average > 0) {
-    const variation = ((Number(current ?? 0) - average) / average) * 100;
-    const sign = variation >= 0 ? "+" : "";
-    return `${sign}${formatPercentNumber(variation)}% vs média 3 meses`;
-  }
-  return "Histórico insuficiente";
-}
 
 function isOutflowTransaction(t: TransactionRead) {
   return t.direction === "debit" || t.direction === "payment" || Number(t.amount ?? 0) < 0;
@@ -194,6 +151,7 @@ function buildCashflowHighlights(transactions: TransactionRead[], dailyRows: Arr
   ];
 }
 
+
 function buildIncomeCategoryRows(transactions: TransactionRead[], categories: CategoryRead[]): CashflowCategoryRow[] {
   const categoryNames = new Map(categories.map((c) => [c.id, categoryPath(c, categories)]));
   const grouped = new Map<string, number>();
@@ -221,10 +179,11 @@ function buildSubcategoryRows(items: SubcategoryRankingItem[], categoriesById: M
 export function compactCategoryDistribution(items: CategoryRankingItem[]) {
   const sorted = [...items].map((item) => ({ ...item, amountValue: Math.abs(Number(item.amount ?? 0)) })).sort((a, b) => b.amountValue - a.amountValue);
   const total = sorted.reduce((sum, item) => sum + item.amountValue, 0);
-  const visible = sorted.filter((item, index) => index < 5 && item.amountValue / Math.max(total, 1) >= 0.04);
-  const otherAmount = sorted.slice(visible.length).reduce((sum, item) => sum + item.amountValue, 0);
+  const visible = sorted.slice(0, 5);
+  const collapsed = sorted.slice(5);
+  const otherAmount = collapsed.reduce((sum, item) => sum + item.amountValue, 0);
   if (otherAmount > 0) {
-    visible.push({ amount: String(otherAmount), amountValue: otherAmount, average_amount: String(otherAmount), category_id: null, category_name: "Outros", count: sorted.slice(visible.length).reduce((sum, item) => sum + item.count, 0), share_ratio: String(otherAmount / Math.max(total, 1)) });
+    visible.push({ amount: String(otherAmount), amountValue: otherAmount, average_amount: String(otherAmount), category_id: null, category_name: `Outros (${collapsed.length})`, count: collapsed.reduce((sum, item) => sum + item.count, 0), share_ratio: String(otherAmount / Math.max(total, 1)) });
   }
   return visible;
 }
@@ -233,15 +192,16 @@ export function compactCategoryDistribution(items: CategoryRankingItem[]) {
 // Exported sub-components (shared with DashboardPage)
 // ---------------------------------------------------------------------------
 
-export function CategoryBarList({ items, loading, onOpenCategory }: { items: CategoryRankingItem[]; loading: boolean; onOpenCategory: (item: CategoryRankingItem) => void }) {
+export function CategoryBarList({ items, loading, onOpenCategory, displayLimit = 7 }: { items: CategoryRankingItem[]; loading: boolean; onOpenCategory: (item: CategoryRankingItem) => void; displayLimit?: number }) {
   if (loading) return <PageState icon={Loader2} title="Carregando categorias" description="Aguarde um momento." spin compact />;
   if (!items.length) return <EmptyInline message="Sem categorias para o período." />;
   const sortedItems = [...items].sort((a, b) => Math.abs(Number(b.amount ?? 0)) - Math.abs(Number(a.amount ?? 0)));
   const maxAmount = Math.max(...sortedItems.map((item) => Math.abs(Number(item.amount ?? 0))), 1);
   const totalAmount = sortedItems.reduce((total, item) => total + Math.abs(Number(item.amount ?? 0)), 0);
-  const LIMIT = 8;
+  const LIMIT = displayLimit;
   const visibleItems = sortedItems.slice(0, LIMIT);
   const hiddenCount = Math.max(sortedItems.length - LIMIT, 0);
+
   return (
     <div className="category-bar-list">
       {visibleItems.map((item, index) => {
@@ -256,7 +216,7 @@ export function CategoryBarList({ items, loading, onOpenCategory }: { items: Cat
         );
       })}
       {hiddenCount > 0 && (
-        <p className="text-xs text-gray-400 text-center py-1">+{hiddenCount} categoria{hiddenCount === 1 ? "" : "s"} — use o filtro de subcategorias para explorar</p>
+        <p className="text-xs text-gray-400 text-center py-1">+{hiddenCount} categoria{hiddenCount === 1 ? "" : "s"} com gastos menores não exibida{hiddenCount === 1 ? "" : "s"}</p>
       )}
       <div className="category-total-row"><span>Total de saídas</span><strong>{moneyAbs(totalAmount)}</strong></div>
     </div>
@@ -370,23 +330,6 @@ function CashflowEvolutionTooltip({ active, payload, view }: { active?: boolean;
       <span className="expense">Saídas: {moneyAbs(point.expenses ?? 0)}</span>
       {point.balance !== null && point.balance !== undefined ? <span>Saldo acumulado: {money(point.balance)}</span> : null}
       {point.projectedBalance !== null && point.projectedBalance !== undefined ? <small>Saldo projetado: {money(point.projectedBalance)}</small> : null}
-    </div>
-  );
-}
-
-function CashflowCategoryRows({ emptyMessage, items, loading, tone }: { emptyMessage: string; items: CashflowCategoryRow[]; loading: boolean; tone: "negative" | "positive" }) {
-  if (loading) return <PageState icon={Loader2} title="Carregando categorias" description="Aguarde um momento." spin compact />;
-  if (!items.length) return <EmptyInline message={emptyMessage} />;
-  const maxAmount = Math.max(...items.map((item) => item.amount), 1);
-  return (
-    <div className="cashflow-category-list">
-      {items.slice(0, 7).map((item, index) => (
-        <div className="category-bar-row static" key={`${item.label}-${index}`}>
-          <span>{item.label}</span>
-          <div className="category-bar-track"><i style={{ background: tone === "positive" ? "#22c55e" : chartPalette[index % chartPalette.length], width: `${Math.max((item.amount / maxAmount) * 100, 4)}%` }} /></div>
-          <b><strong>{moneyAbs(item.amount)}</strong><small>{percent(String(item.share))}</small></b>
-        </div>
-      ))}
     </div>
   );
 }
@@ -959,8 +902,6 @@ function CategoryAnalysisSection({
   onOpenCategory: (item: CategoryRankingItem) => void;
   onOpenSubcategory: (item: SubcategorySummary) => void;
 }) {
-  const selectedExpenseCategory = subcategoryFilterOptions.find((item) => item.id === selectedExpenseCategoryId) ?? null;
-
   return (
     <section>
       <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Análise de Categorias</h2>
@@ -1005,16 +946,12 @@ function CategoryAnalysisSection({
 // ---------------------------------------------------------------------------
 
 function IncomeCompositionSection({
-  income,
-  expenses,
   incomeCategories,
   incomeCategoriesLoading,
   expenseSizeProfile,
   expenseSizeLoading,
   onOpenDetails,
 }: {
-  income: number;
-  expenses: number;
   incomeCategories: CashflowCategoryRow[];
   incomeCategoriesLoading: boolean;
   expenseSizeProfile: ExpenseSizeSegment[];
@@ -1197,13 +1134,14 @@ export function CashflowPage({
   const projectionFeed = useQuery({ queryKey: ["projection-feed", session.token], queryFn: () => getProjectionFeed(session, 90), staleTime: 5 * 60 * 1000 });
   const feedInputs = projectionFeed.data ? projectionFeedToInputs(projectionFeed.data) : null;
   const incomeTransactions = useQuery({ queryKey: ["cashflow-income-transactions", session.token, period.query], queryFn: () => getTransactions(session, withQueryParams(period.query, { direction: "credit", limit: "100", sort_by: "amount", sort_dir: "desc" })) });
-  const expenseTransactions = useQuery({ queryKey: ["cashflow-expense-transactions", session.token, period.query], queryFn: () => getTransactions(session, withQueryParams(period.query, { direction: "debit", limit: "100", sort_by: "amount", sort_dir: "desc" })) });
-  const paymentTransactions = useQuery({ queryKey: ["cashflow-payment-transactions", session.token, period.query], queryFn: () => getTransactions(session, withQueryParams(period.query, { direction: "payment", limit: "100", sort_by: "amount", sort_dir: "desc" })) });
+  const expenseTransactions = useQuery({ queryKey: ["cashflow-expense-transactions", session.token, period.query], queryFn: () => getTransactions(session, withQueryParams(period.query, { direction: "debit", limit: "500", sort_by: "amount", sort_dir: "desc" })) });
+  const paymentTransactions = useQuery({ queryKey: ["cashflow-payment-transactions", session.token, period.query], queryFn: () => getTransactions(session, withQueryParams(period.query, { direction: "payment", limit: "500", sort_by: "amount", sort_dir: "desc" })) });
   const expenseSizeProfileQuery = useQuery({ queryKey: ["cashflow-expense-size-profile", session.token, period.query], queryFn: () => getExpenseSizeProfile(session, period.query) });
   const categories = useCategories(session);
-  const subcategoryQuery = useMemo(() => selectedExpenseCategoryId && selectedExpenseCategoryId !== "__uncategorized__" ? withQueryParams(period.query, { category_id: selectedExpenseCategoryId, limit: "10" }) : withQueryParams(period.query, { limit: "10" }), [period.query, selectedExpenseCategoryId]);
+  const subcategoryQuery = useMemo(() => selectedExpenseCategoryId && selectedExpenseCategoryId !== "__uncategorized__" ? withQueryParams(period.query, { category_id: selectedExpenseCategoryId, limit: "50" }) : withQueryParams(period.query, { limit: "50" }), [period.query, selectedExpenseCategoryId]);
   const subcategoryRanking = useQuery({ queryKey: ["cashflow-subcategory-ranking", session.token, subcategoryQuery], queryFn: () => getSubcategoryRanking(session, subcategoryQuery) });
 
+  const categoriesById = useMemo(() => new Map((categories.data?.items ?? []).map((c) => [c.id, c])), [categories.data?.items]);
   const categoryItems = ranking.data?.items ?? [];
   const balance = Number(summary.data?.balance ?? 0);
   const currentBalance = summary.data?.current_balance;
@@ -1220,7 +1158,6 @@ export function CashflowPage({
   const incomeCategories = useMemo(() => buildIncomeCategoryRows(incomeTransactions.data?.items ?? [], categories.data?.items ?? []), [categories.data?.items, incomeTransactions.data?.items]);
   const expenseSizeProfile = useMemo(() => buildExpenseSizeProfile(expenseSizeProfileQuery.data?.items ?? []), [expenseSizeProfileQuery.data?.items]);
   const subcategoryFilterOptions = useMemo(() => categoryItems.map((item) => ({ id: item.category_id ?? "__uncategorized__", label: item.category_name })), [categoryItems]);
-  const categoriesById = useMemo(() => new Map((categories.data?.items ?? []).map((c) => [c.id, c])), [categories.data?.items]);
   const subcategoryRows = useMemo(() => {
     const raw = subcategoryRanking.data?.items ?? [];
     const filtered = selectedExpenseCategoryId === "__uncategorized__" ? raw.filter((item) => item.category_id === null) : raw;
@@ -1239,7 +1176,10 @@ export function CashflowPage({
     onOpenTransactions({ dateFrom: period.dateFrom, dateTo: period.dateTo, direction, label, periodPreset: period.periodPreset });
   }
   function openCategoryTransactions(item: CategoryRankingItem) {
-    if (!item.category_id) { onNavigate("review"); return; }
+    if (!item.category_id) {
+      onOpenTransactions({ categoryId: "__uncategorized__", direction: "debit", dateFrom: period.dateFrom, dateTo: period.dateTo, label: "Sem categoria — Saídas", periodPreset: period.periodPreset });
+      return;
+    }
     onOpenTransactions({ categoryId: item.category_id, dateFrom: period.dateFrom, dateTo: period.dateTo, label: item.category_name, periodPreset: period.periodPreset });
   }
 
@@ -1300,8 +1240,6 @@ export function CashflowPage({
 
         {/* 5. Income & composition */}
         <IncomeCompositionSection
-          income={Number(summary.data?.income ?? 0)}
-          expenses={Number(summary.data?.expenses ?? 0)}
           incomeCategories={incomeCategories}
           incomeCategoriesLoading={incomeTransactions.isLoading || categories.isLoading}
           expenseSizeProfile={expenseSizeProfile}

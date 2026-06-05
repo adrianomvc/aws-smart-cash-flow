@@ -110,45 +110,6 @@ function ActiveAccountsPanel({ accounts, loading }: { accounts: ActiveAccountIte
   );
 }
 
-function ActiveAccountsPanel({ accounts, loading }: { accounts: ActiveAccountItem[]; loading: boolean }) {
-  if (loading) {
-    return <div className="loading-state"><Loader2 className="spin" size={16} />Carregando contas...</div>;
-  }
-  if (!accounts.length) {
-    return <div className="account-item"><span className="account-item-meta">Nenhuma conta ativa encontrada.</span></div>;
-  }
-  return (
-    <div className="accounts-panel">
-      {accounts.map((account, idx) => (
-        <div className="account-item" key={idx}>
-          <div className="account-item-header">
-            <span className="account-item-name">{account.account_name}</span>
-          </div>
-          {account.kind === "bank" ? (
-            <>
-              <div className="account-item-balance">{money(account.current_balance)}</div>
-              {account.balance_date ? <div className="account-item-meta">Extrato: {account.balance_date}</div> : null}
-            </>
-          ) : (
-            <>
-              <div className="account-item-balance">{money(account.used_amount)} <span className="account-item-meta">/ {money(account.limit_amount)}</span></div>
-              <div className="account-item-track">
-                <div
-                  className="account-item-track-fill"
-                  style={{ width: `${account.limit_amount ? Math.min(100, ((account.used_amount ?? 0) / account.limit_amount) * 100) : 0}%` }}
-                />
-              </div>
-              {account.available_amount != null ? (
-                <div className="account-item-available">Disponível: {money(account.available_amount)}</div>
-              ) : null}
-            </>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function CategoryPicker({ categoryOptions, transaction, session, onCategorized }: {
   categoryOptions: ReturnType<typeof orderedCategoryOptions>;
   transaction: TransactionRead;
@@ -492,7 +453,9 @@ export function TransactionExplorer({
     if (sourceType) params.set("source_type", sourceType);
     if (direction) params.set("direction", direction);
     if (importJobId) params.set("import_job_id", importJobId);
-    if (categoryId && fixedQuery !== "category_id=__uncategorized__" && !categoryId.startsWith("__")) params.set("category_id", categoryId);
+    const isUncategorized = categoryId === "__uncategorized__" || fixedQuery === "category_id=__uncategorized__";
+    if (isUncategorized) params.set("uncategorized", "true");
+    else if (categoryId && !categoryId.startsWith("__")) params.set("category_id", categoryId);
     if (dateFrom) params.set("date_from", dateFrom);
     if (dateTo) params.set("date_to", dateTo);
     if (weekday !== undefined) params.set("weekday", String(weekday));
@@ -552,12 +515,11 @@ export function TransactionExplorer({
 
   const visibleTransactions = (() => {
     const items = transactions.data?.items ?? [];
-    if (fixedQuery === "category_id=__uncategorized__") return items.filter((t) => !t.category);
     if (categoryId === "__pending__") return items.filter((t) => !t.category);
     if (categoryId === "__confirmed__") return items.filter((t) => Boolean(t.category));
     return items;
   })();
-  const totalTransactions = fixedQuery === "category_id=__uncategorized__" ? visibleTransactions.length : transactions.data?.total ?? 0;
+  const totalTransactions = transactions.data?.total ?? 0;
   const pageIncome = visibleTransactions.filter((t) => t.direction === "credit").reduce((total, t) => total + Math.abs(Number(t.amount)), 0);
   const pageExpenses = visibleTransactions.filter((t) => t.direction === "debit").reduce((total, t) => total + Math.abs(Number(t.amount)), 0);
   const pagePayments = visibleTransactions.filter((t) => t.direction === "payment").reduce((total, t) => total + Math.abs(Number(t.amount)), 0);
@@ -566,7 +528,7 @@ export function TransactionExplorer({
   void pagePayments; void pageBalance;
   const allPageSelected = visibleTransactions.length > 0 && visibleTransactions.every((t) => selectedIds.has(t.id));
   const somePageSelected = visibleTransactions.some((t) => selectedIds.has(t.id));
-  const nextPageDisabled = transactions.isLoading || fixedQuery === "category_id=__uncategorized__" ? visibleTransactions.length < pageSize : (page + 1) * pageSize >= totalTransactions;
+  const nextPageDisabled = transactions.isLoading || (page + 1) * pageSize >= totalTransactions;
   const activeFilterCount = [search, sourceType, direction, importJobId, !reviewMode ? categoryId : "", dateFrom || dateTo, weekday !== undefined ? String(weekday) : ""].filter(Boolean).length;
   const emptyMessage = activeFilterCount ? "Nenhuma transação encontrada para os filtros selecionados." : reviewMode ? "Nenhuma transação pendente de categoria." : "Nenhuma transação encontrada.";
   const filterSummary = transactionFilterSummary({ categoryId, categories: categories.data?.items ?? [], dateFrom, dateTo, direction, duplicateGroupCount: 0, importJobId, periodPreset, reviewMode, search, sourceType, weekday });

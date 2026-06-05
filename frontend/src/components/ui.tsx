@@ -4,7 +4,7 @@
  * PeriodFilter is the exception: it owns its own open/close dropdown state.
  */
 
-import type { KeyboardEvent, ReactNode, Dispatch, SetStateAction } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
@@ -18,7 +18,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import type { TransactionRead } from "../lib/api";
 import type { TransactionPeriodPreset, PeriodState } from "../types";
 import { periodRange } from "../lib/utils";
 
@@ -52,15 +51,7 @@ function sourceLabel(source: string): string {
   return labels[source] ?? source;
 }
 
-export function dedupeStatus(
-  transaction: Pick<TransactionRead, "id" | "natural_dedupe_key">,
-  expectedKey = "",
-  primaryId = "",
-) {
-  if (expectedKey && transaction.natural_dedupe_key === expectedKey) return "principal";
-  if (primaryId && transaction.id === primaryId) return "suggested";
-  return "review";
-}
+type DedupeStatusValue = "principal" | "suggested" | "review";
 
 function periodSummary({
   dateFrom,
@@ -504,7 +495,7 @@ export function PeriodFilter({
   );
 }
 
-export function DedupeStatusBadge({ status }: { status: ReturnType<typeof dedupeStatus> }) {
+export function DedupeStatusBadge({ status }: { status: DedupeStatusValue }) {
   if (status === "principal") return <StatusBadge label="Principal" status="completed" />;
   if (status === "suggested") return <StatusBadge label="Principal sugerido" status="completed" />;
   return <StatusBadge label="Revisar" status="completed_with_errors" />;
