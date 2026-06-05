@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { Info, Loader2, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 
 import {
   applyRules,
@@ -68,12 +68,17 @@ const emptyRuleForm: RuleFormState = { id: null, name: "", field: "description",
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function RuleRow({ rule, categories, onDelete, onEdit, onPreview }: { rule: CategorizationRuleRead; categories: CategoryRead[]; onDelete: () => void; onEdit: () => void; onPreview: () => void }) {
+function RuleRow({ rule, categories, onDelete, onEdit, onPreview, previewCount }: { rule: CategorizationRuleRead; categories: CategoryRead[]; onDelete: () => void; onEdit: () => void; onPreview: () => void; previewCount?: number }) {
   const category = categories.find((item) => item.id === rule.category_id);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
   return (
     <tr>
       <td>{rule.priority}</td>
-      <td><strong className="rule-name">{rule.name}</strong></td>
+      <td>
+        <strong className="rule-name">{rule.name}</strong>
+        {previewCount !== undefined ? <span className="impact-badge">{previewCount} txs</span> : null}
+      </td>
       <td>
         <div className="rule-condition">
           <span>{ruleFieldLabel(rule.field)}</span>
@@ -85,11 +90,19 @@ function RuleRow({ rule, categories, onDelete, onEdit, onPreview }: { rule: Cate
       <td>{rule.target_direction ? <DirectionBadge direction={rule.target_direction} /> : "-"}</td>
       <td>{rule.active ? <StatusBadge status="active" /> : <StatusBadge status="inactive" />}</td>
       <td>
-        <div className="row-actions">
-          <button className="icon-button" onClick={onPreview} title="Prévia da regra"><Search size={16} /></button>
-          <button className="icon-button" onClick={onEdit} title="Editar regra"><Pencil size={16} /></button>
-          <button className="icon-button danger" onClick={() => { if (window.confirm(`Excluir a regra "${rule.name}"? Esta ação não pode ser desfeita.`)) onDelete(); }} title="Excluir regra"><Trash2 size={16} /></button>
-        </div>
+        {confirmDelete ? (
+          <div className="confirm-delete-inline">
+            <span>Excluir?</span>
+            <button className="ghost-button compact-button" type="button" onClick={() => setConfirmDelete(false)}>Cancelar</button>
+            <button className="danger-button compact-button" type="button" onClick={() => { setConfirmDelete(false); onDelete(); }}>Confirmar</button>
+          </div>
+        ) : (
+          <div className="row-actions">
+            <button className="icon-button" onClick={onPreview} title="Prévia da regra"><Search size={16} /></button>
+            <button className="icon-button" onClick={onEdit} title="Editar regra"><Pencil size={16} /></button>
+            <button className="icon-button danger" onClick={() => setConfirmDelete(true)} title="Excluir regra"><Trash2 size={16} /></button>
+          </div>
+        )}
       </td>
     </tr>
   );
@@ -207,12 +220,25 @@ export function RulesPage({ session }: { session: ApiSession }) {
   const rules = useQuery({ queryKey: ["rules", session.token], queryFn: () => getRules(session) });
   const [form, setForm] = useState<RuleFormState>(emptyRuleForm);
   const [ruleFormError, setRuleFormError] = useState("");
+  const [ruleFormSuccess, setRuleFormSuccess] = useState("");
   const [previewRule, setPreviewRule] = useState<CategorizationRuleRead | null>(null);
+  const [previewCountMap, setPreviewCountMap] = useState<Map<string, number>>(new Map());
   const preview = useQuery({ queryKey: ["rule-preview", session.token, previewRule?.id], queryFn: () => getRulePreview(session, previewRule?.id ?? ""), enabled: Boolean(previewRule) });
   const rulePayload = { name: form.name, field: form.field, match_type: form.match_type, pattern: form.pattern, category_id: form.category_id || null, target_direction: form.target_direction || null, priority: form.priority, active: form.active };
 
-  const create = useMutation({ mutationFn: () => createRule(session, rulePayload), onSuccess: () => { setForm(emptyRuleForm); setRuleFormError(""); void queryClient.invalidateQueries({ queryKey: ["rules"] }); } });
-  const update = useMutation({ mutationFn: () => updateRule(session, form.id ?? "", rulePayload), onSuccess: () => { setForm(emptyRuleForm); setRuleFormError(""); void queryClient.invalidateQueries({ queryKey: ["rules"] }); if (previewRule?.id === form.id) void queryClient.invalidateQueries({ queryKey: ["rule-preview", session.token, form.id] }); } });
+  useEffect(() => {
+    if (preview.data && previewRule) {
+      setPreviewCountMap((prev) => new Map(prev).set(previewRule.id, preview.data.total_count));
+    }
+  }, [preview.data, previewRule]);
+
+  function showSuccess(msg: string) {
+    setRuleFormSuccess(msg);
+    setTimeout(() => setRuleFormSuccess(""), 3000);
+  }
+
+  const create = useMutation({ mutationFn: () => createRule(session, rulePayload), onSuccess: () => { setForm(emptyRuleForm); setRuleFormError(""); showSuccess("Regra criada com sucesso."); void queryClient.invalidateQueries({ queryKey: ["rules"] }); } });
+  const update = useMutation({ mutationFn: () => updateRule(session, form.id ?? "", rulePayload), onSuccess: () => { setForm(emptyRuleForm); setRuleFormError(""); showSuccess("Regra salva com sucesso."); void queryClient.invalidateQueries({ queryKey: ["rules"] }); if (previewRule?.id === form.id) void queryClient.invalidateQueries({ queryKey: ["rule-preview", session.token, form.id] }); } });
   const remove = useMutation({ mutationFn: (id: string) => deleteRule(session, id), onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["rules"] }) });
   const apply = useMutation({ mutationFn: () => applyRules(session), onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["transactions"] }); void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] }); } });
 
@@ -250,9 +276,36 @@ export function RulesPage({ session }: { session: ApiSession }) {
       <Panel title={form.id ? "Editar regra" : "Nova regra"}>
         <form className="rule-form" onSubmit={(e) => { e.preventDefault(); if (!validateRuleForm()) return; if (form.id) { update.mutate(); } else { create.mutate(); } }}>
           <label>Nome<input placeholder="Ex: Delivery" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
-          <label>Campo<select value={form.field} onChange={(e) => setForm({ ...form, field: e.target.value })}><option value="description">Descrição normalizada</option><option value="raw_description">Descrição original</option><option value="source_name">Origem</option></select></label>
+          <label>
+            <span className="field-label-with-tooltip">
+              Campo
+              <span className="field-tooltip">
+                <Info size={14} />
+                <span className="field-tooltip-content">
+                  <strong>Descrição normalizada</strong>: texto limpo e padronizado pelo sistema<br />
+                  <strong>Descrição original</strong>: texto exato como veio do arquivo importado<br />
+                  <strong>Origem</strong>: nome do banco ou cartão de origem
+                </span>
+              </span>
+            </span>
+            <select value={form.field} onChange={(e) => setForm({ ...form, field: e.target.value })}><option value="description">Descrição normalizada</option><option value="raw_description">Descrição original</option><option value="source_name">Origem</option></select>
+          </label>
           <label>Comparação<select value={form.match_type} onChange={(e) => setForm({ ...form, match_type: e.target.value })}><option value="contains">Contém</option><option value="starts_with">Começa com</option><option value="equals">Igual</option></select></label>
-          <label className="rule-pattern">Padrão<input placeholder="Ex: IFOOD" value={form.pattern} onChange={(e) => setForm({ ...form, pattern: e.target.value })} /></label>
+          <label className="rule-pattern">
+            Padrão
+            <div className="pattern-input-row">
+              <input placeholder="Ex: IFOOD" value={form.pattern} onChange={(e) => setForm({ ...form, pattern: e.target.value })} />
+              {form.id ? (
+                <button className="ghost-button compact-button" type="button" title="Testar padrão" onClick={() => { const rule = rules.data?.items.find((r) => r.id === form.id); if (rule) setPreviewRule(rule); }}>
+                  <Search size={14} /> Testar
+                </button>
+              ) : (
+                <span className="pattern-test-hint" title="Salve a regra primeiro para visualizar o impacto">
+                  <Info size={14} /> Testar
+                </span>
+              )}
+            </div>
+          </label>
           <label className="rule-category">
             Categoria
             <select value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}>
@@ -262,7 +315,11 @@ export function RulesPage({ session }: { session: ApiSession }) {
           </label>
           <label>Tipo financeiro<select value={form.target_direction} onChange={(e) => setForm({ ...form, target_direction: e.target.value })}><option value="">Não alterar</option><option value="payment">Pagamento de fatura</option><option value="debit">Despesa</option><option value="credit">Receita</option></select></label>
           <label className="toggle-line"><input checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} type="checkbox" />Ativa</label>
-          <label className="rule-priority">Prioridade<input min={1} type="number" value={form.priority} onChange={(e) => setForm({ ...form, priority: Number(e.target.value) })} /></label>
+          <label className="rule-priority">
+            Prioridade
+            <input min={1} type="number" value={form.priority} onChange={(e) => setForm({ ...form, priority: Number(e.target.value) })} />
+            <small className="field-hint">Menor número = maior prioridade</small>
+          </label>
           <div className="rule-submit-group">
             <button className="primary-button rule-submit" disabled={saving} type="submit">
               {saving ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}{form.id ? "Salvar" : "Criar"}
@@ -271,6 +328,7 @@ export function RulesPage({ session }: { session: ApiSession }) {
           </div>
         </form>
         {ruleFormError ? <InlineError message={ruleFormError} /> : null}
+        {ruleFormSuccess ? <InlineSuccess message={ruleFormSuccess} /> : null}
         {create.isError ? <InlineError message={apiErrorMessage(create.error, "Falha ao criar regra.")} /> : null}
         {update.isError ? <InlineError message={apiErrorMessage(update.error, "Falha ao salvar regra.")} /> : null}
       </Panel>
@@ -280,7 +338,7 @@ export function RulesPage({ session }: { session: ApiSession }) {
         <ResponsiveTable loading={rules.isLoading} empty={!rules.data?.items.length} emptyMessage="Nenhuma regra criada.">
           <thead><tr><th>Prior.</th><th>Nome</th><th>Condição</th><th>Categoria</th><th>Tipo financeiro</th><th>Status</th><th /></tr></thead>
           <tbody>
-            {ruleItems.map((rule) => <RuleRow categories={categories.data?.items ?? []} key={rule.id} onDelete={() => remove.mutate(rule.id)} onEdit={() => editRule(rule)} onPreview={() => setPreviewRule(rule)} rule={rule} />)}
+            {ruleItems.map((rule) => <RuleRow categories={categories.data?.items ?? []} key={rule.id} onDelete={() => remove.mutate(rule.id)} onEdit={() => editRule(rule)} onPreview={() => setPreviewRule(rule)} rule={rule} previewCount={previewCountMap.get(rule.id)} />)}
           </tbody>
         </ResponsiveTable>
       </Panel>
