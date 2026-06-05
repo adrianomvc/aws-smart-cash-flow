@@ -339,3 +339,94 @@ def test_rule_requires_category_or_financial_direction(
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Rule must define a category or target direction"
+
+
+def test_rule_suggestions_groups_uncategorized_transactions(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    # Import transactions: two IFOOD, two UBER, one PADARIA (singleton — should be excluded)
+    ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="fatura.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/fatura.csv",
+        content=(
+            b"data,lan\xc3\xa7amento,valor\n"
+            b"2026-01-10,IFOOD PEDIDO 1,35.90\n"
+            b"2026-01-11,IFOOD PEDIDO 2,42.00\n"
+            b"2026-01-12,UBER TRIP CENTRO,18.50\n"
+            b"2026-01-13,UBER TRIP NORTE,22.00\n"
+            b"2026-01-14,PADARIA SAO JOSE,14.90\n"
+        ),
+    )
+
+    response = client.get("/v1/categorization-rules/suggestions?limit=15")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_uncategorized"] == 5
+    patterns = [s["pattern"] for s in data["suggestions"]]
+    # IFOOD and UBER should appear; PADARIA only has 1 occurrence → excluded
+    assert "IFOOD" in patterns
+    assert "UBER" in patterns
+    assert "PADARIA" not in patterns
+    # Each suggestion has correct structure
+    for suggestion in data["suggestions"]:
+        assert suggestion["match_type"] == "contains"
+        assert suggestion["field"] == "description"
+        assert len(suggestion["sample_descriptions"]) >= 1
+        assert suggestion["transaction_count"] >= 2
+
+
+def test_rule_suggestions_excludes_already_categorized(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    # Import two IFOOD transactions then categorize one
+    ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="fatura2.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/fatura2.csv",
+        content=(
+            b"data,lan\xc3\xa7amento,valor\n"
+            b"2026-02-01,IFOOD PEDIDO A,30.00\n"
+            b"2026-02-02,IFOOD PEDIDO B,28.00\n"
+        ),
+    )
+    from app.db.models import Transaction, TransactionCategoryAssignment
+
+    category = Category(id=str(uuid4()), workspace_id=auth.workspace_id, name="Alimentacao")
+    db_session.add(category)
+    db_session.flush()
+    tx = db_session.scalars(
+        __import__("sqlalchemy", fromlist=["select"]).select(Transaction).where(
+            Transaction.workspace_id == auth.workspace_id
+        )
+    ).first()
+    assert tx is not None
+    db_session.add(
+        TransactionCategoryAssignment(
+            id=str(uuid4()),
+            workspace_id=auth.workspace_id,
+            transaction_id=tx.id,
+            category_id=category.id,
+            source="manual",
+            confidence=None,
+            reason="manual test",
+            review_status="accepted",
+        )
+    )
+    db_session.commit()
+
+    response = client.get("/v1/categorization-rules/suggestions?limit=15")
+    assert response.status_code == 200
+    data = response.json()
+    # Only 1 uncategorized IFOOD transaction remains → group should not appear (count < 2)
+    assert data["total_uncategorized"] == 1
+    assert data["suggestions"] == []

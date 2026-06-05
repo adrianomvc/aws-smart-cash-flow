@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     database_pool_recycle_seconds: int = 300
     default_credit_card_closing_day: int = Field(default=23, ge=1, le=31)
     default_credit_card_due_day: int = Field(default=30, ge=1, le=31)
+    # Slice 11 & 12 — Auto-categorization
+    ANTHROPIC_API_KEY: str = ""
+    CATEGORIZATION_EMBEDDING_MODEL: str = "voyage-3-lite"
+    CATEGORIZATION_LLM_MODEL: str = "claude-3-haiku-20240307"
+    CATEGORIZATION_CONFIDENCE_THRESHOLD: float = 0.75
+    CATEGORIZATION_AUTO_ACCEPT: bool = False
+
     cors_origins_raw: str = Field(
         default=(
             "http://localhost:5173,http://127.0.0.1:5173,"

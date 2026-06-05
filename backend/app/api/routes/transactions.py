@@ -272,6 +272,7 @@ async def list_transactions(
     direction: str | None = None,
     weekday: int | None = Query(default=None, ge=0, le=6),
     q: str | None = None,
+    review_status: str | None = None,
     sort_by: str = Query(default="transaction_date"),
     sort_dir: str = Query(default="desc"),
     limit: int = Query(default=50, ge=1, le=500),
@@ -329,6 +330,20 @@ async def list_transactions(
             or_(
                 Transaction.description.ilike(search),
                 Transaction.raw_description.ilike(search),
+            )
+        )
+    if review_status is not None:
+        if review_status not in {"accepted", "pending", "corrected"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid review_status. Use accepted, pending, or corrected.",
+            )
+        filters.append(
+            Transaction.id.in_(
+                select(TransactionCategoryAssignment.transaction_id).where(
+                    TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+                    TransactionCategoryAssignment.review_status == review_status,
+                )
             )
         )
     if uncategorized:
@@ -605,6 +620,85 @@ async def delete_transaction(
         )
     )
     db.delete(transaction)
+    db.commit()
+
+
+@router.post("/{transaction_id}/category/accept")
+async def accept_category_review(
+    transaction_id: str,
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> CategoryAssignmentRead:
+    transaction = db.scalar(
+        select(Transaction).where(
+            Transaction.id == transaction_id,
+            Transaction.workspace_id == auth.workspace_id,
+        )
+    )
+    if transaction is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
+
+    assignment = db.scalar(
+        select(TransactionCategoryAssignment).where(
+            TransactionCategoryAssignment.transaction_id == transaction.id,
+            TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+        )
+    )
+    if assignment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No category assignment found for this transaction",
+        )
+    if assignment.source == "manual":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Manual assignments do not require review",
+        )
+
+    assignment.review_status = "accepted"
+    db.commit()
+    db.refresh(assignment)
+    return CategoryAssignmentRead(
+        category_id=assignment.category_id,
+        source=assignment.source,
+        confidence=assignment.confidence,
+        review_status=assignment.review_status,
+    )
+
+
+@router.post("/{transaction_id}/category/reject", status_code=status.HTTP_204_NO_CONTENT)
+async def reject_category_review(
+    transaction_id: str,
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> None:
+    transaction = db.scalar(
+        select(Transaction).where(
+            Transaction.id == transaction_id,
+            Transaction.workspace_id == auth.workspace_id,
+        )
+    )
+    if transaction is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
+
+    assignment = db.scalar(
+        select(TransactionCategoryAssignment).where(
+            TransactionCategoryAssignment.transaction_id == transaction.id,
+            TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+        )
+    )
+    if assignment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No category assignment found for this transaction",
+        )
+    if assignment.source == "manual":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Manual assignments cannot be rejected via this endpoint",
+        )
+
+    db.delete(assignment)
     db.commit()
 
 
