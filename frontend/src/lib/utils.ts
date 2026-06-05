@@ -2,12 +2,18 @@
 // No JSX, no React hooks, no component definitions.
 
 import type {
+  CalendarEventRead,
+  CategoryRankingItem,
+  CreditCardInstallmentItem,
+  CreditCardRead,
   CategoryRead,
   DuplicateTransactionGroup,
   ProjectionFeed,
+  RecurringExpenseItem,
   TransactionRead,
 } from "./api";
 import type { ProjectionEventSource } from "./cashflowProjection";
+import type { CalendarEvent } from "../types";
 
 // ---------------------------------------------------------------------------
 // Types (re-declared here so this module is self-contained; App.tsx still
@@ -663,4 +669,129 @@ export function directionLabel(direction: string) {
 export function weekdayLabel(value: number) {
   const labels = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"];
   return labels[value] ?? "Dia da semana";
+}
+
+// ---------------------------------------------------------------------------
+// Calendar helpers
+// ---------------------------------------------------------------------------
+
+export function calendarEventTone(event: CalendarEventRead): "info" | "negative" | "positive" | "warning" {
+  if (event.status === "paid") return "positive";
+  if (event.event_type === "income") return "positive";
+  if (event.event_type === "card_payment" || event.event_type === "subscription") return "warning";
+  if (event.event_type === "expense") return "negative";
+  return "info";
+}
+
+export function calendarEventTypeLabel(eventType: string) {
+  const labels: Record<string, string> = {
+    card_payment: "Fatura",
+    expense: "Despesa",
+    goal: "Meta",
+    income: "Receita",
+    other: "Outro",
+    subscription: "Assinatura",
+  };
+  return labels[eventType] ?? eventType;
+}
+
+export function calendarEventStatusLabel(eventStatus: string) {
+  const labels: Record<string, string> = {
+    paid: "Pago",
+    planned: "Planejado",
+    skipped: "Ignorado",
+  };
+  return labels[eventStatus] ?? eventStatus;
+}
+
+export function buildCalendarEvents({
+  apiEvents,
+  installments,
+  recurring,
+  transactions,
+}: {
+  apiEvents?: CalendarEventRead[];
+  installments: CreditCardInstallmentItem[];
+  recurring: RecurringExpenseItem[];
+  transactions: TransactionRead[];
+}): CalendarEvent[] {
+  if (apiEvents?.length) {
+    return apiEvents
+      .map((event) => ({
+        amount: event.amount ?? 0,
+        date: event.due_date,
+        detail: `${calendarEventTypeLabel(event.event_type)} · ${calendarEventStatusLabel(event.status)}`,
+        direction: event.event_type === "income" ? "credit" : "debit",
+        kind: event.recurrence === "monthly" ? "Recorrente" : "Planejado",
+        label: event.title,
+        search: event.title,
+        tone: calendarEventTone(event),
+      }))
+      .sort((left, right) => left.date.localeCompare(right.date));
+  }
+  const recurringEvents: CalendarEvent[] = recurring.slice(0, 5).map((item) => ({
+    amount: item.last_amount || item.average_amount,
+    date: item.last_transaction_date,
+    detail: `${item.transaction_count} ocorrências em ${item.month_count} mês${item.month_count === 1 ? "" : "es"}`,
+    direction: "debit",
+    kind: item.category_name ?? "Recorrência provável",
+    label: item.description,
+    search: item.description,
+    tone: Number(item.change_ratio ?? 0) >= 0.3 ? "warning" : "info",
+  }));
+  const installmentEvents: CalendarEvent[] = installments.slice(0, 4).map((item) => ({
+    amount: item.amount,
+    date: item.last_transaction_date,
+    detail: `${item.installment_current}/${item.installment_total} · faltam ${item.remaining_installments}`,
+    direction: "debit",
+    kind: "Parcela de cartão",
+    label: item.description,
+    search: item.description,
+    tone: item.remaining_installments >= 3 ? "warning" : "info",
+  }));
+  const transactionEvents: CalendarEvent[] = transactions
+    .filter((t) => t.direction !== "payment")
+    .slice(0, 4)
+    .map((t) => ({
+      amount: t.amount,
+      date: t.transaction_date,
+      detail: sourceTypeLabel(t.source_type),
+      direction: t.direction,
+      kind: t.direction === "credit" ? "Entrada recente" : "Saída recente",
+      label: t.description,
+      search: t.description,
+      tone: t.direction === "credit" ? "positive" : "negative",
+    }));
+  return [...recurringEvents, ...installmentEvents, ...transactionEvents]
+    .filter((item) => item.date)
+    .sort((left, right) => left.date.localeCompare(right.date))
+    .slice(0, 10);
+}
+
+// ---------------------------------------------------------------------------
+// Budget helpers
+// ---------------------------------------------------------------------------
+
+export function buildBudgetRows(items: CategoryRankingItem[]) {
+  return items.slice(0, 8).map((item, index) => {
+    const spent = Number(item.amount ?? 0);
+    const multiplier = [1.18, 1.05, 0.92, 1.28, 1.12, 0.88, 1.2, 1.1][index] ?? 1.1;
+    const limit = Math.max(100, Math.round((spent * multiplier) / 10) * 10);
+    return {
+      categoryId: item.category_id,
+      categoryName: item.category_name,
+      limit,
+      ratio: spent / Math.max(limit, 1),
+      spent,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Credit card helpers
+// ---------------------------------------------------------------------------
+
+export function cardLabel(card: CreditCardRead) {
+  const suffix = card.last_four ? ` final ${card.last_four}` : "";
+  return `${card.name}${suffix}`;
 }

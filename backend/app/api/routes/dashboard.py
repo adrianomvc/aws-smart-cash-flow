@@ -239,6 +239,7 @@ class ProjectionFeedKnownEventItem(BaseModel):
 class ProjectionFeedRecurringItem(BaseModel):
     description: str
     amount: Decimal
+    average_amount: Decimal
     type: str
     last_date: str
     month_count: int
@@ -496,11 +497,13 @@ def get_projection_feed(
     auth: AuthContext = AuthDependency,
     db: Session = DbDependency,
     horizon_days: int = Query(default=90, ge=7, le=365),
+    lookback_months: int = Query(default=3, ge=3, le=6),
 ) -> ProjectionFeedResponse:
     return ProjectionFeedResponse(
         **DashboardService(db).projection_feed(
             workspace_id=auth.workspace_id,
             horizon_days=horizon_days,
+            lookback_months=lookback_months,
         )
     )
 

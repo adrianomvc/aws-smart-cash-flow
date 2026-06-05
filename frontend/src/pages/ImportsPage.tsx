@@ -12,7 +12,7 @@ import {
   previewImport,
   uploadImport,
 } from "../lib/api";
-import { apiErrorMessage, dateLabel, monthYearLabel } from "../lib/utils";
+import { apiErrorMessage, cardLabel, dateLabel, monthYearLabel } from "../lib/utils";
 import {
   Drawer,
   InlineError,
@@ -51,9 +51,6 @@ function fileSizeLabel(sizeBytes: number) {
   return `${(sizeBytes / (1024 * 1024)).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} MB`;
 }
 
-function cardLabel(card: CreditCardRead) {
-  return `${card.name}${card.last_four ? ` final ${card.last_four}` : ""}`;
-}
 
 function statementStatusLabel(status: string) {
   const labels: Record<string, string> = { closed: "Fechada", open: "Aberta", paid: "Paga", partial: "Parcial" };

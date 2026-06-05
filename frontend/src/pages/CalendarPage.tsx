@@ -12,6 +12,10 @@ import {
 } from "../lib/api";
 import {
   apiErrorMessage,
+  buildCalendarEvents,
+  calendarEventStatusLabel,
+  calendarEventTone,
+  calendarEventTypeLabel,
   dateInputLabel,
   isoDate,
   money,
@@ -43,99 +47,6 @@ import type { CalendarEvent, PeriodState, TransactionDrilldown } from "../types"
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function calendarEventTone(event: CalendarEventRead): "info" | "negative" | "positive" | "warning" {
-  if (event.status === "paid") return "positive";
-  if (event.event_type === "income") return "positive";
-  if (event.event_type === "card_payment" || event.event_type === "subscription") return "warning";
-  if (event.event_type === "expense") return "negative";
-  return "info";
-}
-
-function calendarEventTypeLabel(eventType: string) {
-  const labels: Record<string, string> = {
-    card_payment: "Fatura",
-    expense: "Despesa",
-    goal: "Meta",
-    income: "Receita",
-    other: "Outro",
-    subscription: "Assinatura",
-  };
-  return labels[eventType] ?? eventType;
-}
-
-function calendarEventStatusLabel(eventStatus: string) {
-  const labels: Record<string, string> = {
-    paid: "Pago",
-    planned: "Planejado",
-    skipped: "Ignorado",
-  };
-  return labels[eventStatus] ?? eventStatus;
-}
-
-function buildCalendarEvents({
-  apiEvents,
-  installments,
-  recurring,
-  transactions,
-}: {
-  apiEvents?: CalendarEventRead[];
-  installments: CreditCardInstallmentItem[];
-  recurring: RecurringExpenseItem[];
-  transactions: TransactionRead[];
-}): CalendarEvent[] {
-  if (apiEvents?.length) {
-    return apiEvents
-      .map((event) => ({
-        amount: event.amount ?? 0,
-        date: event.due_date,
-        detail: `${calendarEventTypeLabel(event.event_type)} · ${calendarEventStatusLabel(event.status)}`,
-        direction: event.event_type === "income" ? "credit" : "debit",
-        kind: event.recurrence === "monthly" ? "Recorrente" : "Planejado",
-        label: event.title,
-        search: event.title,
-        tone: calendarEventTone(event),
-      }))
-      .sort((left, right) => left.date.localeCompare(right.date));
-  }
-  const recurringEvents: CalendarEvent[] = recurring.slice(0, 5).map((item) => ({
-    amount: item.last_amount || item.average_amount,
-    date: item.last_transaction_date,
-    detail: `${item.transaction_count} ocorrências em ${item.month_count} mês${item.month_count === 1 ? "" : "es"}`,
-    direction: "debit",
-    kind: item.category_name ?? "Recorrência provável",
-    label: item.description,
-    search: item.description,
-    tone: Number(item.change_ratio ?? 0) >= 0.3 ? "warning" : "info",
-  }));
-  const installmentEvents: CalendarEvent[] = installments.slice(0, 4).map((item) => ({
-    amount: item.amount,
-    date: item.last_transaction_date,
-    detail: `${item.installment_current}/${item.installment_total} · faltam ${item.remaining_installments}`,
-    direction: "debit",
-    kind: "Parcela de cartão",
-    label: item.description,
-    search: item.description,
-    tone: item.remaining_installments >= 3 ? "warning" : "info",
-  }));
-  const transactionEvents: CalendarEvent[] = transactions
-    .filter((t) => t.direction !== "payment")
-    .slice(0, 4)
-    .map((t) => ({
-      amount: t.amount,
-      date: t.transaction_date,
-      detail: sourceTypeLabel(t.source_type),
-      direction: t.direction,
-      kind: t.direction === "credit" ? "Entrada recente" : "Saída recente",
-      label: t.description,
-      search: t.description,
-      tone: t.direction === "credit" ? "positive" : "negative",
-    }));
-  return [...recurringEvents, ...installmentEvents, ...transactionEvents]
-    .filter((item) => item.date)
-    .sort((left, right) => left.date.localeCompare(right.date))
-    .slice(0, 10);
-}
 
 // ---------------------------------------------------------------------------
 // Sub-components

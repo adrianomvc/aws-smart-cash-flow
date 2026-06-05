@@ -476,6 +476,7 @@ export type ProjectionFeed = {
   recurring_items: Array<{
     description: string;
     amount: string;
+    average_amount: string;
     type: "income" | "expense";
     last_date: string;
     month_count: number;
@@ -495,6 +496,16 @@ export type ProjectionFeed = {
     historical_monthly_amounts: string[];
     monthly_average: string;
   }>;
+};
+
+export type ActiveAccountItem = {
+  kind: "bank" | "credit_card";
+  account_name: string;
+  current_balance?: number | null;
+  balance_date?: string | null;
+  limit_amount?: number | null;
+  used_amount?: number | null;
+  available_amount?: number | null;
 };
 
 export type ReportCardRead = {
@@ -668,8 +679,11 @@ export function getCreditCardInstallments(session: ApiSession, query: string) {
   return apiRequest<CreditCardInstallmentsResponse>(`/dashboard/credit-card-installments${query}`, session);
 }
 
-export function getProjectionFeed(session: ApiSession, horizonDays = 90) {
-  return apiRequest<ProjectionFeed>(`/dashboard/projection-feed?horizon_days=${horizonDays}`, session);
+export function getProjectionFeed(session: ApiSession, horizonDays = 90, lookbackMonths: 3 | 6 = 3) {
+  return apiRequest<ProjectionFeed>(
+    `/dashboard/projection-feed?horizon_days=${horizonDays}&lookback_months=${lookbackMonths}`,
+    session,
+  );
 }
 
 export function getCreditCards(session: ApiSession) {
@@ -998,4 +1012,8 @@ export async function resetPassword(email: string) {
   }
 
   return response.json() as Promise<{ message: string }>;
+}
+
+export function getActiveAccounts(session: ApiSession) {
+  return apiRequest<{ items: ActiveAccountItem[]; total: number }>("/accounts/active", session);
 }
