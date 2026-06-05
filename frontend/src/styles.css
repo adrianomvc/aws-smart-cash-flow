@@ -3913,6 +3913,126 @@ td small {
   min-width: 104px;
 }
 
+/* ── Rule form UX extras ── */
+
+.field-label-with-tooltip {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+}
+
+.field-tooltip {
+  align-items: center;
+  display: inline-flex;
+  position: relative;
+}
+
+.field-tooltip svg {
+  color: #94a3b8;
+  cursor: default;
+}
+
+.field-tooltip:hover svg {
+  color: #475569;
+}
+
+.field-tooltip-content {
+  background: #1e293b;
+  border-radius: 6px;
+  bottom: calc(100% + 6px);
+  color: #f1f5f9;
+  font-size: 12px;
+  font-weight: 400;
+  left: 50%;
+  line-height: 1.5;
+  min-width: 220px;
+  opacity: 0;
+  padding: 8px 10px;
+  pointer-events: none;
+  position: absolute;
+  transform: translateX(-50%);
+  transition: opacity 0.15s;
+  white-space: normal;
+  z-index: 20;
+}
+
+.field-tooltip:hover .field-tooltip-content {
+  opacity: 1;
+}
+
+.pattern-input-row {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.pattern-input-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.pattern-test-hint {
+  align-items: center;
+  color: #94a3b8;
+  cursor: default;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 600;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.field-hint {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 400;
+  margin-top: 2px;
+}
+
+.impact-badge {
+  background: #eff6ff;
+  border-radius: 10px;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 600;
+  margin-left: 6px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+
+.confirm-delete-inline {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.confirm-delete-inline span {
+  color: #991b1b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.danger-button {
+  background: #fee2e2;
+  border: 1px solid #fca5a5;
+  border-radius: 6px;
+  color: #991b1b;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+}
+
+.danger-button:hover {
+  background: #fecaca;
+}
+
+.compact-button {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
 .inline-form input {
   min-width: min(420px, 100%);
 }
