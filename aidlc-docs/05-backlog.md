@@ -43,17 +43,17 @@ Itens do pacote:
 - `Feito local` Implementar primeira fatia visual do Dashboard sem criar novas
   funcionalidades.
 - `Feito local` Criar checklist de validacao visual.
-- `Validacao usuario` Validar localmente a primeira dobra do Dashboard contra
+- `Validado usuario` Validar localmente a primeira dobra do Dashboard contra
   os prototipos `1a - Dashboard.png` e `1b - dashboard2.png`.
 
 Rastreabilidade do pacote atual:
 
 | Pacote | US relacionada | Status | Observacao |
 | --- | --- | --- | --- |
-| Alinhamento Visual com Prototipo | US-055 | `Feito local` | Primeira dobra do Dashboard ajustada. |
+| Alinhamento Visual com Prototipo | US-055 | `Validado usuario` | Primeira dobra do Dashboard ajustada e validada. |
 | Alinhamento Visual com Prototipo | US-056 | `Em andamento` | Hierarquia visual consistente. |
 | Alinhamento Visual com Prototipo | US-056A | `Em andamento` | Revisao transversal UX/UI/Product/UX Writing. |
-| Alinhamento Visual com Prototipo | US-074 | `Validacao usuario` | Dashboard narrativo alinhado ao cockpit financeiro. |
+| Alinhamento Visual com Prototipo | US-074 | `Validado usuario` | Dashboard narrativo alinhado ao cockpit financeiro. |
 | Alinhamento Visual com Prototipo | US-076 | `Todo` | Estrutura moderna e consistente de navegacao. |
 
 ### Pacote Anterior: Relatorios
