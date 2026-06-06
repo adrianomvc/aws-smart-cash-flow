@@ -1,6 +1,7 @@
 """Categorization improvements: regex rules, amount_recurring, rule_id tracing, pg_trgm."""
 
 import sqlalchemy as sa
+
 from alembic import op
 
 UUID_TYPE = sa.Uuid(as_uuid=False)
