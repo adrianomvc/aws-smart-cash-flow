@@ -45,10 +45,15 @@ Itens do pacote:
 - `Feito local` Criar checklist de validacao visual.
 - `Validado usuario` Validar localmente a primeira dobra do Dashboard contra
   os prototipos `1a - Dashboard.png` e `1b - dashboard2.png`.
-- `Todo` Auditar inconsistencias visuais entre paginas (US-056): cards, badges,
-  loading, empty states, erros e acoes destrutivas.
-- `Todo` Implementar hierarquia visual consistente nas telas auditadas (US-056).
-- `Todo` Validar localmente hierarquia visual apos implementacao (US-056).
+- `Feito local` Auditar inconsistencias visuais entre paginas (US-056): resultado
+  em `aidlc-docs/22-us056-visual-consistency-audit.md`.
+- `Feito local` Adicionar confirmacao de exclusao em CategoriesPage (categoria e
+  regra) — acoes destrutivas sem confirm identificadas na auditoria.
+- `Todo` Corrigir error states invisiveis: DashboardPage e CashflowPage nao
+  exibem InlineError quando queries de API falham (US-056).
+- `Todo` Substituir transaction-summary-card por MetricCard em CategoriesPage,
+  RulesPage e SettingsPage (US-056) — aguarda validacao visual do usuario.
+- `Todo` Validar localmente hierarquia visual apos implementacao completa (US-056).
 
 Rastreabilidade do pacote atual:
 

@@ -88,7 +88,7 @@ function RuleRow({ rule, categories, onDelete, onEdit, onPreview }: { rule: Cate
         <div className="row-actions">
           <button className="icon-button" onClick={onPreview} title="Prévia da regra"><Search size={16} /></button>
           <button className="icon-button" onClick={onEdit} title="Editar regra"><Pencil size={16} /></button>
-          <button className="icon-button danger" onClick={onDelete} title="Excluir regra"><Trash2 size={16} /></button>
+          <button className="icon-button danger" onClick={() => { if (window.confirm(`Excluir a regra "${rule.name}"? Esta ação não pode ser desfeita.`)) onDelete(); }} title="Excluir regra"><Trash2 size={16} /></button>
         </div>
       </td>
     </tr>
@@ -189,7 +189,7 @@ export function CategoriesPage({ session }: { session: ApiSession }) {
                 <td>{dateLabel(c.created_at)}</td>
                 <td className="row-actions">
                   <button className="icon-button" onClick={() => { setEditing(c); setName(c.name); setParentCategoryId(c.parent_category_id ?? ""); }}><Pencil size={16} /></button>
-                  <button className="icon-button danger" onClick={() => remove.mutate(c.id)}><Trash2 size={16} /></button>
+                  <button className="icon-button danger" onClick={() => { if (window.confirm(`Excluir a categoria "${c.name}"? Esta ação não pode ser desfeita.`)) remove.mutate(c.id); }}><Trash2 size={16} /></button>
                 </td>
               </tr>
             ))}
