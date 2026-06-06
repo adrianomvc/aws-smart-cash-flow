@@ -51,7 +51,7 @@ function sourceLabel(source: string): string {
   return labels[source] ?? source;
 }
 
-function dedupeStatus(
+export function dedupeStatus(
   transaction: Pick<TransactionRead, "id" | "natural_dedupe_key">,
   expectedKey = "",
   primaryId = "",

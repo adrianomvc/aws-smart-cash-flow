@@ -1,5 +1,5 @@
 import type { FormEvent } from "react";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownCircle,
@@ -33,7 +33,6 @@ import {
   compactMoneyAbs,
   dateLabel,
   dedupeStatus,
-  directionLabel,
   duplicatePrimaryId,
   exportTransactionsCSV,
   installmentLabel,
@@ -44,17 +43,14 @@ import {
   periodRange,
   sourceTypeLabel,
   transactionFilterSummary,
-  withQueryParams,
 } from "../lib/utils";
 import { useCategories } from "../hooks";
 import {
   DedupeStatusBadge,
   Drawer,
-  EmptyInline,
   InlineError,
   InlineSuccess,
   MetricCard,
-  PageState,
   Panel,
   PeriodFilter,
   QualityRow,
@@ -68,15 +64,12 @@ import type {
   DuplicateTransactionGroup,
   TransactionRead,
 } from "../lib/api";
-import type { TransactionDrilldown, TransactionPeriodPreset } from "../types";
+import type { TransactionPeriodPreset } from "../types";
 
 // ---------------------------------------------------------------------------
 // Private sub-components
 // ---------------------------------------------------------------------------
 
-function DirectionBadge({ direction }: { direction: string }) {
-  return <span className={`direction-badge ${direction}`}>{directionLabel(direction)}</span>;
-}
 
 function ActiveAccountsPanel({ accounts, loading }: { accounts: ActiveAccountItem[]; loading: boolean }) {
   if (loading) {
