@@ -539,6 +539,50 @@ async def update_transaction_category(
     return _transaction_read(transaction=transaction, assignment=assignment)
 
 
+@router.get("/{transaction_id}/rule-suggestion")
+async def get_rule_suggestion(
+    transaction_id: str,
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> dict:
+    """Return a rule suggestion for a manually-categorized transaction."""
+    import re as _re
+
+    transaction = db.scalar(
+        select(Transaction).where(
+            Transaction.id == transaction_id,
+            Transaction.workspace_id == auth.workspace_id,
+        )
+    )
+    if transaction is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
+
+    desc = transaction.description or ""
+    tokens = [t for t in desc.split() if len(t) > 1][:3]
+    if not tokens:
+        return {"suggestion": None}
+
+    pattern = "^" + r"\s+".join(_re.escape(t.lower()) for t in tokens)
+    prefix = " ".join(tokens[:2])
+    affected = db.scalar(
+        select(func.count(Transaction.id)).where(
+            Transaction.workspace_id == auth.workspace_id,
+            Transaction.description.ilike(f"{prefix}%"),
+        )
+    ) or 0
+
+    return {
+        "suggestion": {
+            "match_type": "regex",
+            "field": "description",
+            "pattern": pattern,
+            "direction_filter": transaction.direction,
+            "suggested_name": f"Auto: {prefix}",
+            "affected_count": affected,
+        }
+    }
+
+
 @router.patch("/{transaction_id}/direction")
 async def update_transaction_direction(
     transaction_id: str,

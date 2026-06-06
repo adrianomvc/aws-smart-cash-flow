@@ -16,6 +16,7 @@ from app.domain.imports import (
 )
 
 DESCRIPTION_TOKEN_ALIASES = {
+    # marketplace / intermediador
     "MERCADOLI": ("MERCADO", "LIVRE"),
     "MERCADOLIV": ("MERCADO", "LIVRE"),
     "MERCADOLIVRE": ("MERCADO", "LIVRE"),
@@ -27,6 +28,24 @@ DESCRIPTION_TOKEN_ALIASES = {
     "NUV": ("NUVEMSHOP",),
     "UBERBR": ("UBER", "BR"),
     "UBERBRASIL": ("UBER", "BR"),
+    # canais de pagamento — removidos da descrição (ruído)
+    "INT": (),
+    "CEL": (),
+    "OPF": (),
+    "SISDEB": (),
+    "SISPAG": (),
+    "EST": (),
+    # códigos de banco — ruído puro
+    "001": (),
+    "033": (),
+    "077": (),
+    "104": (),
+    "237": (),
+    "260": (),
+    "290": (),
+    "336": (),
+    "341": (),
+    "356": (),
 }
 
 PREFIX_TOKEN_ALIASES = {
@@ -47,6 +66,13 @@ SEQUENCE_TOKEN_ALIASES = {
     ("GOOGLE", "YOUTUB"): ("GOOGLE", "YOUTUBE"),
     ("SHELL", "BOX"): ("SHELLBOX",),
     ("UBER", "DO", "BRASI"): ("UBER", "BR"),
+    # canais de pagamento compostos — colapsam para a ação real
+    ("INT", "PAG"): (),
+    ("MOBILE", "PAG"): (),
+    ("CEL", "PAG"): (),
+    ("MOB", "PAG"): (),
+    ("PAG", "TIT"): ("TIT",),
+    ("TIT", "PAG"): ("TIT",),
 }
 
 
@@ -88,6 +114,8 @@ def _normalize_transaction_description(raw_description: str, *, drop_installment
         ascii_description = _drop_trailing_installment_suffix(ascii_description)
 
     cleaned = re.sub(r"[*_/\\|,.;:]+", " ", ascii_description)
+    # split on letter↔digit boundary so "OSVALDO04" becomes "OSVALDO 04"
+    cleaned = re.sub(r"(?<=[A-Z])(?=\d)|(?<=\d)(?=[A-Z])", " ", cleaned)
     tokens = cleaned.split()
     normalized_tokens: list[str] = []
     for index, token in enumerate(tokens):
