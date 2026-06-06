@@ -45,6 +45,15 @@ Itens do pacote:
 - `Feito local` Criar checklist de validacao visual.
 - `Validado usuario` Validar localmente a primeira dobra do Dashboard contra
   os prototipos `1a - Dashboard.png` e `1b - dashboard2.png`.
+- `Feito local` Auditar inconsistencias visuais entre paginas (US-056): resultado
+  em `aidlc-docs/22-us056-visual-consistency-audit.md`.
+- `Feito local` Adicionar confirmacao de exclusao em CategoriesPage (categoria e
+  regra) — acoes destrutivas sem confirm identificadas na auditoria.
+- `Todo` Corrigir error states invisiveis: DashboardPage e CashflowPage nao
+  exibem InlineError quando queries de API falham (US-056).
+- `Todo` Substituir transaction-summary-card por MetricCard em CategoriesPage,
+  RulesPage e SettingsPage (US-056) — aguarda validacao visual do usuario.
+- `Todo` Validar localmente hierarquia visual apos implementacao completa (US-056).
 
 Rastreabilidade do pacote atual:
 
@@ -383,6 +392,21 @@ Backlog evolucao:
 
 - `Backlog evolucao` Infra/arquitetura: avaliar S3 + CloudFront, hardening AWS,
   lifecycle S3 e migracao serverless completa.
+- `Backlog evolucao` Categorização — ações operacionais pós-merge do PR #47:
+  (1) rodar script `scripts/seed_bucket_rules.py` com URL e token de producao
+  para criar subcategorias de balde em Financeiro (Transferencias, Boletos,
+  Tarifas bancarias, Saques) e aplicar regras em lote;
+  (2) reprocessar descricoes em Configuracoes para regenerar campo `description`
+  com as novas regras de normalizacao;
+  (3) chamar `POST /v1/categorize-pending` para rodar trgm nas ~1.784 transacoes
+  sem categoria;
+  (4) revisar pendentes em `GET /v1/pending-review` e aceitar ou corrigir
+  sugestoes do trgm.
+- `Backlog evolucao` Categorização — automacao no import: hoje trgm e LLM sao
+  manuais (POST /categorize-pending). Evoluir para rodar automaticamente apos
+  cada importacao bem-sucedida, em background ou via fila.
+- `Backlog evolucao` Categorização — LLM Gemini: configurar GEMINI_API_KEY no
+  Lambda AWS para ativar a fase 4 do pipeline (hoje e no-op sem a chave).
 
 ## Epic 1: Fundacao do Projeto
 
