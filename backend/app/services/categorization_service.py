@@ -154,7 +154,7 @@ class CategorizationService:
         transaction_ids: set[str] | None = None,
         threshold: float = _TRGM_THRESHOLD,
     ) -> int:
-        """Stage 2a: suggest categories based on trigram similarity to already-categorized transactions."""
+        """Stage 2a: suggest categories based on trigram similarity to categorized transactions."""
         transaction_query = (
             select(Transaction)
             .outerjoin(

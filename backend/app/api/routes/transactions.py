@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import and_, asc, delete, desc, func, or_, select, text
+from sqlalchemy import and_, asc, delete, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import AuthContext, AuthDependency
@@ -546,7 +546,6 @@ async def get_rule_suggestion(
     db: Session = DbDependency,
 ) -> dict:
     """Return a rule suggestion for a manually-categorized transaction."""
-    from app.db.models import CategorizationRule as CRule
     import re as _re
 
     transaction = db.scalar(

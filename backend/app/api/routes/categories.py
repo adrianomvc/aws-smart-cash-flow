@@ -617,7 +617,9 @@ async def accept_pending_review(
         )
     )
     if assignment is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pending review not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Pending review not found"
+        )
 
     assignment.review_status = "accepted"
 
@@ -763,7 +765,11 @@ async def suggest_rule_from_transaction(
 
     # heuristic: build a regex from first 1-3 meaningful tokens
     meaningful = [t for t in tokens if len(t) > 1][:3]
-    pattern = "^" + r"\s+".join(re.escape(t.lower()) for t in meaningful) if meaningful else desc.lower()
+    pattern = (
+        "^" + r"\s+".join(re.escape(t.lower()) for t in meaningful)
+        if meaningful
+        else desc.lower()
+    )
 
     affected = db.scalar(
         select(func.count(Transaction.id)).where(

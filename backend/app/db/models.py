@@ -450,7 +450,9 @@ class CategorizationRule(Base):
     day_max: Mapped[int | None] = mapped_column(Integer)
     direction_filter: Mapped[str | None] = mapped_column(String(16))
     # origin tracing
-    rule_id_origin: Mapped[str | None] = mapped_column(UUID_TYPE, ForeignKey("categorization_rules.id"))
+    rule_id_origin: Mapped[str | None] = mapped_column(
+        UUID_TYPE, ForeignKey("categorization_rules.id")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

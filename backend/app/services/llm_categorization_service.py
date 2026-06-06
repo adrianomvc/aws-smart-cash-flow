@@ -62,8 +62,6 @@ class LLMCategorizationService:
     def _get_uncategorized(
         self, workspace_id: str, transaction_ids: set[str] | None
     ) -> list[Transaction]:
-        from sqlalchemy import outerjoin
-
         q = (
             select(Transaction)
             .outerjoin(
