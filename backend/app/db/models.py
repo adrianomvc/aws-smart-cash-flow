@@ -400,6 +400,7 @@ class TransactionCategoryAssignment(Base):
     confidence: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
     reason: Mapped[str | None] = mapped_column(Text)
     review_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    rule_id: Mapped[str | None] = mapped_column(UUID_TYPE, ForeignKey("categorization_rules.id"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -413,12 +414,16 @@ class CategorizationRule(Base):
             name="ck_categorization_rule_field",
         ),
         CheckConstraint(
-            "match_type in ('contains', 'starts_with', 'equals')",
+            "match_type in ('contains', 'starts_with', 'equals', 'regex', 'amount_recurring')",
             name="ck_categorization_rule_match_type",
         ),
         CheckConstraint(
             "target_direction is null or target_direction in ('debit', 'credit', 'payment')",
             name="ck_categorization_rule_target_direction",
+        ),
+        CheckConstraint(
+            "direction_filter is null or direction_filter in ('debit', 'credit', 'payment')",
+            name="ck_categorization_rule_direction_filter",
         ),
     )
 
@@ -438,6 +443,14 @@ class CategorizationRule(Base):
     active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"
     )
+    # amount_recurring fields (Fase 1.5)
+    amount_ref: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    amount_tolerance: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    day_min: Mapped[int | None] = mapped_column(Integer)
+    day_max: Mapped[int | None] = mapped_column(Integer)
+    direction_filter: Mapped[str | None] = mapped_column(String(16))
+    # origin tracing
+    rule_id_origin: Mapped[str | None] = mapped_column(UUID_TYPE, ForeignKey("categorization_rules.id"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
