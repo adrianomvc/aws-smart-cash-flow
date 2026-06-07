@@ -264,7 +264,7 @@ async def list_transactions(
     db: Session = DbDependency,
     date_from: date | None = None,
     date_to: date | None = None,
-    category_id: str | None = None,
+    category_ids: list[str] | None = Query(default=None),
     import_job_id: str | None = None,
     ids: str | None = None,
     source_type: str | None = None,
@@ -330,20 +330,22 @@ async def list_transactions(
                 Transaction.raw_description.ilike(search),
             )
         )
-    if category_id is not None:
-        category_ids = [category_id]
-        child_category_ids = db.scalars(
-            select(Category.id).where(
-                Category.workspace_id == auth.workspace_id,
-                Category.parent_category_id == category_id,
-            )
-        ).all()
-        category_ids.extend(child_category_ids)
+    if category_ids:
+        all_ids: list[str] = []
+        for cid in category_ids:
+            all_ids.append(cid)
+            child_ids = db.scalars(
+                select(Category.id).where(
+                    Category.workspace_id == auth.workspace_id,
+                    Category.parent_category_id == cid,
+                )
+            ).all()
+            all_ids.extend(child_ids)
         filters.append(
             Transaction.id.in_(
                 select(TransactionCategoryAssignment.transaction_id).where(
                     TransactionCategoryAssignment.workspace_id == auth.workspace_id,
-                    TransactionCategoryAssignment.category_id.in_(category_ids),
+                    TransactionCategoryAssignment.category_id.in_(all_ids),
                 )
             )
         )

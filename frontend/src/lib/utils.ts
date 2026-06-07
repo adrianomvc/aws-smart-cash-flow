@@ -442,7 +442,7 @@ export function commitmentTone(value?: string | null): "positive" | "negative" |
 }
 
 export function transactionFilterSummary({
-  categoryId,
+  categoryIds,
   categories,
   dateFrom,
   dateTo,
@@ -455,7 +455,7 @@ export function transactionFilterSummary({
   sourceType,
   weekday,
 }: {
-  categoryId: string;
+  categoryIds: Set<string>;
   categories: CategoryRead[];
   dateFrom: string;
   dateTo: string;
@@ -476,9 +476,14 @@ export function transactionFilterSummary({
   if (direction) parts.push(directionLabel(direction));
   if (weekday !== undefined) parts.push(weekdayLabel(weekday));
   if (importJobId) parts.push("importação selecionada");
-  if (!reviewMode && categoryId) {
-    const category = categories.find((item) => item.id === categoryId);
-    parts.push(category ? categoryPath(category, categories) : "categoria selecionada");
+  if (!reviewMode && categoryIds.size > 0) {
+    if (categoryIds.size === 1) {
+      const [id] = categoryIds;
+      const category = categories.find((item) => item.id === id);
+      parts.push(category ? categoryPath(category, categories) : "categoria selecionada");
+    } else {
+      parts.push(`${categoryIds.size} categorias`);
+    }
   }
   const period = periodSummary({ dateFrom, dateTo, periodPreset });
   if (period) parts.push(period);
