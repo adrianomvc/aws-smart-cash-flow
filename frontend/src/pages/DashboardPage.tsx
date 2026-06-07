@@ -302,13 +302,68 @@ function CategoryDonut({ items, loading, onOpenCategory }: { items: CategoryRank
         <div className="donut-center"><strong>{compactMoneyAbs(total)}</strong><span>Total</span></div>
       </div>
       <div className="donut-legend">
-        {chartItems.slice(0, 6).map((item: any, index: number) => (
+        {chartItems.slice(0, 5).map((item: any, index: number) => (
           <button className="donut-legend-row" key={item.category_id ?? item.category_name} onClick={() => onOpenCategory(item)} type="button">
             <i style={{ background: chartPalette[index % chartPalette.length] }} />
             <span>{item.category_name}</span>
             <strong>{percent(item.share_ratio)}</strong>
           </button>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function ChangeChip({ ratio }: { ratio: string | null }) {
+  if (ratio === null || ratio === undefined) return null;
+  const val = Number(ratio);
+  if (isNaN(val) || val === 0) return null;
+  const pct = Math.abs(val * 100).toFixed(0);
+  const up = val > 0;
+  return (
+    <em className={`recurring-change recurring-change--${up ? "up" : "down"}`}>
+      {up ? "▲" : "▼"} {pct}%
+    </em>
+  );
+}
+
+function RecurringList({ items, loading, onOpenTransactions, period }: { items: RecurringExpenseItem[]; loading: boolean; onOpenTransactions: (drilldown?: TransactionDrilldown) => void; period: ReturnType<typeof usePeriod> }) {
+  if (loading) return <PageState icon={Loader2} title="Carregando recorrentes" description="Aguarde um momento." spin compact />;
+  if (!items.length) return <EmptyInline message="Nenhum pagamento recorrente identificado." />;
+  const LIMIT = 8;
+  const sorted = [...items].sort((a, b) => Number(b.average_amount) - Number(a.average_amount));
+  const visible = sorted.slice(0, LIMIT);
+  const hiddenCount = Math.max(sorted.length - LIMIT, 0);
+  const total = sorted.reduce((s, i) => s + Number(i.average_amount ?? 0), 0);
+  return (
+    <div className="recurring-list">
+      {visible.map((item) => (
+        <button
+          className="recurring-row"
+          key={item.description}
+          type="button"
+          onClick={() => onOpenTransactions({
+            dateFrom: period.dateFrom,
+            dateTo: period.dateTo,
+            direction: "debit",
+            label: item.description,
+            periodPreset: period.periodPreset,
+            search: item.description,
+          })}
+        >
+          <div className="recurring-info">
+            <strong>{item.description}</strong>
+            <small>{item.category_name ?? "Sem categoria"} · {item.month_count} {item.month_count === 1 ? "mês" : "meses"}</small>
+          </div>
+          <div className="recurring-value">
+            <b>{moneyAbs(item.average_amount)}</b>
+            <ChangeChip ratio={item.change_ratio} />
+          </div>
+        </button>
+      ))}
+      <div className="recurring-footer">
+        <span>Total recorrente / mês{hiddenCount > 0 ? <em className="category-more">(+{hiddenCount})</em> : null}</span>
+        <strong>{moneyAbs(String(total))}</strong>
       </div>
     </div>
   );
@@ -704,8 +759,8 @@ export function DashboardPage({
             <Panel title="Próximos compromissos" description="Eventos, recorrências e parcelas que aparecem no horizonte do filtro." action={<PanelLink label="Ver calendário" onClick={() => onNavigate("calendar")} />}>
               <CompactTimelineList items={calendarEvents.slice(0, 5)} total={calendarEvents.length} onShowAll={() => onNavigate("calendar")} loading={persistedEvents.isLoading || recurring.isLoading || installments.isLoading || recentTransactions.isLoading} onOpenTransactions={(event) => onOpenTransactions({ dateFrom: period.dateFrom, dateTo: period.dateTo, direction: event.direction, label: event.label, periodPreset: period.periodPreset, search: event.search })} />
             </Panel>
-            <Panel title="Distribuição das despesas" description="Participação das categorias no total de gastos do período.">
-              <CategoryDonut items={categoryItems} loading={ranking.isLoading} onOpenCategory={openCategoryTransactions} />
+            <Panel title="Pagamentos recorrentes" description="Despesas fixas e recorrentes identificadas no período.">
+              <RecurringList items={recurring.data?.items ?? []} loading={recurring.isLoading} onOpenTransactions={onOpenTransactions} period={period} />
             </Panel>
           </div>
         </div>

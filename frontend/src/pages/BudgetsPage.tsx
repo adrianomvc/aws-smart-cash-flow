@@ -216,9 +216,9 @@ export function BudgetsPage({
             createBudgetMutation.mutate();
           }}
         >
-          <label>
-            Nome
-            <input required value={budgetForm.name} onChange={(event) => setBudgetForm((current) => ({ ...current, name: event.target.value }))} />
+          <label className="wide-field">
+            Descrição
+            <input required placeholder="Ex: Alimentação do mês" value={budgetForm.name} onChange={(event) => setBudgetForm((current) => ({ ...current, name: event.target.value }))} />
           </label>
           <label>
             Categoria
@@ -230,6 +230,10 @@ export function BudgetsPage({
             </select>
           </label>
           <label>
+            Valor limite
+            <input min="0.01" required step="0.01" type="number" placeholder="0,00" value={budgetForm.limitAmount} onChange={(event) => setBudgetForm((current) => ({ ...current, limitAmount: event.target.value }))} />
+          </label>
+          <label>
             Início
             <input required type="date" value={budgetForm.periodStart} onChange={(event) => setBudgetForm((current) => ({ ...current, periodStart: event.target.value }))} />
           </label>
@@ -237,11 +241,7 @@ export function BudgetsPage({
             Fim
             <input required type="date" value={budgetForm.periodEnd} onChange={(event) => setBudgetForm((current) => ({ ...current, periodEnd: event.target.value }))} />
           </label>
-          <label>
-            Limite
-            <input min="0.01" required step="0.01" type="number" value={budgetForm.limitAmount} onChange={(event) => setBudgetForm((current) => ({ ...current, limitAmount: event.target.value }))} />
-          </label>
-          <button className="primary-button" disabled={createBudgetMutation.isPending} type="submit">
+          <button className="primary-button wide-field" disabled={createBudgetMutation.isPending} type="submit">
             {createBudgetMutation.isPending ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
             Criar orçamento
           </button>

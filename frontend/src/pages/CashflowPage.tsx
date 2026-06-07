@@ -239,7 +239,7 @@ export function CategoryBarList({ items, loading, onOpenCategory }: { items: Cat
   const sortedItems = [...items].sort((a, b) => Math.abs(Number(b.amount ?? 0)) - Math.abs(Number(a.amount ?? 0)));
   const maxAmount = Math.max(...sortedItems.map((item) => Math.abs(Number(item.amount ?? 0))), 1);
   const totalAmount = sortedItems.reduce((total, item) => total + Math.abs(Number(item.amount ?? 0)), 0);
-  const LIMIT = 8;
+  const LIMIT = 5;
   const visibleItems = sortedItems.slice(0, LIMIT);
   const hiddenCount = Math.max(sortedItems.length - LIMIT, 0);
   return (
@@ -255,10 +255,10 @@ export function CategoryBarList({ items, loading, onOpenCategory }: { items: Cat
           </button>
         );
       })}
-      {hiddenCount > 0 && (
-        <p className="text-xs text-gray-400 text-center py-1">+{hiddenCount} categoria{hiddenCount === 1 ? "" : "s"} — use o filtro de subcategorias para explorar</p>
-      )}
-      <div className="category-total-row"><span>Total de saídas</span><strong>{moneyAbs(totalAmount)}</strong></div>
+      <div className="category-total-row">
+        <span>Total de saídas{hiddenCount > 0 ? <em className="category-more">(+{hiddenCount})</em> : null}</span>
+        <strong>{moneyAbs(totalAmount)}</strong>
+      </div>
     </div>
   );
 }

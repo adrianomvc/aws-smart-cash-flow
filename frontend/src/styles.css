@@ -1160,6 +1160,111 @@ select:focus {
   font-size: 12px;
 }
 
+.recurring-list {
+  display: grid;
+  gap: 6px;
+}
+
+.recurring-row {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 8px 10px;
+  text-align: left;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  width: 100%;
+}
+
+.recurring-row:hover,
+.recurring-row:focus-visible {
+  border-color: #c4b5fd;
+  box-shadow: 0 4px 12px rgba(109, 93, 252, 0.08);
+  outline: none;
+}
+
+.recurring-info {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.recurring-info strong {
+  color: #0f172a;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recurring-info small {
+  color: #64748b;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recurring-row b {
+  color: #0f172a;
+  flex: 0 0 auto;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.recurring-footer {
+  align-items: center;
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  font-size: 12px;
+  font-weight: 900;
+  justify-content: space-between;
+  margin-top: 4px;
+  padding-top: 8px;
+}
+
+.recurring-footer span {
+  align-items: center;
+  color: #334155;
+  display: flex;
+  gap: 4px;
+}
+
+.recurring-footer strong {
+  color: #0f172a;
+}
+
+.recurring-value {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.recurring-change {
+  border-radius: 4px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 1px 5px;
+}
+
+.recurring-change--up {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.recurring-change--down {
+  background: #f0fdf4;
+  color: #16a34a;
+}
+
 .donut-legend,
 .category-bar-list,
 .compact-timeline-list,
@@ -1169,8 +1274,7 @@ select:focus {
 }
 
 .category-bar-list {
-  max-height: 250px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .donut-legend-row,
@@ -1250,11 +1354,15 @@ select:focus {
 }
 
 .category-more {
+  background: #f1f5f9;
+  border-radius: 999px;
   color: #64748b;
-  display: block;
-  font-size: 12px;
+  display: inline-block;
+  font-size: 11px;
+  font-style: normal;
   font-weight: 800;
-  padding: 2px 6px 0;
+  margin-left: 6px;
+  padding: 1px 6px;
 }
 
 .category-total-row {
