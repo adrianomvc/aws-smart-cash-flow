@@ -518,6 +518,7 @@ export function TransactionExplorer({
   const [activeReviewGroup, setActiveReviewGroup] = useState<DuplicateTransactionGroup | null>(null);
   const [keepId, setKeepId] = useState("");
   const [pageSize, setPageSize] = useState(50);
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(true);
   const duplicatePageSize = 10;
   const categories = useCategories(session);
   const categoryOptions = useMemo(() => orderedCategoryOptions(categories.data?.items ?? []), [categories.data?.items]);
@@ -677,6 +678,18 @@ export function TransactionExplorer({
     setActionMessage("Categoria atualizada. Indicadores e listas foram recalculados.");
   }
 
+  const advancedFilterCount = [sourceType, categoryIds.size > 0 ? "cat" : "", amountMin, amountMax, dateFrom || dateTo ? "period" : ""].filter(Boolean).length;
+  const activeFilterChips: Array<{ id: string; label: string; clear: () => void }> = [
+    searchInput ? { id: "search", label: `"${searchInput}"`, clear: () => { setSearchInput(""); setSearch(""); setPage(0); } } : null,
+    direction ? { id: "direction", label: direction === "debit" ? "Despesas" : direction === "credit" ? "Receitas" : "Faturas", clear: () => { setDirection(""); setPage(0); } } : null,
+    statusFilter ? { id: "status", label: statusFilter === "__confirmed__" ? "Confirmados" : "Pendentes", clear: () => { setStatusFilter(""); setPage(0); } } : null,
+    (dateFrom || dateTo) ? { id: "period", label: `${dateFrom || "início"} → ${dateTo || "hoje"}`, clear: () => { setDateFrom(""); setDateTo(""); setPeriodPreset("all"); setPage(0); } } : null,
+    sourceType ? { id: "source", label: sourceType === "bank_statement" ? "Conta corrente" : sourceType === "credit_card_statement" ? "Cartão de crédito" : "Manual", clear: () => { setSourceType(""); setPage(0); } } : null,
+    categoryIds.size > 0 ? { id: "categories", label: categoryIds.size === 1 ? (categories.data?.items.find((c) => c.id === [...categoryIds][0])?.name ?? "1 categoria") : `${categoryIds.size} categorias`, clear: () => { setCategoryIds(new Set()); setPage(0); } } : null,
+    amountMin ? { id: "amountMin", label: `≥ R$ ${amountMin}`, clear: () => { setAmountMin(""); setPage(0); } } : null,
+    amountMax ? { id: "amountMax", label: `≤ R$ ${amountMax}`, clear: () => { setAmountMax(""); setPage(0); } } : null,
+  ].filter((c): c is NonNullable<typeof c> => c !== null);
+
   return (
     <section className="page-stack">
       {reviewMode ? (
@@ -689,18 +702,94 @@ export function TransactionExplorer({
       ) : null}
 
       {!reviewMode ? (
-        <div className="transactions-kpi-section">
-          <span className="transactions-kpi-label">Resumo do período</span>
-          <div className="metric-grid executive transactions-kpi-grid" aria-label="Resumo do período">
-            <MetricCard icon={ArrowUpCircle} label="Receitas" value={compactMoneyAbs(periodSummary.data?.income)} title={moneyAbs(periodSummary.data?.income)} helper="Total de entradas" tone="positive" />
-            <MetricCard icon={ArrowDownCircle} label="Despesas" value={compactMoneyAbs(periodSummary.data?.expenses)} title={moneyAbs(periodSummary.data?.expenses)} helper="Total de saídas" tone="negative" />
-            <MetricCard icon={CreditCard} label="Faturas" value={compactMoneyAbs(periodSummary.data?.payments)} title={moneyAbs(periodSummary.data?.payments)} helper="Pagamentos de cartão" tone="info" />
-            <MetricCard icon={BarChart3} label="Saldo" value={compactMoneyAbs(periodSummary.data?.balance)} title={money(periodSummary.data?.balance)} helper="Receitas − despesas" tone={Number(periodSummary.data?.balance ?? 0) >= 0 ? "positive" : "negative"} />
+        <>
+          <div className="tx-page-header">
+            <div>
+              <h2 className="tx-page-title">Transações</h2>
+              <p className="tx-page-subtitle">Gerencie, filtre e categorize seus lançamentos</p>
+            </div>
+            <div className="tx-page-actions">
+              <button className="ghost-button" disabled={normalizeDescriptions.isPending} onClick={() => normalizeDescriptions.mutate()} title="Re-normalizar descrições de todas as transações" type="button">
+                {normalizeDescriptions.isPending ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}Normalizar
+              </button>
+              <button className="ghost-button" disabled={!visibleTransactions.length} onClick={() => exportTransactionsCSV(visibleTransactions, "transacoes")} title="Exportar página atual como CSV" type="button"><Download size={16} />Exportar</button>
+              <button className="primary-button" onClick={() => setShowCreate(true)} type="button"><Plus size={16} />Nova</button>
+            </div>
           </div>
-        </div>
+          <div className="transactions-kpi-section">
+            <span className="transactions-kpi-label">Resumo do período</span>
+            <div className="metric-grid executive transactions-kpi-grid" aria-label="Resumo do período">
+              <MetricCard icon={ArrowUpCircle} label="Receitas" value={compactMoneyAbs(periodSummary.data?.income)} title={moneyAbs(periodSummary.data?.income)} helper="Total de entradas" tone="positive" />
+              <MetricCard icon={ArrowDownCircle} label="Despesas" value={compactMoneyAbs(periodSummary.data?.expenses)} title={moneyAbs(periodSummary.data?.expenses)} helper="Total de saídas" tone="negative" />
+              <MetricCard icon={CreditCard} label="Faturas" value={compactMoneyAbs(periodSummary.data?.payments)} title={moneyAbs(periodSummary.data?.payments)} helper="Pagamentos de cartão" tone="info" />
+              <MetricCard icon={BarChart3} label="Saldo" value={compactMoneyAbs(periodSummary.data?.balance)} title={money(periodSummary.data?.balance)} helper="Receitas − despesas" tone={Number(periodSummary.data?.balance ?? 0) >= 0 ? "positive" : "negative"} />
+            </div>
+          </div>
+        </>
       ) : null}
 
       <div className="page-stack">
+        {/* Filter card */}
+        <div className="tx-filter-card">
+          {/* Search */}
+          <div className="tx-search-bar">
+            <Search size={16} />
+            <input placeholder="Buscar por descrição, estabelecimento ou valor..." value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
+            {searchInput ? <button className="tx-search-clear" onClick={() => { setSearchInput(""); setSearch(""); setPage(0); }} type="button">×</button> : null}
+          </div>
+          {/* Quick filters: Tipo + Status */}
+          <div className="tx-quick-filters">
+            <div className="tx-filter-group">
+              <span className="tx-filter-group-label">Tipo</span>
+              <div className="transactions-quick-tabs">
+                {[{ value: "", label: "Todos" }, { value: "debit", label: "Despesas" }, { value: "credit", label: "Receitas" }, { value: "payment", label: "Faturas" }].map(({ value, label }) => (
+                  <button key={value} className={`quick-tab${direction === value ? " active" : ""}`} onClick={() => { setDirection(value); setPage(0); }} type="button">{label}</button>
+                ))}
+              </div>
+            </div>
+            <div className="tx-filter-group">
+              <span className="tx-filter-group-label">Status</span>
+              <div className="transactions-quick-tabs">
+                {[{ value: "", label: "Todos" }, { value: "__confirmed__", label: "Confirmados" }, { value: "__pending__", label: "Pendentes" }].map(({ value, label }) => (
+                  <button key={value} className={`quick-tab${statusFilter === value ? " active" : ""}`} onClick={() => { setStatusFilter(value); setPage(0); }} type="button">{label}</button>
+                ))}
+              </div>
+            </div>
+            <button className="tx-advanced-toggle" onClick={() => setShowAdvancedFilters((c) => !c)} type="button">
+              {showAdvancedFilters ? "Menos filtros ▲" : "Mais filtros ▼"}
+              {advancedFilterCount > 0 ? <span className="tx-advanced-badge">{advancedFilterCount}</span> : null}
+            </button>
+          </div>
+          {/* Advanced filters (collapsible) */}
+          {showAdvancedFilters ? (
+            <div className="tx-advanced-filters">
+              <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} periodPreset={periodPreset} onPreset={applyPeriodPreset} onDateFrom={updateDateFrom} onDateTo={updateDateTo} />
+              <select className={sourceType ? "filter-select active" : "filter-select"} value={sourceType} onChange={(e) => { setSourceType(e.target.value); setPage(0); }} title="Filtrar por origem">
+                <option value="">Todas as origens</option><option value="bank_statement">Conta corrente</option><option value="credit_card_statement">Cartão de crédito</option><option value="unknown">Manual / Outras</option>
+              </select>
+              <CategoryMultiSelect categories={categories.data?.items ?? []} selected={categoryIds} onChange={(next) => { setCategoryIds(next); setPage(0); }} />
+              <div className="filter-amount-range">
+                <input type="number" placeholder="De R$" value={amountMin} min="0" onChange={(e) => { setAmountMin(e.target.value); setPage(0); }} title="Valor mínimo" />
+                <input type="number" placeholder="Até R$" value={amountMax} min="0" onChange={(e) => { setAmountMax(e.target.value); setPage(0); }} title="Valor máximo" />
+              </div>
+            </div>
+          ) : null}
+          {/* Footer: count + chips + limpar */}
+          <div className="tx-filter-footer">
+            <span className="tx-filter-count">{totalTransactions.toLocaleString("pt-BR")} lançamentos encontrados</span>
+            {activeFilterChips.length > 0 ? (
+              <div className="tx-filter-chips">
+                {activeFilterChips.map((chip) => (
+                  <span className="tx-filter-chip" key={chip.id}>
+                    {chip.label}
+                    <button className="tx-filter-chip-remove" onClick={chip.clear} type="button">×</button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {activeFilterCount > 0 ? <button className="ghost-button filter-clear" onClick={clearFilters} type="button">Limpar filtros</button> : null}
+          </div>
+        </div>
         {somePageSelected ? (
           <div className="bulk-action-bar">
             <span>{selectedIds.size} selecionado(s)</span>
@@ -727,47 +816,6 @@ export function TransactionExplorer({
             <span>Selecione lançamentos para categorizar, exportar ou excluir em massa</span>
           </div>
         ) : null}
-
-        {/* Primary filter bar: search + type tabs + status tabs + period + actions */}
-        <div className="transactions-filter-bar">
-          <label className="filter-search-label"><Search size={14} /><input placeholder="Buscar descrição..." value={searchInput} onChange={(e) => { setSearchInput(e.target.value); }} /></label>
-          <div className="transactions-quick-tabs">
-            {[{ value: "", label: "Todos" }, { value: "debit", label: "Despesas" }, { value: "credit", label: "Receitas" }, { value: "payment", label: "Faturas" }].map(({ value, label }) => (
-              <button key={value} className={`quick-tab${direction === value ? " active" : ""}`} onClick={() => { setDirection(value); setPage(0); }} type="button">{label}</button>
-            ))}
-          </div>
-          <div className="transactions-quick-tabs">
-            {[{ value: "", label: "Todos" }, { value: "__confirmed__", label: "Confirmados" }, { value: "__pending__", label: "Pendentes" }].map(({ value, label }) => (
-              <button key={value} className={`quick-tab${statusFilter === value ? " active" : ""}`} onClick={() => { setStatusFilter(value); setPage(0); }} type="button">{label}</button>
-            ))}
-          </div>
-          <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} periodPreset={periodPreset} onPreset={applyPeriodPreset} onDateFrom={updateDateFrom} onDateTo={updateDateTo} />
-          <span className="filter-bar-spacer" />
-          {!reviewMode ? (
-            <>
-              <button className="ghost-button" disabled={normalizeDescriptions.isPending} onClick={() => normalizeDescriptions.mutate()} title="Re-normalizar descrições de todas as transações" type="button">
-                {normalizeDescriptions.isPending ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}Normalizar
-              </button>
-              <button className="ghost-button" disabled={!visibleTransactions.length} onClick={() => exportTransactionsCSV(visibleTransactions, "transacoes")} title="Exportar página atual como CSV" type="button"><Download size={16} />Exportar</button>
-              <button className="primary-button" onClick={() => setShowCreate(true)} type="button"><Plus size={16} />Nova</button>
-            </>
-          ) : null}
-        </div>
-        {/* Secondary filter bar: advanced filters (origin, category, amount range) */}
-        <div className="transactions-filter-bar-secondary">
-          <select className={sourceType ? "filter-select active" : "filter-select"} value={sourceType} onChange={(e) => { setSourceType(e.target.value); setPage(0); }} title="Filtrar por origem">
-            <option value="">Todas as origens</option><option value="bank_statement">Conta corrente</option><option value="credit_card_statement">Cartão de crédito</option><option value="unknown">Manual / Outras</option>
-          </select>
-          <CategoryMultiSelect categories={categories.data?.items ?? []} selected={categoryIds} onChange={(next) => { setCategoryIds(next); setPage(0); }} />
-          <div className="filter-amount-range">
-            <input type="number" placeholder="De R$" value={amountMin} min="0" onChange={(e) => { setAmountMin(e.target.value); setPage(0); }} title="Valor mínimo" />
-            <input type="number" placeholder="Até R$" value={amountMax} min="0" onChange={(e) => { setAmountMax(e.target.value); setPage(0); }} title="Valor máximo" />
-          </div>
-          <span className="filter-bar-spacer" />
-          {activeFilterCount > 0 ? <button className="ghost-button filter-clear" onClick={clearFilters} type="button">Limpar ({activeFilterCount})</button> : null}
-        </div>
-
-        <div className="filter-summary"><span>{filterSummary}</span><strong>{totalTransactions} lançamentos</strong></div>
         {actionMessage ? <InlineSuccess message={actionMessage} /> : null}
 
         {!reviewMode ? (
