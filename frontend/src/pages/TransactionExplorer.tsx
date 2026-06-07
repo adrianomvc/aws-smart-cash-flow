@@ -708,30 +708,15 @@ export function TransactionExplorer({
       ) : null}
 
       {!reviewMode ? (
-        <>
-          <div className="tx-page-header">
-            <div>
-              <h2 className="tx-page-title">Transações</h2>
-              <p className="tx-page-subtitle">Gerencie, filtre e categorize seus lançamentos</p>
-            </div>
-            <div className="tx-page-actions">
-              <button className="ghost-button" disabled={normalizeDescriptions.isPending} onClick={() => normalizeDescriptions.mutate()} title="Re-normalizar descrições de todas as transações" type="button">
-                {normalizeDescriptions.isPending ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}Normalizar
-              </button>
-              <button className="ghost-button" disabled={!visibleTransactions.length} onClick={() => exportTransactionsCSV(visibleTransactions, "transacoes")} title="Exportar página atual como CSV" type="button"><Download size={16} />Exportar</button>
-              <button className="primary-button" onClick={() => setShowCreate(true)} type="button"><Plus size={16} />Nova</button>
-            </div>
+        <div className="transactions-kpi-section">
+          <span className="transactions-kpi-label">Resumo do período</span>
+          <div className="metric-grid executive transactions-kpi-grid" aria-label="Resumo do período">
+            <MetricCard icon={ArrowUpCircle} label="Receitas" value={compactMoneyAbs(periodSummary.data?.income)} title={moneyAbs(periodSummary.data?.income)} helper="Total de entradas" tone="positive" />
+            <MetricCard icon={ArrowDownCircle} label="Despesas" value={compactMoneyAbs(periodSummary.data?.expenses)} title={moneyAbs(periodSummary.data?.expenses)} helper="Total de saídas" tone="negative" />
+            <MetricCard icon={CreditCard} label="Faturas" value={compactMoneyAbs(periodSummary.data?.payments)} title={moneyAbs(periodSummary.data?.payments)} helper="Pagamentos de cartão" tone="info" />
+            <MetricCard icon={BarChart3} label="Saldo" value={compactMoneyAbs(periodSummary.data?.balance)} title={money(periodSummary.data?.balance)} helper="Receitas − despesas" tone={Number(periodSummary.data?.balance ?? 0) >= 0 ? "positive" : "negative"} />
           </div>
-          <div className="transactions-kpi-section">
-            <span className="transactions-kpi-label">Resumo do período</span>
-            <div className="metric-grid executive transactions-kpi-grid" aria-label="Resumo do período">
-              <MetricCard icon={ArrowUpCircle} label="Receitas" value={compactMoneyAbs(periodSummary.data?.income)} title={moneyAbs(periodSummary.data?.income)} helper="Total de entradas" tone="positive" />
-              <MetricCard icon={ArrowDownCircle} label="Despesas" value={compactMoneyAbs(periodSummary.data?.expenses)} title={moneyAbs(periodSummary.data?.expenses)} helper="Total de saídas" tone="negative" />
-              <MetricCard icon={CreditCard} label="Faturas" value={compactMoneyAbs(periodSummary.data?.payments)} title={moneyAbs(periodSummary.data?.payments)} helper="Pagamentos de cartão" tone="info" />
-              <MetricCard icon={BarChart3} label="Saldo" value={compactMoneyAbs(periodSummary.data?.balance)} title={money(periodSummary.data?.balance)} helper="Receitas − despesas" tone={Number(periodSummary.data?.balance ?? 0) >= 0 ? "positive" : "negative"} />
-            </div>
-          </div>
-        </>
+        </div>
       ) : null}
 
       <div className="page-stack">
@@ -794,6 +779,7 @@ export function TransactionExplorer({
               </div>
             ) : null}
             {activeFilterCount > 0 ? <button className="ghost-button filter-clear" onClick={clearFilters} type="button">Limpar filtros</button> : null}
+            {!reviewMode ? <button className="primary-button" onClick={() => setShowCreate(true)} type="button" style={{ marginLeft: "auto" }}><Plus size={14} />Nova transação</button> : null}
           </div>
         </div>
         {somePageSelected ? (
