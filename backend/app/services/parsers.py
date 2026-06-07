@@ -220,7 +220,9 @@ def _drop_payment_method_prefix(tokens: list[str]) -> list[str]:
     while result and result[0] in PAYMENT_METHOD_PREFIXES:
         rest = result[1:]
         # Stop when what follows signals titulo, P2P transfer, or scheduled payment context
-        if rest and (rest[0] in _TITULO_TOKENS or rest[0] in _P2P_GUARD or rest[0] in _SCHEDULED_GUARD):
+        if rest and (
+            rest[0] in _TITULO_TOKENS or rest[0] in _P2P_GUARD or rest[0] in _SCHEDULED_GUARD
+        ):
             break
         result = rest
     return result if result else tokens

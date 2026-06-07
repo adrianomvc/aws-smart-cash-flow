@@ -559,7 +559,6 @@ export function TransactionExplorer({
     if (statusFilter === "__pending__") params.set("status", "pending");
     else if (statusFilter === "__confirmed__") params.set("status", "confirmed");
     return `?${params.toString()}`;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [amountMax, amountMin, categoryIds, dateFrom, dateTo, direction, fixedQuery, importJobId, page, pageSize, search, sortBy, sortDir, sourceType, statusFilter, weekday]);
   const transactions = useQuery({ queryKey: ["transactions", session.token, query], queryFn: () => getTransactions(session, query) });
   const duplicatesQuery = `?limit=${duplicatePageSize}&offset=${duplicatePage * duplicatePageSize}`;

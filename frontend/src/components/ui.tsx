@@ -4,7 +4,7 @@
  * PeriodFilter is the exception: it owns its own open/close dropdown state.
  */
 
-import type { KeyboardEvent, ReactNode, Dispatch, SetStateAction } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import {
   AlertCircle,

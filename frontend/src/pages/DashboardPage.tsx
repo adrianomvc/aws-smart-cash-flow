@@ -14,7 +14,6 @@ import {
   Loader2,
   RefreshCw,
   ShieldCheck,
-  Sparkles,
   PlusCircle,
   PiggyBank,
   type LucideIcon,
@@ -22,12 +21,9 @@ import {
 import {
   Bar,
   CartesianGrid,
-  Cell,
   ComposedChart,
   Legend,
   Line,
-  Pie,
-  PieChart,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -53,11 +49,7 @@ import {
   getTransactions,
 } from "../lib/api";
 import {
-  buildBudgetRows,
   buildCalendarEvents,
-  calendarEventStatusLabel,
-  calendarEventTone,
-  calendarEventTypeLabel,
   compactMoneyAbs,
   compactMoneyAxis,
   dateInputLabel,
@@ -93,7 +85,7 @@ import {
   Panel,
   PanelLink,
 } from "../components/ui";
-import { CategoryBarList, PersonalizedTip, compactCategoryDistribution } from "./CashflowPage";
+import { CategoryBarList, PersonalizedTip } from "./CashflowPage";
 import type {
   ApiSession,
   BudgetRead,
@@ -256,53 +248,6 @@ function DashboardFlowStory({ futureCommitments, onOpenAnalysis, periodLabel, pr
         })}
       </div>
     </section>
-  );
-}
-
-function CategoryDonutTooltip({ active, payload, total }: { active?: boolean; payload?: Array<{ payload?: CategoryRankingItem & { amountValue?: number } }>; total: number }) {
-  const item = payload?.[0]?.payload;
-  if (!active || !item) return null;
-  const amount = Number((item as Record<string, unknown>).amountValue ?? item.amount ?? 0);
-  const ratio = total > 0 ? amount / total : Number(item.share_ratio ?? 0);
-  return (
-    <div className="chart-tooltip donut-tooltip">
-      <strong>{item.category_name}</strong>
-      <span>{moneyAbs(String(amount))}</span>
-      <small>{percent(String(ratio))} do total</small>
-    </div>
-  );
-}
-
-function CategoryDonut({ items, loading, onOpenCategory }: { items: CategoryRankingItem[]; loading: boolean; onOpenCategory: (item: CategoryRankingItem) => void }) {
-  if (loading) return <PageState icon={Loader2} title="Carregando categorias" description="Aguarde um momento." spin compact />;
-  if (!items.length) return <EmptyInline message="Sem categorias para o período." />;
-  const chartItems = compactCategoryDistribution(items);
-  const total = chartItems.reduce((sum, item) => sum + Number(item.amountValue ?? 0), 0);
-  return (
-    <div className="donut-summary">
-      <div className="donut-chart">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart margin={{ top: 4, right: 28, bottom: 4, left: 28 }}>
-            <Pie data={chartItems} dataKey="amountValue" nameKey="category_name" innerRadius="62%" outerRadius="86%" paddingAngle={2} stroke="none">
-              {chartItems.map((item, index: number) => (
-                <Cell key={item.category_id ?? item.category_name} fill={chartPalette[index % chartPalette.length]} />
-              ))}
-            </Pie>
-            <Tooltip allowEscapeViewBox={{ x: true, y: true }} content={<CategoryDonutTooltip total={total} />} wrapperStyle={{ pointerEvents: "none", zIndex: 30 }} />
-          </PieChart>
-        </ResponsiveContainer>
-        <div className="donut-center"><strong>{compactMoneyAbs(total)}</strong><span>Total</span></div>
-      </div>
-      <div className="donut-legend">
-        {chartItems.slice(0, 5).map((item: any, index: number) => (
-          <button className="donut-legend-row" key={item.category_id ?? item.category_name} onClick={() => onOpenCategory(item)} type="button">
-            <i style={{ background: chartPalette[index % chartPalette.length] }} />
-            <span>{item.category_name}</span>
-            <strong>{percent(item.share_ratio)}</strong>
-          </button>
-        ))}
-      </div>
-    </div>
   );
 }
 

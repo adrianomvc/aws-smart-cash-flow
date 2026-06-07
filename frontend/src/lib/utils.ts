@@ -720,21 +720,18 @@ export function buildCalendarEvents({
   recurring: RecurringExpenseItem[];
   transactions: TransactionRead[];
 }): CalendarEvent[] {
-  if (apiEvents?.length) {
-    return apiEvents
-      .map((event) => ({
-        amount: event.amount ?? 0,
-        date: event.due_date,
-        detail: `${calendarEventTypeLabel(event.event_type)} · ${calendarEventStatusLabel(event.status)}`,
-        direction: event.event_type === "income" ? "credit" : "debit",
-        kind: event.recurrence === "monthly" ? "Recorrente" : "Planejado",
-        label: event.title,
-        search: event.title,
-        tone: calendarEventTone(event),
-      }))
-      .sort((left, right) => left.date.localeCompare(right.date));
-  }
-  const recurringEvents: CalendarEvent[] = recurring.slice(0, 5).map((item) => ({
+  const apiCalendarEvents: CalendarEvent[] = (apiEvents ?? []).map((event) => ({
+    amount: event.amount ?? 0,
+    date: event.due_date,
+    detail: `${calendarEventTypeLabel(event.event_type)} · ${calendarEventStatusLabel(event.status)}`,
+    direction: event.event_type === "income" ? "credit" : "debit",
+    kind: event.recurrence === "monthly" ? "Recorrente" : "Planejado",
+    label: event.title,
+    search: event.title,
+    tone: calendarEventTone(event),
+  }));
+
+  const recurringEvents: CalendarEvent[] = recurring.map((item) => ({
     amount: item.last_amount || item.average_amount,
     date: item.last_transaction_date,
     detail: `${item.transaction_count} ocorrências em ${item.month_count} mês${item.month_count === 1 ? "" : "es"}`,
@@ -744,7 +741,8 @@ export function buildCalendarEvents({
     search: item.description,
     tone: Number(item.change_ratio ?? 0) >= 0.3 ? "warning" : "info",
   }));
-  const installmentEvents: CalendarEvent[] = installments.slice(0, 4).map((item) => ({
+
+  const installmentEvents: CalendarEvent[] = installments.map((item) => ({
     amount: item.amount,
     date: item.last_transaction_date,
     detail: `${item.installment_current}/${item.installment_total} · faltam ${item.remaining_installments}`,
@@ -754,9 +752,9 @@ export function buildCalendarEvents({
     search: item.description,
     tone: item.remaining_installments >= 3 ? "warning" : "info",
   }));
+
   const transactionEvents: CalendarEvent[] = transactions
     .filter((t) => t.direction !== "payment")
-    .slice(0, 4)
     .map((t) => ({
       amount: t.amount,
       date: t.transaction_date,
@@ -767,10 +765,10 @@ export function buildCalendarEvents({
       search: t.description,
       tone: t.direction === "credit" ? "positive" : "negative",
     }));
-  return [...recurringEvents, ...installmentEvents, ...transactionEvents]
+
+  return [...apiCalendarEvents, ...recurringEvents, ...installmentEvents, ...transactionEvents]
     .filter((item) => item.date)
-    .sort((left, right) => left.date.localeCompare(right.date))
-    .slice(0, 10);
+    .sort((left, right) => left.date.localeCompare(right.date));
 }
 
 // ---------------------------------------------------------------------------

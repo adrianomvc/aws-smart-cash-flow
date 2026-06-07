@@ -1,8 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  ArrowDownCircle,
-  ArrowUpCircle,
   BarChart3,
   ChevronDown,
   ChevronRight,
@@ -19,7 +17,6 @@ import {
 } from "lucide-react";
 import {
   Bar,
-  BarChart,
   CartesianGrid,
   Cell,
   ComposedChart,
@@ -50,7 +47,6 @@ import {
   compactMoneyAxis,
   dateInputLabel,
   dateLabel,
-  formatCurrencyCompactSigned,
   formatPercentNumber,
   isSingleMonthRange,
   money,
@@ -73,13 +69,9 @@ import { buildRollingCashFlowProjection } from "../lib/cashflowProjection";
 import { useCategories, usePeriod } from "../hooks";
 import {
   ChartBox,
-  DashboardSectionHeader,
   EmptyInline,
   DashboardPeriodPicker,
-  MetricCard,
   PageState,
-  Panel,
-  PanelLink,
 } from "../components/ui";
 import type {
   ApiSession,
@@ -121,32 +113,6 @@ function cashflowDescription(period: ReturnType<typeof usePeriod>) {
   return "Receitas, despesas e saldo por mês.";
 }
 
-function cashflowPageDescription(period: ReturnType<typeof usePeriod>, view: "day" | "month") {
-  if (view === "day") return "Receitas e despesas por dia, com saldo acumulado partindo do saldo inicial.";
-  return cashflowDescription(period);
-}
-
-function averageMonthlyCashflow(items: Array<{ expenses: number; income: number }>) {
-  if (!items.length) return { expenses: null, income: null };
-  const income = items.reduce((total, item) => total + Number(item.income ?? 0), 0) / items.length;
-  const expenses = items.reduce((total, item) => total + Math.abs(Number(item.expenses ?? 0)), 0) / items.length;
-  return { expenses, income };
-}
-
-function comparisonHelper(current: number | null, previous: number | null, previousMonth?: string, average?: number | null, lowerIsBetter = false) {
-  if (previous !== null && previous !== undefined && previous !== 0) {
-    const variation = ((Number(current ?? 0) - previous) / Math.abs(previous)) * 100;
-    const sign = variation >= 0 ? "+" : "";
-    const suffix = lowerIsBetter && variation < 0 ? " melhor" : "";
-    return `${sign}${formatPercentNumber(variation)}% vs ${monthTickLabel(previousMonth ?? "")}${suffix}`;
-  }
-  if (average !== null && average !== undefined && average > 0) {
-    const variation = ((Number(current ?? 0) - average) / average) * 100;
-    const sign = variation >= 0 ? "+" : "";
-    return `${sign}${formatPercentNumber(variation)}% vs média 3 meses`;
-  }
-  return "Histórico insuficiente";
-}
 
 function isOutflowTransaction(t: TransactionRead) {
   return t.direction === "debit" || t.direction === "payment" || Number(t.amount ?? 0) < 0;
@@ -374,22 +340,6 @@ function CashflowEvolutionTooltip({ active, payload, view }: { active?: boolean;
   );
 }
 
-function CashflowCategoryRows({ emptyMessage, items, loading, tone }: { emptyMessage: string; items: CashflowCategoryRow[]; loading: boolean; tone: "negative" | "positive" }) {
-  if (loading) return <PageState icon={Loader2} title="Carregando categorias" description="Aguarde um momento." spin compact />;
-  if (!items.length) return <EmptyInline message={emptyMessage} />;
-  const maxAmount = Math.max(...items.map((item) => item.amount), 1);
-  return (
-    <div className="cashflow-category-list">
-      {items.slice(0, 7).map((item, index) => (
-        <div className="category-bar-row static" key={`${item.label}-${index}`}>
-          <span>{item.label}</span>
-          <div className="category-bar-track"><i style={{ background: tone === "positive" ? "#22c55e" : chartPalette[index % chartPalette.length], width: `${Math.max((item.amount / maxAmount) * 100, 4)}%` }} /></div>
-          <b><strong>{moneyAbs(item.amount)}</strong><small>{percent(String(item.share))}</small></b>
-        </div>
-      ))}
-    </div>
-  );
-}
 
 const SIZE_LABELS: Record<string, string> = {
   cotidiana: "Cotidiano",
@@ -959,8 +909,6 @@ function CategoryAnalysisSection({
   onOpenCategory: (item: CategoryRankingItem) => void;
   onOpenSubcategory: (item: SubcategorySummary) => void;
 }) {
-  const selectedExpenseCategory = subcategoryFilterOptions.find((item) => item.id === selectedExpenseCategoryId) ?? null;
-
   return (
     <section>
       <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Análise de Categorias</h2>
@@ -1005,8 +953,8 @@ function CategoryAnalysisSection({
 // ---------------------------------------------------------------------------
 
 function IncomeCompositionSection({
-  income,
-  expenses,
+  income: _income,
+  expenses: _expenses,
   incomeCategories,
   incomeCategoriesLoading,
   expenseSizeProfile,

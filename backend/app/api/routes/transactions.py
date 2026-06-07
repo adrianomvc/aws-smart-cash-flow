@@ -264,7 +264,7 @@ async def list_transactions(
     db: Session = DbDependency,
     date_from: date | None = None,
     date_to: date | None = None,
-    category_ids: list[str] | None = Query(default=None),
+    category_ids: list[str] | None = Query(default=None),  # noqa: B008
     import_job_id: str | None = None,
     ids: str | None = None,
     source_type: str | None = None,
