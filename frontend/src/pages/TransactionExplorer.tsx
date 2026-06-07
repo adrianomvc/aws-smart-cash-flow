@@ -178,6 +178,12 @@ function TransactionRow({ transaction, categories, categoryOptions, session, onD
 }) {
   const category = categories.find((item) => item.id === transaction.category?.category_id);
   const categoryLabel = category ? categoryPath(category, categories) : undefined;
+  const acctText = transaction.account_or_card ?? transaction.source_name ?? (
+    transaction.source_type === "bank_statement" ? "Conta Bancária" :
+    transaction.source_type === "credit_card_statement" ? "Cartão de Crédito" :
+    transaction.source_type === "unknown" ? "Manual" : "Origem não identificada"
+  );
+  const acctIcon = transaction.source_type === "bank_statement" ? "🏦" : transaction.source_type === "credit_card_statement" ? "💳" : transaction.source_type === "unknown" ? "✏️" : "❓";
   return (
     <tr
       className={[selected ? "row-selected" : "", `direction-${transaction.direction}`, !transaction.category ? "status-pending" : ""].filter(Boolean).join(" ")}
@@ -190,7 +196,7 @@ function TransactionRow({ transaction, categories, categoryOptions, session, onD
         <span className="description-cell">{transaction.description}</span>
         {transaction.description !== transaction.raw_description ? <small>{transaction.raw_description}</small> : null}
       </td>
-      <td><span className="account-cell" title={transaction.account_or_card ?? transaction.source_name ?? ""}>{transaction.account_or_card ?? transaction.source_name ?? "-"}</span>{transaction.source_type === "unknown" ? <span className="badge-manual">Manual</span> : null}</td>
+      <td><span className="account-cell account-cell-inner" title={acctText}><span className="account-type-icon">{acctIcon}</span>{acctText}</span></td>
       <td><DirectionPicker session={session} transaction={transaction} /></td>
       <td className={amountClass(transaction)}>{moneyAbs(transaction.amount)}</td>
       {showInstallments ? <td>{installmentLabel(transaction)}</td> : null}
@@ -819,23 +825,28 @@ export function TransactionExplorer({
         {actionMessage ? <InlineSuccess message={actionMessage} /> : null}
 
         {!reviewMode ? (
-          <div className="duplicate-alert-bar">
-            <span className="duplicate-alert-text">{showDuplicates && duplicates.data ? `${duplicates.data.total_groups} grupo(s) · ${duplicates.data.total_transactions} lançamentos envolvidos` : "Verificar possíveis duplicados"}</span>
-            <button className="ghost-button compact-button" onClick={() => { setShowDuplicates((c) => !c); setDuplicatePage(0); }} type="button">{showDuplicates ? "Ocultar lista" : "Ver grupos →"}</button>
+          <div className="tx-info-cards">
+            <button className={`tx-info-card${showDuplicates ? " active" : ""}`} onClick={() => { setShowDuplicates((c) => !c); setDuplicatePage(0); }} type="button">
+              <div className="tx-info-card-header">
+                <span className="tx-info-card-icon">⚠️</span>
+                <span className="tx-info-card-title">Possíveis duplicados</span>
+                {duplicates.data?.total_groups ? <span className="tx-info-card-badge warn">{duplicates.data.total_groups} grupos</span> : null}
+              </div>
+              <span className="tx-info-card-action">{showDuplicates ? "Ocultar ▲" : "Verificar →"}</span>
+            </button>
+            <button className={`tx-info-card${showAccounts ? " active" : ""}`} onClick={() => setShowAccounts((c) => !c)} type="button">
+              <div className="tx-info-card-header">
+                <span className="tx-info-card-icon">🏦</span>
+                <span className="tx-info-card-title">Contas e cartões</span>
+                {activeAccounts.data?.items.length ? <span className="tx-info-card-badge">{activeAccounts.data.items.length} contas</span> : null}
+              </div>
+              <span className="tx-info-card-action">{showAccounts ? "Ocultar ▲" : "Ver contas →"}</span>
+            </button>
           </div>
         ) : null}
 
         {!reviewMode && showDuplicates ? (
           <DuplicateTransactionsPanel groups={duplicates.data?.groups ?? []} loading={duplicates.isLoading} onReviewGroup={openGroupReview} onAutoResolveAll={autoResolveAllGroups} onNextPage={() => setDuplicatePage((c) => c + 1)} onPreviousPage={() => setDuplicatePage((c) => Math.max(c - 1, 0))} onRefresh={() => void duplicates.refetch()} page={duplicatePage} pageSize={duplicatePageSize} resolving={removeDuplicateReviewItems.isPending} totalGroups={duplicates.data?.total_groups ?? 0} totalTransactions={duplicates.data?.total_transactions ?? 0} />
-        ) : null}
-
-        {!reviewMode ? (
-          <div className="duplicate-alert-bar">
-            <span className="duplicate-alert-text">
-              {showAccounts && activeAccounts.data ? `${activeAccounts.data.items.length} conta(s)/cartão(ões) importado(s)` : "Contas e cartões"}
-            </span>
-            <button className="ghost-button compact-button" onClick={() => setShowAccounts((c) => !c)} type="button">{showAccounts ? "Ocultar" : "Ver contas →"}</button>
-          </div>
         ) : null}
         {!reviewMode && showAccounts ? (
           <Panel title="Contas e cartões" description="Contas e cartões detectados nos arquivos importados.">

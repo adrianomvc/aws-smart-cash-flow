@@ -3388,7 +3388,61 @@ select:focus {
   .tx-quick-filters { gap: 10px; }
   .tx-filter-group { flex-direction: column; align-items: flex-start; gap: 4px; }
   .tx-advanced-toggle { margin-left: 0; }
+  .tx-info-cards { grid-template-columns: 1fr; }
 }
+
+/* Info cards (duplicates + accounts) — side by side */
+.tx-info-cards {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.tx-info-card {
+  align-items: flex-start;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  text-align: left;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  width: 100%;
+}
+
+.tx-info-card:hover { border-color: #a5b4fc; box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.07); }
+.tx-info-card.active { background: #eef2ff; border-color: #6366f1; }
+
+.tx-info-card-header {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.tx-info-card-icon { font-size: 16px; line-height: 1; }
+.tx-info-card-title { color: #374151; flex: 1; font-size: 13px; font-weight: 600; }
+
+.tx-info-card-badge {
+  background: #6366f1;
+  border-radius: 10px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 8px;
+}
+
+.tx-info-card-badge.warn { background: #f59e0b; }
+
+.tx-info-card-action { color: #94a3b8; font-size: 12px; }
+.tx-info-card.active .tx-info-card-action { color: #6366f1; }
+
+/* Account cell with type icon */
+.account-cell-inner { align-items: center; display: flex; gap: 5px; }
+.account-type-icon { flex-shrink: 0; font-size: 13px; line-height: 1; }
 
 /* KPI section label */
 .transactions-kpi-section {
@@ -3926,16 +3980,32 @@ td small {
   min-width: 160px;
 }
 
+/* Direction select as colored pill */
+.direction-select {
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  min-height: unset;
+  min-width: unset;
+  padding: 4px 8px;
+}
+
 .direction-select.debit {
-  color: #991b1b;
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #dc2626;
 }
 
 .direction-select.credit {
-  color: #166534;
+  background: #dcfce7;
+  border-color: #86efac;
+  color: #16a34a;
 }
 
 .direction-select.payment {
-  color: #475569;
+  background: #ede9fe;
+  border-color: #c4b5fd;
+  color: #7c3aed;
 }
 
 .drawer {
