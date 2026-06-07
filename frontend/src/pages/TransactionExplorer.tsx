@@ -166,7 +166,7 @@ function DirectionPicker({ transaction, session }: { transaction: TransactionRea
   );
 }
 
-function TransactionRow({ transaction, categories, categoryOptions, session, onDelete, onSelect, onCategorized, expectedDedupeKey = "", primaryDedupeId = "", showDedupeStatus = false, selected = false, onToggleSelect }: {
+function TransactionRow({ transaction, categories, categoryOptions, session, onDelete, onSelect, onCategorized, expectedDedupeKey = "", primaryDedupeId = "", showDedupeStatus = false, showInstallments = false, selected = false, onToggleSelect }: {
   transaction: TransactionRead;
   categories: CategoryRead[];
   categoryOptions: ReturnType<typeof orderedCategoryOptions>;
@@ -177,6 +177,7 @@ function TransactionRow({ transaction, categories, categoryOptions, session, onD
   expectedDedupeKey?: string;
   primaryDedupeId?: string;
   showDedupeStatus?: boolean;
+  showInstallments?: boolean;
   selected?: boolean;
   onToggleSelect?: (id: string) => void;
 }) {
@@ -194,7 +195,7 @@ function TransactionRow({ transaction, categories, categoryOptions, session, onD
       <td><span className="account-cell" title={transaction.account_or_card ?? transaction.source_name ?? ""}>{transaction.account_or_card ?? transaction.source_name ?? "-"}</span></td>
       <td><DirectionPicker session={session} transaction={transaction} /></td>
       <td className={amountClass(transaction)}>{moneyAbs(transaction.amount)}</td>
-      <td>{installmentLabel(transaction)}</td>
+      {showInstallments ? <td>{installmentLabel(transaction)}</td> : null}
       <td><CategoryPicker categoryOptions={categoryOptions} onCategorized={onCategorized} session={session} transaction={transaction} /></td>
       <td>{transaction.category ? <span className="status-badge confirmed">Confirmado</span> : <span className="status-badge pending">Pendente</span>}</td>
       {showDedupeStatus ? <td><DedupeStatusBadge status={dedupeStatus(transaction, expectedDedupeKey, primaryDedupeId)} /></td> : null}
@@ -444,6 +445,7 @@ export function TransactionExplorer({
   const [showCreate, setShowCreate] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showDuplicates, setShowDuplicates] = useState(false);
+  const [showAccounts, setShowAccounts] = useState(false);
   const [duplicatePage, setDuplicatePage] = useState(0);
   const [activeReviewGroup, setActiveReviewGroup] = useState<DuplicateTransactionGroup | null>(null);
   const [keepId, setKeepId] = useState("");
@@ -517,6 +519,20 @@ export function TransactionExplorer({
       void queryClient.invalidateQueries({ queryKey: ["data-quality"] });
     },
   });
+  const bulkCategorize = useMutation({
+    mutationFn: async ({ ids, categoryId }: { ids: string[]; categoryId: string | null }) => {
+      for (const id of ids) await updateTransactionCategory(session, id, categoryId);
+      return ids.length;
+    },
+    onSuccess: (count) => {
+      setSelectedIds(new Set());
+      setActionMessage(`Categoria aplicada em ${count} transação(ões). Indicadores atualizados.`);
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["category-ranking"] });
+      void queryClient.invalidateQueries({ queryKey: ["data-quality"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+    },
+  });
 
   const visibleTransactions = (() => {
     const items = transactions.data?.items ?? [];
@@ -531,6 +547,7 @@ export function TransactionExplorer({
   const pagePayments = visibleTransactions.filter((t) => t.direction === "payment").reduce((total, t) => total + Math.abs(Number(t.amount)), 0);
   const pagePending = visibleTransactions.filter((t) => !t.category).length;
   const pageBalance = pageIncome - pageExpenses;
+  const hasInstallments = visibleTransactions.some((t) => t.installment_current != null && t.installment_total != null);
   void pagePayments; void pageBalance;
   const allPageSelected = visibleTransactions.length > 0 && visibleTransactions.every((t) => selectedIds.has(t.id));
   const somePageSelected = visibleTransactions.some((t) => selectedIds.has(t.id));
@@ -598,6 +615,20 @@ export function TransactionExplorer({
         {somePageSelected ? (
           <div className="bulk-action-bar">
             <span>{selectedIds.size} selecionado(s)</span>
+            <select
+              className="filter-select"
+              disabled={bulkCategorize.isPending}
+              value=""
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === "__placeholder__") return;
+                bulkCategorize.mutate({ ids: [...selectedIds], categoryId: val === "__remove__" ? null : val });
+              }}
+            >
+              <option value="__placeholder__">{bulkCategorize.isPending ? "Aplicando…" : "Categorizar seleção…"}</option>
+              <option value="__remove__">— Remover categoria</option>
+              {categoryOptions.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
             <button className="ghost-button compact-button" onClick={() => exportTransactionsCSV(visibleTransactions.filter((t) => selectedIds.has(t.id)), "transacoes-selecionadas")} type="button"><Download size={14} /> Exportar seleção</button>
             <button className="ghost-button compact-button" onClick={() => setSelectedIds(new Set())} type="button">Limpar seleção</button>
           </div>
@@ -644,7 +675,15 @@ export function TransactionExplorer({
         ) : null}
 
         {!reviewMode ? (
-          <Panel title="Contas ativas">
+          <div className="duplicate-alert-bar">
+            <span className="duplicate-alert-text">
+              {showAccounts && activeAccounts.data ? `${activeAccounts.data.items.length} conta(s)/cartão(ões) importado(s)` : "Contas e cartões"}
+            </span>
+            <button className="ghost-button compact-button" onClick={() => setShowAccounts((c) => !c)} type="button">{showAccounts ? "Ocultar" : "Ver contas →"}</button>
+          </div>
+        ) : null}
+        {!reviewMode && showAccounts ? (
+          <Panel title="Contas e cartões" description="Contas e cartões detectados nos arquivos importados.">
             <ActiveAccountsPanel accounts={activeAccounts.data?.items ?? []} loading={activeAccounts.isLoading} />
           </Panel>
         ) : null}
@@ -661,7 +700,7 @@ export function TransactionExplorer({
                 <th>Conta/Cartão</th>
                 <th><SortHeader active={sortBy === "direction"} direction={sortDir} label="Tipo" onClick={() => toggleSort("direction")} /></th>
                 <th><SortHeader active={sortBy === "amount"} direction={sortDir} label="Valor" onClick={() => toggleSort("amount")} /></th>
-                <th>Parcela</th>
+                {hasInstallments ? <th>Parcela</th> : null}
                 <th>Categoria</th>
                 <th>Status</th>
                 <th />
@@ -678,6 +717,7 @@ export function TransactionExplorer({
                   onCategorized={handleCategoryChanged}
                   session={session}
                   transaction={transaction}
+                  showInstallments={hasInstallments}
                   selected={selectedIds.has(transaction.id)}
                   onToggleSelect={(id) => { setSelectedIds((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; }); }}
                 />
