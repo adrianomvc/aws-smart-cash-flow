@@ -622,6 +622,24 @@ export function TransactionExplorer({
     },
   });
 
+  const bulkChangeDirection = useMutation({
+    mutationFn: async ({ ids, direction }: { ids: string[]; direction: string }) => {
+      for (const id of ids) await updateTransactionDirection(session, id, direction);
+      return ids.length;
+    },
+    onSuccess: (count) => {
+      setSelectedIds(new Set());
+      setActionMessage(`Tipo alterado em ${count} transação(ões).`);
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      void queryClient.invalidateQueries({ queryKey: ["monthly-cashflow"] });
+      void queryClient.invalidateQueries({ queryKey: ["category-ranking"] });
+      void queryClient.invalidateQueries({ queryKey: ["weekday-spending"] });
+      void queryClient.invalidateQueries({ queryKey: ["credit-card-payment-matches"] });
+      void queryClient.invalidateQueries({ queryKey: ["data-quality"] });
+    },
+  });
+
   const bulkDelete = useMutation({
     mutationFn: async (ids: string[]) => { for (const id of ids) await deleteTransaction(session, id); return ids.length; },
     onSuccess: (count, ids) => {
@@ -815,6 +833,21 @@ export function TransactionExplorer({
               <option value="__placeholder__">{bulkCategorize.isPending ? "Aplicando…" : "Categorizar seleção…"}</option>
               <option value="__remove__">— Remover categoria</option>
               {categoryOptions.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
+            <select
+              className="filter-select"
+              disabled={bulkChangeDirection.isPending}
+              value=""
+              onChange={(e) => {
+                const val = e.target.value;
+                if (!val) return;
+                bulkChangeDirection.mutate({ ids: [...selectedIds], direction: val });
+              }}
+            >
+              <option value="">{bulkChangeDirection.isPending ? "Alterando…" : "Mudar tipo…"}</option>
+              <option value="debit">↓ Despesa</option>
+              <option value="credit">↑ Receita</option>
+              <option value="payment">□ Fatura</option>
             </select>
             <button className="ghost-button compact-button" onClick={() => exportTransactionsCSV(visibleTransactions.filter((t) => selectedIds.has(t.id)), "transacoes-selecionadas")} type="button"><Download size={14} /> Exportar seleção</button>
             <button className="ghost-button compact-button danger" disabled={bulkDelete.isPending} onClick={() => { if (window.confirm(`Excluir ${selectedIds.size} transação(ões)? Esta ação não pode ser desfeita.`)) bulkDelete.mutate([...selectedIds]); }} type="button"><Trash2 size={14} />{bulkDelete.isPending ? "Excluindo…" : "Excluir seleção"}</button>
