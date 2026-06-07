@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   Sparkles,
   PlusCircle,
+  PiggyBank,
   type LucideIcon,
 } from "lucide-react";
 import {

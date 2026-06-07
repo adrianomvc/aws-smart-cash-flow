@@ -37,8 +37,8 @@ DESCRIPTION_TOKEN_ALIASES = {
     "SPOTIFYAB": ("SPOTIFY",),
     "DISNEYPLUS": ("DISNEY", "PLUS"),
     # Mobilidade
-    "UBERBR": ("UBER",),
-    "UBERBRASIL": ("UBER",),
+    "UBERBR": ("UBER", "BR"),
+    "UBERBRASIL": ("UBER", "BR"),
     "UBEREST": ("UBER", "EATS"),
     "UBEREAT": ("UBER", "EATS"),
     # Fintech BR
@@ -75,7 +75,7 @@ PREFIX_TOKEN_ALIASES = {
 CONTEXTUAL_TOKEN_ALIASES = {
     ("PAYPAL", "AB"): ("PAYPAL", "ABASTECE", "AI"),
     ("PAYPAL", "SH"): ("PAYPAL", "SHELLBOX"),
-    ("PAYPAL", "UB"): ("PAYPAL", "UBER"),
+    ("PAYPAL", "UB"): ("PAYPAL", "UBER", "BR"),
 }
 
 SEQUENCE_TOKEN_ALIASES = {
@@ -85,7 +85,7 @@ SEQUENCE_TOKEN_ALIASES = {
     ("AD", "FREE", "FOR", "PRIM"): ("AD", "FREE", "FOR", "PRIME"),
     ("GOOGLE", "YOUTUB"): ("GOOGLE", "YOUTUBE"),
     ("SHELL", "BOX"): ("SHELLBOX",),
-    ("UBER", "DO", "BRASI"): ("UBER",),
+    ("UBER", "DO", "BRASI"): ("UBER", "BR"),
     # Canais de pagamento compostos — ruído
     ("INT", "PAG"): (),
     ("MOBILE", "PAG"): (),
@@ -97,10 +97,10 @@ SEQUENCE_TOKEN_ALIASES = {
 }
 
 # Prefixos de método de pagamento — removidos do início pois o tipo já está em direction/source_type
+# TRANSF/TRANSFERENCIA excluídos: são parte da descrição em P2P (PIX TRANSF FLAVIA)
 PAYMENT_METHOD_PREFIXES = {
     "PIX", "TED", "DOC", "DEB",
     "PAG", "PGTO", "PAGTO",
-    "TRANSF", "TRANSFERENCIA",
 }
 
 # Tokens de sufixo geográfico — removidos do final da descrição
@@ -209,26 +209,37 @@ def _normalize_transaction_description(raw_description: str, *, drop_installment
     return " ".join(_collapse_repeated_sequences(normalized_tokens))
 
 
+_P2P_GUARD = {"TRANSF", "TRANSFERENCIA"}
+_SCHEDULED_GUARD = {"AGENDADA", "AGENDADO"}
+
+
 def _drop_payment_method_prefix(tokens: list[str]) -> list[str]:
     if not tokens:
         return tokens
     result = list(tokens)
     while result and result[0] in PAYMENT_METHOD_PREFIXES:
-        # Preserve prefix when what remains is only a titulo/boleto token — it adds context
         rest = result[1:]
-        if rest and rest[0] in _TITULO_TOKENS:
+        # Stop when what follows signals titulo, P2P transfer, or scheduled payment context
+        if rest and (rest[0] in _TITULO_TOKENS or rest[0] in _P2P_GUARD or rest[0] in _SCHEDULED_GUARD):
             break
         result = rest
     return result if result else tokens
+
+
+_GEO_BRAND_PROTECTORS = {"UBER"}  # brands that use country suffix as part of their service name
 
 
 def _drop_geo_suffix(tokens: list[str]) -> list[str]:
     if not tokens:
         return tokens
     result = list(tokens)
-    # Remove up to 2 trailing geo tokens
+    # Remove up to 2 trailing geo tokens, guarded by two rules:
+    # 1. Only strip when at least 3 tokens exist (preserves "DAISO BRASIL")
+    # 2. Don't strip when the preceding token is a brand that uses BR as part of its name
     for _ in range(2):
-        if result and result[-1] in GEO_SUFFIX_TOKENS:
+        if (len(result) >= 3
+                and result[-1] in GEO_SUFFIX_TOKENS
+                and result[-2] not in _GEO_BRAND_PROTECTORS):
             result = result[:-1]
         else:
             break
