@@ -273,6 +273,9 @@ async def list_transactions(
     q: str | None = None,
     sort_by: str = Query(default="transaction_date"),
     sort_dir: str = Query(default="desc"),
+    amount_min: float | None = None,
+    amount_max: float | None = None,
+    tx_status: str | None = Query(default=None, alias="status"),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> TransactionListResponse:
@@ -346,6 +349,26 @@ async def list_transactions(
                 select(TransactionCategoryAssignment.transaction_id).where(
                     TransactionCategoryAssignment.workspace_id == auth.workspace_id,
                     TransactionCategoryAssignment.category_id.in_(all_ids),
+                )
+            )
+        )
+    if amount_min is not None:
+        filters.append(func.abs(Transaction.amount) >= amount_min)
+    if amount_max is not None:
+        filters.append(func.abs(Transaction.amount) <= amount_max)
+    if tx_status == "pending":
+        filters.append(
+            Transaction.id.not_in(
+                select(TransactionCategoryAssignment.transaction_id).where(
+                    TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+                )
+            )
+        )
+    elif tx_status == "confirmed":
+        filters.append(
+            Transaction.id.in_(
+                select(TransactionCategoryAssignment.transaction_id).where(
+                    TransactionCategoryAssignment.workspace_id == auth.workspace_id,
                 )
             )
         )

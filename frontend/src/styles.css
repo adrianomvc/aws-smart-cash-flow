@@ -3260,6 +3260,9 @@ select:focus {
   color: #a16207;
 }
 
+/* Manual transaction badge */
+.badge-manual { background: #e0e7ff; border-radius: 4px; color: #4338ca; display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .03em; margin-left: 4px; padding: 1px 5px; vertical-align: middle; }
+
 /* Category badge */
 .category-badge {
   border-radius: 4px;
@@ -3295,6 +3298,16 @@ select:focus {
 tr.row-selected {
   background: #f0f4ff;
 }
+
+/* Direction row left-border indicators */
+tr.direction-debit td:first-child { border-left: 3px solid #dc2626; }
+tr.direction-credit td:first-child { border-left: 3px solid #16a34a; }
+tr.direction-payment td:first-child { border-left: 3px solid #6366f1; }
+
+/* Pending transaction — subtle warm background */
+tr.status-pending { background: #fffbeb; }
+tr.status-pending:hover { background: #fef3c7; }
+tr.status-pending.row-selected { background: #fef3c7; }
 
 /* Sidebar category dot */
 .sidebar-cat-label {
@@ -3370,6 +3383,9 @@ tr.row-selected {
   color: #4f46e5;
   font-weight: 600;
 }
+
+/* Bulk selection hint bar (shown when nothing is selected) */
+.bulk-hint-bar { align-items: center; border: 1px dashed #cbd5e1; border-radius: 6px; color: #94a3b8; display: flex; font-size: 12px; gap: 8px; padding: 7px 12px; }
 
 /* Bulk action bar */
 .bulk-action-bar {

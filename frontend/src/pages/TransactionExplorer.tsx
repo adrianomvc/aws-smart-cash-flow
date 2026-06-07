@@ -178,21 +178,24 @@ function TransactionRow({ transaction, categories, categoryOptions, session, onD
 }) {
   const category = categories.find((item) => item.id === transaction.category?.category_id);
   const categoryLabel = category ? categoryPath(category, categories) : undefined;
-  void categoryLabel;
   return (
-    <tr className={selected ? "row-selected" : ""} onClick={() => onSelect()} style={{ cursor: "pointer" }}>
+    <tr
+      className={[selected ? "row-selected" : "", `direction-${transaction.direction}`, !transaction.category ? "status-pending" : ""].filter(Boolean).join(" ")}
+      onClick={() => onSelect()}
+      style={{ cursor: "pointer" }}
+    >
       <td className="col-checkbox"><input type="checkbox" checked={selected} onChange={() => onToggleSelect?.(transaction.id)} onClick={(e) => e.stopPropagation()} /></td>
       <td>{dateLabel(transaction.transaction_date)}</td>
       <td>
         <span className="description-cell">{transaction.description}</span>
         {transaction.description !== transaction.raw_description ? <small>{transaction.raw_description}</small> : null}
       </td>
-      <td><span className="account-cell" title={transaction.account_or_card ?? transaction.source_name ?? ""}>{transaction.account_or_card ?? transaction.source_name ?? "-"}</span></td>
+      <td><span className="account-cell" title={transaction.account_or_card ?? transaction.source_name ?? ""}>{transaction.account_or_card ?? transaction.source_name ?? "-"}</span>{transaction.source_type === "unknown" ? <span className="badge-manual">Manual</span> : null}</td>
       <td><DirectionPicker session={session} transaction={transaction} /></td>
       <td className={amountClass(transaction)}>{moneyAbs(transaction.amount)}</td>
       {showInstallments ? <td>{installmentLabel(transaction)}</td> : null}
       <td><CategoryPicker categoryOptions={categoryOptions} onCategorized={onCategorized} session={session} transaction={transaction} /></td>
-      <td>{transaction.category ? <span className="status-badge confirmed">Confirmado</span> : <span className="status-badge pending">Pendente</span>}</td>
+      <td>{transaction.category ? <span className="status-badge confirmed" title={categoryLabel}>Confirmado</span> : <span className="status-badge pending">Pendente</span>}</td>
       {showDedupeStatus ? <td><DedupeStatusBadge status={dedupeStatus(transaction, expectedDedupeKey, primaryDedupeId)} /></td> : null}
       <td>
         <div className="row-actions">
@@ -544,9 +547,13 @@ export function TransactionExplorer({
     if (fixedQuery && fixedQuery !== "category_id=__uncategorized__") { const [key, value] = fixedQuery.split("="); params.set(key, value); }
     params.set("limit", String(pageSize));
     params.set("offset", String(page * pageSize));
+    if (amountMin) params.set("amount_min", amountMin);
+    if (amountMax) params.set("amount_max", amountMax);
+    if (statusFilter === "__pending__") params.set("status", "pending");
+    else if (statusFilter === "__confirmed__") params.set("status", "confirmed");
     return `?${params.toString()}`;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [categoryIds, dateFrom, dateTo, direction, fixedQuery, importJobId, page, pageSize, search, sortBy, sortDir, sourceType, weekday]);
+  }, [amountMax, amountMin, categoryIds, dateFrom, dateTo, direction, fixedQuery, importJobId, page, pageSize, search, sortBy, sortDir, sourceType, statusFilter, weekday]);
   const transactions = useQuery({ queryKey: ["transactions", session.token, query], queryFn: () => getTransactions(session, query) });
   const duplicatesQuery = `?limit=${duplicatePageSize}&offset=${duplicatePage * duplicatePageSize}`;
   const duplicates = useQuery({ queryKey: ["transaction-duplicates", session.token, duplicatesQuery], queryFn: () => getTransactionDuplicates(session, duplicatesQuery), enabled: showDuplicates });
@@ -618,17 +625,10 @@ export function TransactionExplorer({
 
   const visibleTransactions = (() => {
     const items = transactions.data?.items ?? [];
-    let list = items;
-    if (fixedQuery === "category_id=__uncategorized__") list = items.filter((t) => !t.category);
-    else if (statusFilter === "__pending__") list = items.filter((t) => !t.category);
-    else if (statusFilter === "__confirmed__") list = items.filter((t) => Boolean(t.category));
-    const min = amountMin ? Number(amountMin) : null;
-    const max = amountMax ? Number(amountMax) : null;
-    if (min !== null) list = list.filter((t) => Math.abs(Number(t.amount)) >= min);
-    if (max !== null) list = list.filter((t) => Math.abs(Number(t.amount)) <= max);
-    return list;
+    if (fixedQuery === "category_id=__uncategorized__") return items.filter((t) => !t.category);
+    return items;
   })();
-  const totalTransactions = (fixedQuery === "category_id=__uncategorized__" || amountMin || amountMax) ? visibleTransactions.length : transactions.data?.total ?? 0;
+  const totalTransactions = fixedQuery === "category_id=__uncategorized__" ? visibleTransactions.length : transactions.data?.total ?? 0;
   const pageIncome = visibleTransactions.filter((t) => t.direction === "credit").reduce((total, t) => total + Math.abs(Number(t.amount)), 0);
   const pageExpenses = visibleTransactions.filter((t) => t.direction === "debit").reduce((total, t) => total + Math.abs(Number(t.amount)), 0);
   const pagePayments = visibleTransactions.filter((t) => t.direction === "payment").reduce((total, t) => total + Math.abs(Number(t.amount)), 0);
@@ -642,7 +642,7 @@ export function TransactionExplorer({
   const paginationFrom = page * pageSize + 1;
   const paginationTo = Math.min((page + 1) * pageSize, totalTransactions);
   const activeFilterCount = [searchInput, sourceType, direction, importJobId, !reviewMode ? statusFilter : "", !reviewMode && categoryIds.size > 0 ? "cat" : "", dateFrom || dateTo, weekday !== undefined ? String(weekday) : "", amountMin, amountMax].filter(Boolean).length;
-  const emptyMessage = activeFilterCount ? "Nenhuma transação encontrada para os filtros selecionados." : reviewMode ? "Nenhuma transação pendente de categoria." : "Nenhuma transação encontrada.";
+  const emptyMessage = statusFilter === "__pending__" ? "Ótimo! Nenhum lançamento pendente de categoria." : searchInput ? `Nenhum lançamento encontrado para "${searchInput}".` : (dateFrom || dateTo) ? "Nenhum lançamento no período selecionado." : activeFilterCount ? "Nenhuma transação encontrada para os filtros selecionados." : reviewMode ? "Nenhuma transação pendente de categoria." : "Nenhuma transação encontrada.";
   const filterSummary = transactionFilterSummary({ categoryIds, categories: categories.data?.items ?? [], dateFrom, dateTo, direction, duplicateGroupCount: 0, importJobId, periodPreset, reviewMode, search, sourceType, weekday });
 
   function toggleSort(nextSortBy: string) {
@@ -722,15 +722,24 @@ export function TransactionExplorer({
             <button className="ghost-button compact-button" onClick={() => setSelectedIds(new Set())} type="button">Limpar seleção</button>
           </div>
         ) : null}
+        {!somePageSelected ? (
+          <div className="bulk-hint-bar">
+            <span>Selecione lançamentos para categorizar, exportar ou excluir em massa</span>
+          </div>
+        ) : null}
 
         <div className="transactions-filter-bar">
           <label className="filter-search-label"><Search size={14} /><input placeholder="Buscar descrição..." value={searchInput} onChange={(e) => { setSearchInput(e.target.value); }} /></label>
-          <select className={direction ? "filter-select active" : "filter-select"} value={direction} onChange={(e) => { setDirection(e.target.value); setPage(0); }} title="Filtrar por tipo">
-            <option value="">Todos os tipos</option><option value="debit">Despesas</option><option value="credit">Receitas</option><option value="payment">Faturas</option>
-          </select>
-          <select className={statusFilter ? "filter-select active" : "filter-select"} value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(0); }} title="Filtrar por status">
-            <option value="">Todos os status</option><option value="__confirmed__">Confirmados</option><option value="__pending__">Pendentes</option>
-          </select>
+          <div className="transactions-quick-tabs">
+            {[{ value: "", label: "Todos" }, { value: "debit", label: "Despesas" }, { value: "credit", label: "Receitas" }, { value: "payment", label: "Faturas" }].map(({ value, label }) => (
+              <button key={value} className={`quick-tab${direction === value ? " active" : ""}`} onClick={() => { setDirection(value); setPage(0); }} type="button">{label}</button>
+            ))}
+          </div>
+          <div className="transactions-quick-tabs">
+            {[{ value: "", label: "Todos" }, { value: "__confirmed__", label: "Confirmados" }, { value: "__pending__", label: "Pendentes" }].map(({ value, label }) => (
+              <button key={value} className={`quick-tab${statusFilter === value ? " active" : ""}`} onClick={() => { setStatusFilter(value); setPage(0); }} type="button">{label}</button>
+            ))}
+          </div>
           <select className={sourceType ? "filter-select active" : "filter-select"} value={sourceType} onChange={(e) => { setSourceType(e.target.value); setPage(0); }} title="Filtrar por origem">
             <option value="">Todas as origens</option><option value="bank_statement">Conta corrente</option><option value="credit_card_statement">Cartão de crédito</option><option value="unknown">Manual / Outras</option>
           </select>
