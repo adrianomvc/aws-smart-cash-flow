@@ -263,7 +263,7 @@ def test_rule_application_categorizes_matching_transactions(
     )
 
     apply_response = client.post("/v1/categorization-rules/apply")
-    transaction_response = client.get(f"/v1/transactions?category_id={category_id}")
+    transaction_response = client.get(f"/v1/transactions?category_ids={category_id}")
 
     assert rule_response.status_code == 201
     assert apply_response.status_code == 200

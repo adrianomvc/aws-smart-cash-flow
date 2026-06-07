@@ -105,13 +105,6 @@ const chartPalette = ["#8b5cf6", "#ef4444", "#f59e0b", "#22c55e", "#38bdf8", "#6
 // Helpers
 // ---------------------------------------------------------------------------
 
-function cashflowDescription(period: ReturnType<typeof usePeriod>) {
-  if (period.periodPreset === "current_month" || period.periodPreset === "previous_month" || isSingleMonthRange(period.dateFrom, period.dateTo)) {
-    const [year] = (period.dateFrom || period.dateTo).split("-");
-    return year ? `Tendência mensal do ano ${year}, mantendo o mês selecionado nos demais indicadores.` : "Receitas, despesas e saldo por mês.";
-  }
-  return "Receitas, despesas e saldo por mês.";
-}
 
 
 function isOutflowTransaction(t: TransactionRead) {
@@ -953,8 +946,6 @@ function CategoryAnalysisSection({
 // ---------------------------------------------------------------------------
 
 function IncomeCompositionSection({
-  income: _income,
-  expenses: _expenses,
   incomeCategories,
   incomeCategoriesLoading,
   expenseSizeProfile,

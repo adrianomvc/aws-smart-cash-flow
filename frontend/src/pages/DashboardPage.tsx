@@ -50,7 +50,6 @@ import {
 } from "../lib/api";
 import {
   buildCalendarEvents,
-  compactMoneyAbs,
   compactMoneyAxis,
   dateInputLabel,
   dateLabel,
@@ -110,7 +109,6 @@ import type { CashFlowProjectionChartPoint, CashFlowProjectionPoint } from "../l
 // Constants
 // ---------------------------------------------------------------------------
 
-const chartPalette = ["#8b5cf6", "#ef4444", "#f59e0b", "#22c55e", "#38bdf8", "#64748b", "#2563eb", "#14b8a6"];
 
 // ---------------------------------------------------------------------------
 // Helpers

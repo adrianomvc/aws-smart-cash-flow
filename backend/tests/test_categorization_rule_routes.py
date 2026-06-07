@@ -237,7 +237,7 @@ def test_apply_rules_matches_by_priority_and_preserves_manual_assignments(
         },
     )
     mercado_transaction = db_session.scalars(
-        select(Transaction).where(Transaction.description == "PIX MERCADO")
+        select(Transaction).where(Transaction.description == "MERCADO")
     ).one()
     db_session.add(
         TransactionCategoryAssignment(

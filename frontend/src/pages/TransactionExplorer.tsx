@@ -663,6 +663,7 @@ export function TransactionExplorer({
       void queryClient.invalidateQueries({ queryKey: ["transactions"] });
     },
   });
+  void normalizeDescriptions;
 
   const visibleTransactions = (() => {
     const items = transactions.data?.items ?? [];
@@ -685,6 +686,7 @@ export function TransactionExplorer({
   const activeFilterCount = [searchInput, sourceType, direction, importJobId, !reviewMode ? statusFilter : "", !reviewMode && categoryIds.size > 0 ? "cat" : "", dateFrom || dateTo, weekday !== undefined ? String(weekday) : "", amountMin, amountMax].filter(Boolean).length;
   const emptyMessage = statusFilter === "__pending__" ? "Ótimo! Nenhum lançamento pendente de categoria." : searchInput ? `Nenhum lançamento encontrado para "${searchInput}".` : (dateFrom || dateTo) ? "Nenhum lançamento no período selecionado." : activeFilterCount ? "Nenhuma transação encontrada para os filtros selecionados." : reviewMode ? "Nenhuma transação pendente de categoria." : "Nenhuma transação encontrada.";
   const filterSummary = transactionFilterSummary({ categoryIds, categories: categories.data?.items ?? [], dateFrom, dateTo, direction, duplicateGroupCount: 0, importJobId, periodPreset, reviewMode, search, sourceType, weekday });
+  void filterSummary;
 
   function toggleSort(nextSortBy: string) {
     setPage(0);

@@ -190,7 +190,7 @@ def test_list_transactions_returns_current_workspace_transactions(
     assert payload["total"] == 2
     assert payload["limit"] == 50
     assert payload["offset"] == 0
-    assert [item["description"] for item in payload["items"]] == ["SALARIO", "PIX MERCADO"]
+    assert [item["description"] for item in payload["items"]] == ["SALARIO", "MERCADO"]
     assert payload["items"][0]["amount"] == "100.00"
     assert payload["items"][0]["direction"] == "credit"
 
@@ -316,7 +316,7 @@ def test_list_transactions_filters_by_category_and_paginates(
 
     response = client.get(
         "/v1/transactions",
-        params={"category_id": category.id, "limit": 1, "offset": 0},
+        params={"category_ids": category.id, "limit": 1, "offset": 0},
     )
 
     assert response.status_code == 200
@@ -394,8 +394,8 @@ def test_list_transactions_parent_category_filter_includes_direct_children(
     )
     db_session.commit()
 
-    parent_response = client.get("/v1/transactions", params={"category_id": parent.id})
-    child_response = client.get("/v1/transactions", params={"category_id": child.id})
+    parent_response = client.get("/v1/transactions", params={"category_ids": parent.id})
+    child_response = client.get("/v1/transactions", params={"category_ids": child.id})
 
     assert parent_response.status_code == 200
     assert child_response.status_code == 200
