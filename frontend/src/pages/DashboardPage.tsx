@@ -752,7 +752,7 @@ export function DashboardPage({
               </ChartBox>
             </Panel>
             <Panel title="Top categorias" description="Maiores gastos classificados no período." action={<PanelLink label="Ver todas" onClick={() => onNavigate("cashflow")} />}>
-              <CategoryBarList items={categoryItems} loading={ranking.isLoading} onOpenCategory={openCategoryTransactions} />
+              <CategoryBarList items={categoryItems} limit={5} loading={ranking.isLoading} onOpenCategory={openCategoryTransactions} />
             </Panel>
           </div>
           <div className="cockpit-right">

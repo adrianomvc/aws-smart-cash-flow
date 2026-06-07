@@ -233,13 +233,13 @@ export function compactCategoryDistribution(items: CategoryRankingItem[]) {
 // Exported sub-components (shared with DashboardPage)
 // ---------------------------------------------------------------------------
 
-export function CategoryBarList({ items, loading, onOpenCategory }: { items: CategoryRankingItem[]; loading: boolean; onOpenCategory: (item: CategoryRankingItem) => void }) {
+export function CategoryBarList({ items, limit = 7, loading, onOpenCategory }: { items: CategoryRankingItem[]; limit?: number; loading: boolean; onOpenCategory: (item: CategoryRankingItem) => void }) {
   if (loading) return <PageState icon={Loader2} title="Carregando categorias" description="Aguarde um momento." spin compact />;
   if (!items.length) return <EmptyInline message="Sem categorias para o período." />;
   const sortedItems = [...items].sort((a, b) => Math.abs(Number(b.amount ?? 0)) - Math.abs(Number(a.amount ?? 0)));
   const maxAmount = Math.max(...sortedItems.map((item) => Math.abs(Number(item.amount ?? 0))), 1);
   const totalAmount = sortedItems.reduce((total, item) => total + Math.abs(Number(item.amount ?? 0)), 0);
-  const LIMIT = 5;
+  const LIMIT = limit;
   const visibleItems = sortedItems.slice(0, LIMIT);
   const hiddenCount = Math.max(sortedItems.length - LIMIT, 0);
   return (
