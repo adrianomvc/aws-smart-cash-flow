@@ -622,6 +622,23 @@ export function TransactionExplorer({
     },
   });
 
+  const bulkDelete = useMutation({
+    mutationFn: async (ids: string[]) => { for (const id of ids) await deleteTransaction(session, id); return ids.length; },
+    onSuccess: (count, ids) => {
+      if (selected && ids.includes(selected.id)) onSelect(null);
+      setSelectedIds(new Set());
+      setActionMessage(`${count} transação(ões) excluída(s).`);
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["transaction-duplicates"] });
+      void queryClient.invalidateQueries({ queryKey: ["duplicate-count-badge"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      void queryClient.invalidateQueries({ queryKey: ["monthly-cashflow"] });
+      void queryClient.invalidateQueries({ queryKey: ["category-ranking"] });
+      void queryClient.invalidateQueries({ queryKey: ["data-quality"] });
+      void queryClient.invalidateQueries({ queryKey: ["credit-card-statements"] });
+    },
+  });
+
   const normalizeDescriptions = useMutation({
     mutationFn: () => normalizeTransactionDescriptions(session),
     onSuccess: (result) => {
@@ -644,7 +661,7 @@ export function TransactionExplorer({
   const hasInstallments = visibleTransactions.some((t) => t.installment_current != null && t.installment_total != null);
   void pagePayments; void pageBalance;
   const allPageSelected = visibleTransactions.length > 0 && visibleTransactions.every((t) => selectedIds.has(t.id));
-  const somePageSelected = visibleTransactions.some((t) => selectedIds.has(t.id));
+  const somePageSelected = selectedIds.size > 0;
   const nextPageDisabled = transactions.isLoading || fixedQuery === "category_id=__uncategorized__" ? visibleTransactions.length < pageSize : (page + 1) * pageSize >= totalTransactions;
   const paginationFrom = page * pageSize + 1;
   const paginationTo = Math.min((page + 1) * pageSize, totalTransactions);
@@ -800,6 +817,7 @@ export function TransactionExplorer({
               {categoryOptions.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
             </select>
             <button className="ghost-button compact-button" onClick={() => exportTransactionsCSV(visibleTransactions.filter((t) => selectedIds.has(t.id)), "transacoes-selecionadas")} type="button"><Download size={14} /> Exportar seleção</button>
+            <button className="ghost-button compact-button danger" disabled={bulkDelete.isPending} onClick={() => { if (window.confirm(`Excluir ${selectedIds.size} transação(ões)? Esta ação não pode ser desfeita.`)) bulkDelete.mutate([...selectedIds]); }} type="button"><Trash2 size={14} />{bulkDelete.isPending ? "Excluindo…" : "Excluir seleção"}</button>
             <button className="ghost-button compact-button" onClick={() => setSelectedIds(new Set())} type="button">Limpar seleção</button>
           </div>
         ) : null}
@@ -903,6 +921,7 @@ export function TransactionExplorer({
 
       {remove.isError ? <InlineError message={apiErrorMessage(remove.error, "Falha ao excluir transação.")} /> : null}
       {removeDuplicateReviewItems.isError ? <InlineError message={apiErrorMessage(removeDuplicateReviewItems.error, "Falha ao excluir lançamentos revisados.")} /> : null}
+      {bulkDelete.isError ? <InlineError message={apiErrorMessage(bulkDelete.error, "Falha ao excluir transações selecionadas.")} /> : null}
 
       {activeReviewGroup ? (
         <Drawer title={`Revisar grupo · ${activeReviewGroup.count} lançamentos parecidos`} onClose={() => { setActiveReviewGroup(null); setKeepId(""); }}>
