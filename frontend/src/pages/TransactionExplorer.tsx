@@ -112,45 +112,6 @@ function ActiveAccountsPanel({ accounts, loading }: { accounts: ActiveAccountIte
   );
 }
 
-function ActiveAccountsPanel({ accounts, loading }: { accounts: ActiveAccountItem[]; loading: boolean }) {
-  if (loading) {
-    return <div className="loading-state"><Loader2 className="spin" size={16} />Carregando contas...</div>;
-  }
-  if (!accounts.length) {
-    return <div className="account-item"><span className="account-item-meta">Nenhuma conta ativa encontrada.</span></div>;
-  }
-  return (
-    <div className="accounts-panel">
-      {accounts.map((account, idx) => (
-        <div className="account-item" key={idx}>
-          <div className="account-item-header">
-            <span className="account-item-name">{account.account_name}</span>
-          </div>
-          {account.kind === "bank" ? (
-            <>
-              <div className="account-item-balance">{money(account.current_balance)}</div>
-              {account.balance_date ? <div className="account-item-meta">Extrato: {account.balance_date}</div> : null}
-            </>
-          ) : (
-            <>
-              <div className="account-item-balance">{money(account.used_amount)} <span className="account-item-meta">/ {money(account.limit_amount)}</span></div>
-              <div className="account-item-track">
-                <div
-                  className="account-item-track-fill"
-                  style={{ width: `${account.limit_amount ? Math.min(100, ((account.used_amount ?? 0) / account.limit_amount) * 100) : 0}%` }}
-                />
-              </div>
-              {account.available_amount != null ? (
-                <div className="account-item-available">Disponível: {money(account.available_amount)}</div>
-              ) : null}
-            </>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function CategoryPicker({ categoryOptions, transaction, session, onCategorized }: {
   categoryOptions: ReturnType<typeof orderedCategoryOptions>;
   transaction: TransactionRead;
