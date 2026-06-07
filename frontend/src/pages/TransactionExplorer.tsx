@@ -1,5 +1,5 @@
 import type { FormEvent } from "react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownCircle,
@@ -23,6 +23,7 @@ import {
   getDashboardSummary,
   getTransactionDuplicates,
   getTransactions,
+  normalizeTransactionDescriptions,
   updateTransactionCategory,
   updateTransactionDirection,
 } from "../lib/api";
@@ -33,7 +34,6 @@ import {
   compactMoneyAbs,
   dateLabel,
   dedupeStatus,
-  directionLabel,
   duplicatePrimaryId,
   exportTransactionsCSV,
   installmentLabel,
@@ -41,20 +41,18 @@ import {
   money,
   moneyAbs,
   orderedCategoryOptions,
+  orderedCategoryTree,
   periodRange,
   sourceTypeLabel,
   transactionFilterSummary,
-  withQueryParams,
 } from "../lib/utils";
 import { useCategories } from "../hooks";
 import {
   DedupeStatusBadge,
   Drawer,
-  EmptyInline,
   InlineError,
   InlineSuccess,
   MetricCard,
-  PageState,
   Panel,
   PeriodFilter,
   QualityRow,
@@ -68,14 +66,50 @@ import type {
   DuplicateTransactionGroup,
   TransactionRead,
 } from "../lib/api";
-import type { TransactionDrilldown, TransactionPeriodPreset } from "../types";
+import type { TransactionPeriodPreset } from "../types";
 
 // ---------------------------------------------------------------------------
 // Private sub-components
 // ---------------------------------------------------------------------------
 
-function DirectionBadge({ direction }: { direction: string }) {
-  return <span className={`direction-badge ${direction}`}>{directionLabel(direction)}</span>;
+
+function ActiveAccountsPanel({ accounts, loading }: { accounts: ActiveAccountItem[]; loading: boolean }) {
+  if (loading) {
+    return <div className="loading-state"><Loader2 className="spin" size={16} />Carregando contas...</div>;
+  }
+  if (!accounts.length) {
+    return <div className="account-item"><span className="account-item-meta">Nenhuma conta ativa encontrada.</span></div>;
+  }
+  return (
+    <div className="accounts-panel">
+      {accounts.map((account, idx) => (
+        <div className="account-item" key={idx}>
+          <div className="account-item-header">
+            <span className="account-item-name">{account.account_name}</span>
+          </div>
+          {account.kind === "bank" ? (
+            <>
+              <div className="account-item-balance">{money(account.current_balance)}</div>
+              {account.balance_date ? <div className="account-item-meta">Extrato: {account.balance_date}</div> : null}
+            </>
+          ) : (
+            <>
+              <div className="account-item-balance">{money(account.used_amount)} <span className="account-item-meta">/ {money(account.limit_amount)}</span></div>
+              <div className="account-item-track">
+                <div
+                  className="account-item-track-fill"
+                  style={{ width: `${account.limit_amount ? Math.min(100, ((account.used_amount ?? 0) / account.limit_amount) * 100) : 0}%` }}
+                />
+              </div>
+              {account.available_amount != null ? (
+                <div className="account-item-available">Disponível: {money(account.available_amount)}</div>
+              ) : null}
+            </>
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function ActiveAccountsPanel({ accounts, loading }: { accounts: ActiveAccountItem[]; loading: boolean }) {
@@ -135,7 +169,7 @@ function CategoryPicker({ categoryOptions, transaction, session, onCategorized }
     },
   });
   return (
-    <select className="table-select" disabled={mutation.isPending} value={transaction.category?.category_id ?? ""} onChange={(e) => mutation.mutate(e.target.value || null)}>
+    <select className="table-select" disabled={mutation.isPending} value={transaction.category?.category_id ?? ""} onChange={(e) => mutation.mutate(e.target.value || null)} onClick={(e) => e.stopPropagation()}>
       <option value="">Sem categoria</option>
       {categoryOptions.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
     </select>
@@ -158,7 +192,7 @@ function DirectionPicker({ transaction, session }: { transaction: TransactionRea
     },
   });
   return (
-    <select className={`table-select direction-select ${transaction.direction}`} disabled={mutation.isPending} value={transaction.direction} onChange={(e) => mutation.mutate(e.target.value)}>
+    <select className={`table-select direction-select ${transaction.direction}`} disabled={mutation.isPending} value={transaction.direction} onChange={(e) => mutation.mutate(e.target.value)} onClick={(e) => e.stopPropagation()}>
       <option value="debit">Despesa</option>
       <option value="credit">Receita/Crédito</option>
       <option value="payment">Pagamento de fatura</option>
@@ -185,7 +219,7 @@ function TransactionRow({ transaction, categories, categoryOptions, session, onD
   const categoryLabel = category ? categoryPath(category, categories) : undefined;
   void categoryLabel;
   return (
-    <tr className={selected ? "row-selected" : ""}>
+    <tr className={selected ? "row-selected" : ""} onClick={() => onSelect()} style={{ cursor: "pointer" }}>
       <td className="col-checkbox"><input type="checkbox" checked={selected} onChange={() => onToggleSelect?.(transaction.id)} onClick={(e) => e.stopPropagation()} /></td>
       <td>{dateLabel(transaction.transaction_date)}</td>
       <td>
@@ -201,8 +235,8 @@ function TransactionRow({ transaction, categories, categoryOptions, session, onD
       {showDedupeStatus ? <td><DedupeStatusBadge status={dedupeStatus(transaction, expectedDedupeKey, primaryDedupeId)} /></td> : null}
       <td>
         <div className="row-actions">
-          <button className="icon-button danger" onClick={onDelete} title="Excluir transação" type="button"><Trash2 size={16} /></button>
-          <button className="icon-button" onClick={onSelect} title="Ver detalhe" type="button"><ChevronRight size={16} /></button>
+          <button className="icon-button danger" onClick={(e) => { e.stopPropagation(); onDelete(); }} title="Excluir transação" type="button"><Trash2 size={16} /></button>
+          <button className="icon-button" onClick={(e) => { e.stopPropagation(); onSelect(); }} title="Ver detalhe" type="button"><ChevronRight size={16} /></button>
         </div>
       </td>
     </tr>
@@ -392,6 +426,72 @@ function DuplicateReviewDrawerContent({ group, keepId, onKeepChange, onResolve, 
   );
 }
 
+function CategoryMultiSelect({ categories, selected, onChange }: {
+  categories: CategoryRead[];
+  selected: Set<string>;
+  onChange: (next: Set<string>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const tree = orderedCategoryTree(categories);
+  const roots = tree.filter((c) => !c.parent_category_id);
+  const childrenOf = (id: string) => tree.filter((c) => c.parent_category_id === id);
+
+  const label = selected.size === 0
+    ? "Todas as categorias"
+    : selected.size === 1
+      ? (categories.find((c) => c.id === [...selected][0])?.name ?? "1 categoria")
+      : `${selected.size} categorias`;
+
+  function toggle(id: string) {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    onChange(next);
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  return (
+    <div className="category-multiselect" ref={ref}>
+      <button
+        className={`filter-select category-multiselect-trigger${selected.size > 0 ? " active" : ""}`}
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+      >
+        {label} ▾
+      </button>
+      {open && (
+        <div className="category-multiselect-dropdown">
+          {roots.map((root) => {
+            const children = childrenOf(root.id);
+            return (
+              <div key={root.id} className="category-multiselect-group">
+                <label className="category-multiselect-item parent">
+                  <input type="checkbox" checked={selected.has(root.id)} onChange={() => toggle(root.id)} />
+                  {root.name}
+                </label>
+                {children.map((child) => (
+                  <label key={child.id} className="category-multiselect-item child">
+                    <input type="checkbox" checked={selected.has(child.id)} onChange={() => toggle(child.id)} />
+                    {child.name}
+                  </label>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
@@ -429,10 +529,14 @@ export function TransactionExplorer({
   fixedQuery?: string;
   reviewMode?: boolean;
 }) {
+  const [searchInput, setSearchInput] = useState(initialSearch);
   const [search, setSearch] = useState(initialSearch);
   const [sourceType, setSourceType] = useState(initialSourceType);
   const [direction, setDirection] = useState(initialDirection);
-  const [categoryId, setCategoryId] = useState(initialCategoryId);
+  const [statusFilter, setStatusFilter] = useState(initialCategoryId.startsWith("__") ? initialCategoryId : "");
+  const [categoryIds, setCategoryIds] = useState<Set<string>>(() => new Set(initialCategoryId && !initialCategoryId.startsWith("__") ? [initialCategoryId] : []));
+  const [amountMin, setAmountMin] = useState("");
+  const [amountMax, setAmountMax] = useState("");
   const [importJobId] = useState(initialImportJobId);
   const [periodPreset, setPeriodPreset] = useState<TransactionPeriodPreset>(initialPeriodPreset);
   const [dateFrom, setDateFrom] = useState(initialDateFrom);
@@ -449,11 +553,17 @@ export function TransactionExplorer({
   const [duplicatePage, setDuplicatePage] = useState(0);
   const [activeReviewGroup, setActiveReviewGroup] = useState<DuplicateTransactionGroup | null>(null);
   const [keepId, setKeepId] = useState("");
-  const pageSize = 50;
+  const [pageSize, setPageSize] = useState(50);
   const duplicatePageSize = 10;
   const categories = useCategories(session);
   const categoryOptions = useMemo(() => orderedCategoryOptions(categories.data?.items ?? []), [categories.data?.items]);
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    const timer = setTimeout(() => { setSearch(searchInput); setPage(0); }, 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
   const periodSummaryQuery = useMemo(() => { const params = new URLSearchParams(); if (dateFrom) params.set("date_from", dateFrom); if (dateTo) params.set("date_to", dateTo); return `?${params.toString()}`; }, [dateFrom, dateTo]);
   const periodSummary = useQuery({ queryKey: ["transactions-period-summary", session.token, periodSummaryQuery], queryFn: () => getDashboardSummary(session, periodSummaryQuery), staleTime: 2 * 60 * 1000 });
   const query = useMemo(() => {
@@ -462,7 +572,9 @@ export function TransactionExplorer({
     if (sourceType) params.set("source_type", sourceType);
     if (direction) params.set("direction", direction);
     if (importJobId) params.set("import_job_id", importJobId);
-    if (categoryId && fixedQuery !== "category_id=__uncategorized__" && !categoryId.startsWith("__")) params.set("category_id", categoryId);
+    if (categoryIds.size > 0 && fixedQuery !== "category_id=__uncategorized__") {
+      for (const id of categoryIds) params.append("category_ids", id);
+    }
     if (dateFrom) params.set("date_from", dateFrom);
     if (dateTo) params.set("date_to", dateTo);
     if (weekday !== undefined) params.set("weekday", String(weekday));
@@ -472,7 +584,8 @@ export function TransactionExplorer({
     params.set("limit", String(pageSize));
     params.set("offset", String(page * pageSize));
     return `?${params.toString()}`;
-  }, [categoryId, dateFrom, dateTo, direction, fixedQuery, importJobId, page, search, sortBy, sortDir, sourceType, weekday]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoryIds, dateFrom, dateTo, direction, fixedQuery, importJobId, page, pageSize, search, sortBy, sortDir, sourceType, weekday]);
   const transactions = useQuery({ queryKey: ["transactions", session.token, query], queryFn: () => getTransactions(session, query) });
   const duplicatesQuery = `?limit=${duplicatePageSize}&offset=${duplicatePage * duplicatePageSize}`;
   const duplicates = useQuery({ queryKey: ["transaction-duplicates", session.token, duplicatesQuery], queryFn: () => getTransactionDuplicates(session, duplicatesQuery), enabled: showDuplicates });
@@ -534,14 +647,27 @@ export function TransactionExplorer({
     },
   });
 
+  const normalizeDescriptions = useMutation({
+    mutationFn: () => normalizeTransactionDescriptions(session),
+    onSuccess: (result) => {
+      setActionMessage(`${result.changed_count} descrição(ões) normalizada(s) de ${result.scanned_count} verificada(s).`);
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+    },
+  });
+
   const visibleTransactions = (() => {
     const items = transactions.data?.items ?? [];
-    if (fixedQuery === "category_id=__uncategorized__") return items.filter((t) => !t.category);
-    if (categoryId === "__pending__") return items.filter((t) => !t.category);
-    if (categoryId === "__confirmed__") return items.filter((t) => Boolean(t.category));
-    return items;
+    let list = items;
+    if (fixedQuery === "category_id=__uncategorized__") list = items.filter((t) => !t.category);
+    else if (statusFilter === "__pending__") list = items.filter((t) => !t.category);
+    else if (statusFilter === "__confirmed__") list = items.filter((t) => Boolean(t.category));
+    const min = amountMin ? Number(amountMin) : null;
+    const max = amountMax ? Number(amountMax) : null;
+    if (min !== null) list = list.filter((t) => Math.abs(Number(t.amount)) >= min);
+    if (max !== null) list = list.filter((t) => Math.abs(Number(t.amount)) <= max);
+    return list;
   })();
-  const totalTransactions = fixedQuery === "category_id=__uncategorized__" ? visibleTransactions.length : transactions.data?.total ?? 0;
+  const totalTransactions = (fixedQuery === "category_id=__uncategorized__" || amountMin || amountMax) ? visibleTransactions.length : transactions.data?.total ?? 0;
   const pageIncome = visibleTransactions.filter((t) => t.direction === "credit").reduce((total, t) => total + Math.abs(Number(t.amount)), 0);
   const pageExpenses = visibleTransactions.filter((t) => t.direction === "debit").reduce((total, t) => total + Math.abs(Number(t.amount)), 0);
   const pagePayments = visibleTransactions.filter((t) => t.direction === "payment").reduce((total, t) => total + Math.abs(Number(t.amount)), 0);
@@ -552,9 +678,11 @@ export function TransactionExplorer({
   const allPageSelected = visibleTransactions.length > 0 && visibleTransactions.every((t) => selectedIds.has(t.id));
   const somePageSelected = visibleTransactions.some((t) => selectedIds.has(t.id));
   const nextPageDisabled = transactions.isLoading || fixedQuery === "category_id=__uncategorized__" ? visibleTransactions.length < pageSize : (page + 1) * pageSize >= totalTransactions;
-  const activeFilterCount = [search, sourceType, direction, importJobId, !reviewMode ? categoryId : "", dateFrom || dateTo, weekday !== undefined ? String(weekday) : ""].filter(Boolean).length;
+  const paginationFrom = page * pageSize + 1;
+  const paginationTo = Math.min((page + 1) * pageSize, totalTransactions);
+  const activeFilterCount = [searchInput, sourceType, direction, importJobId, !reviewMode ? statusFilter : "", !reviewMode && categoryIds.size > 0 ? "cat" : "", dateFrom || dateTo, weekday !== undefined ? String(weekday) : "", amountMin, amountMax].filter(Boolean).length;
   const emptyMessage = activeFilterCount ? "Nenhuma transação encontrada para os filtros selecionados." : reviewMode ? "Nenhuma transação pendente de categoria." : "Nenhuma transação encontrada.";
-  const filterSummary = transactionFilterSummary({ categoryId, categories: categories.data?.items ?? [], dateFrom, dateTo, direction, duplicateGroupCount: 0, importJobId, periodPreset, reviewMode, search, sourceType, weekday });
+  const filterSummary = transactionFilterSummary({ categoryIds, categories: categories.data?.items ?? [], dateFrom, dateTo, direction, duplicateGroupCount: 0, importJobId, periodPreset, reviewMode, search, sourceType, weekday });
 
   function toggleSort(nextSortBy: string) {
     setPage(0);
@@ -569,7 +697,7 @@ export function TransactionExplorer({
   }
   function updateDateFrom(value: string) { setPeriodPreset("custom"); setDateFrom(value); setPage(0); }
   function updateDateTo(value: string) { setPeriodPreset("custom"); setDateTo(value); setPage(0); }
-  function clearFilters() { setSearch(""); setSourceType(""); setDirection(""); setCategoryId(""); setPeriodPreset("all"); setDateFrom(""); setDateTo(""); setPage(0); }
+  function clearFilters() { setSearchInput(""); setSearch(""); setSourceType(""); setDirection(""); setStatusFilter(""); setCategoryIds(new Set()); setAmountMin(""); setAmountMax(""); setPeriodPreset("all"); setDateFrom(""); setDateTo(""); setPage(0); }
   function openGroupReview(group: DuplicateTransactionGroup) { setActiveReviewGroup(group); setKeepId(duplicatePrimaryId(group)); }
   function resolveGroup() { if (!activeReviewGroup || !keepId) return; const deleteIds = activeReviewGroup.items.map((i) => i.id).filter((id) => id !== keepId); if (!deleteIds.length) return; removeDuplicateReviewItems.mutate(deleteIds); }
   function autoResolveAllGroups() {
@@ -635,25 +763,29 @@ export function TransactionExplorer({
         ) : null}
 
         <div className="transactions-filter-bar">
-          <label className="filter-search-label"><Search size={14} /><input placeholder="Buscar descrição..." value={search} onChange={(e) => { setSearch(e.target.value); setPage(0); }} /></label>
+          <label className="filter-search-label"><Search size={14} /><input placeholder="Buscar descrição..." value={searchInput} onChange={(e) => { setSearchInput(e.target.value); }} /></label>
           <select className={direction ? "filter-select active" : "filter-select"} value={direction} onChange={(e) => { setDirection(e.target.value); setPage(0); }} title="Filtrar por tipo">
             <option value="">Todos os tipos</option><option value="debit">Despesas</option><option value="credit">Receitas</option><option value="payment">Faturas</option>
           </select>
-          <select className={categoryId.startsWith("__") ? "filter-select active" : "filter-select"} value={categoryId.startsWith("__") ? categoryId : "all"} onChange={(e) => { setCategoryId(e.target.value === "all" ? "" : e.target.value); setPage(0); }} title="Filtrar por status">
-            <option value="all">Todos os status</option><option value="__confirmed__">Confirmados</option><option value="__pending__">Pendentes</option>
+          <select className={statusFilter ? "filter-select active" : "filter-select"} value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(0); }} title="Filtrar por status">
+            <option value="">Todos os status</option><option value="__confirmed__">Confirmados</option><option value="__pending__">Pendentes</option>
           </select>
           <select className={sourceType ? "filter-select active" : "filter-select"} value={sourceType} onChange={(e) => { setSourceType(e.target.value); setPage(0); }} title="Filtrar por origem">
             <option value="">Todas as origens</option><option value="bank_statement">Conta corrente</option><option value="credit_card_statement">Cartão de crédito</option><option value="unknown">Manual / Outras</option>
           </select>
-          <select className={categoryId && !categoryId.startsWith("__") ? "filter-select active" : "filter-select"} value={categoryId.startsWith("__") ? "" : categoryId} onChange={(e) => { setCategoryId(e.target.value); setPage(0); }} title="Filtrar por categoria">
-            <option value="">Todas as categorias</option>
-            {categoryOptions.map((cat) => <option key={cat.id} value={cat.id}>{cat.label}</option>)}
-          </select>
+          <CategoryMultiSelect categories={categories.data?.items ?? []} selected={categoryIds} onChange={(next) => { setCategoryIds(next); setPage(0); }} />
+          <div className="filter-amount-range">
+            <input type="number" placeholder="De R$" value={amountMin} min="0" onChange={(e) => { setAmountMin(e.target.value); setPage(0); }} title="Valor mínimo" />
+            <input type="number" placeholder="Até R$" value={amountMax} min="0" onChange={(e) => { setAmountMax(e.target.value); setPage(0); }} title="Valor máximo" />
+          </div>
           <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} periodPreset={periodPreset} onPreset={applyPeriodPreset} onDateFrom={updateDateFrom} onDateTo={updateDateTo} />
           {activeFilterCount > 0 ? <button className="ghost-button filter-clear" onClick={clearFilters} type="button">Limpar ({activeFilterCount})</button> : null}
           <span className="filter-bar-spacer" />
           {!reviewMode ? (
             <>
+              <button className="ghost-button" disabled={normalizeDescriptions.isPending} onClick={() => normalizeDescriptions.mutate()} title="Re-normalizar descrições de todas as transações" type="button">
+                {normalizeDescriptions.isPending ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}Normalizar
+              </button>
               <button className="ghost-button" disabled={!visibleTransactions.length} onClick={() => exportTransactionsCSV(visibleTransactions, "transacoes")} title="Exportar página atual como CSV" type="button"><Download size={16} />Exportar</button>
               <button className="primary-button" onClick={() => setShowCreate(true)} type="button"><Plus size={16} />Nova</button>
             </>
@@ -726,7 +858,12 @@ export function TransactionExplorer({
           </ResponsiveTable>
           <div className="pagination-bar">
             <button className="ghost-button" disabled={page === 0 || transactions.isLoading} onClick={() => setPage((c) => Math.max(c - 1, 0))}>Anterior</button>
-            <span>Página {page + 1} · {visibleTransactions.length} de {totalTransactions} lançamentos</span>
+            <span>Exibindo {paginationFrom}–{paginationTo} de {totalTransactions} lançamentos</span>
+            <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(0); }} title="Itens por página">
+              <option value={25}>25 / página</option>
+              <option value={50}>50 / página</option>
+              <option value={100}>100 / página</option>
+            </select>
             <button className="ghost-button" disabled={nextPageDisabled} onClick={() => setPage((c) => c + 1)}>Próxima</button>
           </div>
         </Panel>

@@ -5,7 +5,6 @@ import {
   AlertCircle,
   ArrowUpCircle,
   BarChart3,
-  Brain,
   CalendarDays,
   CheckCircle2,
   ChevronRight,
@@ -13,8 +12,6 @@ import {
   FileWarning,
   Gauge,
   Loader2,
-  Percent,
-  PiggyBank,
   RefreshCw,
   ShieldCheck,
   Sparkles,
@@ -55,13 +52,13 @@ import {
   getTransactions,
 } from "../lib/api";
 import {
+  buildBudgetRows,
   buildCalendarEvents,
   calendarEventStatusLabel,
   calendarEventTone,
   calendarEventTypeLabel,
   compactMoneyAbs,
   compactMoneyAxis,
-  commitmentTone,
   dateInputLabel,
   dateLabel,
   dayTickLabel,
@@ -76,11 +73,9 @@ import {
   monthTickLabel,
   nextDaysRange,
   percent,
-  percentAbs,
   periodSummary,
   projectionFeedToInputs,
   projectionRangeFromPeriod,
-  sourceTypeLabel,
   withQueryParams,
   yearQueryFromDate,
   categoryPath,
@@ -93,7 +88,6 @@ import {
   DashboardSectionHeader,
   EmptyInline,
   InlineSuccess,
-  MetricCard,
   PageState,
   Panel,
   PanelLink,
@@ -102,16 +96,13 @@ import { CategoryBarList, PersonalizedTip, compactCategoryDistribution } from ".
 import type {
   ApiSession,
   BudgetRead,
-  CalendarEventRead,
   CategoryGrowthAlertItem,
   CategoryRankingItem,
   CategoryRead,
-  CreditCardInstallmentItem,
   DataQuality,
   DashboardSummary,
   GoalRead,
   RecurringExpenseItem,
-  TransactionRead,
 } from "../lib/api";
 import type {
   CalendarEvent,
@@ -270,7 +261,7 @@ function DashboardFlowStory({ futureCommitments, onOpenAnalysis, periodLabel, pr
 function CategoryDonutTooltip({ active, payload, total }: { active?: boolean; payload?: Array<{ payload?: CategoryRankingItem & { amountValue?: number } }>; total: number }) {
   const item = payload?.[0]?.payload;
   if (!active || !item) return null;
-  const amount = Number((item as any).amountValue ?? item.amount ?? 0);
+  const amount = Number((item as Record<string, unknown>).amountValue ?? item.amount ?? 0);
   const ratio = total > 0 ? amount / total : Number(item.share_ratio ?? 0);
   return (
     <div className="chart-tooltip donut-tooltip">
@@ -285,14 +276,14 @@ function CategoryDonut({ items, loading, onOpenCategory }: { items: CategoryRank
   if (loading) return <PageState icon={Loader2} title="Carregando categorias" description="Aguarde um momento." spin compact />;
   if (!items.length) return <EmptyInline message="Sem categorias para o período." />;
   const chartItems = compactCategoryDistribution(items);
-  const total = chartItems.reduce((sum, item) => sum + (item as any).amountValue, 0);
+  const total = chartItems.reduce((sum, item) => sum + Number(item.amountValue ?? 0), 0);
   return (
     <div className="donut-summary">
       <div className="donut-chart">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart margin={{ top: 4, right: 28, bottom: 4, left: 28 }}>
             <Pie data={chartItems} dataKey="amountValue" nameKey="category_name" innerRadius="62%" outerRadius="86%" paddingAngle={2} stroke="none">
-              {chartItems.map((item: any, index: number) => (
+              {chartItems.map((item, index: number) => (
                 <Cell key={item.category_id ?? item.category_name} fill={chartPalette[index % chartPalette.length]} />
               ))}
             </Pie>
@@ -438,7 +429,7 @@ function ProjectedCashflowSnapshot({ data, loading, lowestProjectedBalance, onNa
             <Tooltip allowEscapeViewBox={{ x: true, y: true }} content={<ProjectionTooltip />} wrapperStyle={{ maxWidth: 240, pointerEvents: "none", zIndex: 30 }} />
             <Bar name="Entradas previstas" dataKey="entradas" fill="#0f9f6e" radius={[4, 4, 0, 0]} stackId="flow" />
             <Bar name="Saídas previstas" dataKey="saidas" fill="#dc2626" radius={[0, 0, 4, 4]} stackId="flow" />
-            <Line activeDot={{ r: 5 }} name="Saldo projetado" type="monotone" dataKey="saldoProjetado" stroke="#64748b" strokeDasharray="6 5" strokeWidth={2} dot={(props: any) => { const payload = props.payload as CashFlowProjectionChartPoint | undefined; if (!payload || payload.saldoProjetado >= 0) return <g />; return <circle cx={props.cx} cy={props.cy} fill="#dc2626" r={3} />; }} />
+            <Line activeDot={{ r: 5 }} name="Saldo projetado" type="monotone" dataKey="saldoProjetado" stroke="#64748b" strokeDasharray="6 5" strokeWidth={2} dot={(props: Record<string, unknown>) => { const payload = props.payload as CashFlowProjectionChartPoint | undefined; if (!payload || payload.saldoProjetado >= 0) return <g />; return <circle cx={props.cx as number} cy={props.cy as number} fill="#dc2626" r={3} />; }} />
           </ComposedChart>
         </ResponsiveContainer>
       </ChartBox>
@@ -631,9 +622,6 @@ export function DashboardPage({
     const range = monthRange(data.activeLabel);
     if (!range) return;
     onOpenTransactions({ dateFrom: range.dateFrom, dateTo: range.dateTo, label: `Fluxo mensal ${monthTickLabel(data.activeLabel)}`, periodPreset: "custom" });
-  }
-  function openMetricTransactions(direction?: string, label = "Indicador") {
-    onOpenTransactions({ dateFrom: period.dateFrom, dateTo: period.dateTo, direction, label, periodPreset: period.periodPreset });
   }
   function openCategoryTransactions(item: CategoryRankingItem) {
     if (!item.category_id) { onNavigate("review"); return; }

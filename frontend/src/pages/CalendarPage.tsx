@@ -21,7 +21,6 @@ import {
   money,
   moneyAbs,
   periodRange,
-  sourceTypeLabel,
   withQueryParams,
 } from "../lib/utils";
 import { usePeriod } from "../hooks";
@@ -35,13 +34,7 @@ import {
   PeriodFilter,
   QualityRow,
 } from "../components/ui";
-import type {
-  ApiSession,
-  CalendarEventRead,
-  CreditCardInstallmentItem,
-  RecurringExpenseItem,
-  TransactionRead,
-} from "../lib/api";
+import type { ApiSession } from "../lib/api";
 import type { CalendarEvent, PeriodState, TransactionDrilldown } from "../types";
 
 // ---------------------------------------------------------------------------

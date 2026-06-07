@@ -304,7 +304,7 @@ export function CardsPage({
         </div>
         <div className="dashboard-grid operations-grid">
           <Panel title={editingCardId ? "Editar cartão detectado" : "Ajustar cartão manualmente"} description="Use apenas quando a importação não conseguiu identificar ou você precisa corrigir dados.">
-            <form className="inline-form form-grid two-columns" onSubmit={(e) => { e.preventDefault(); editingCardId ? updateCardMutation.mutate() : createCardMutation.mutate(); }}>
+            <form className="inline-form form-grid two-columns" onSubmit={(e) => { e.preventDefault(); if (editingCardId) { updateCardMutation.mutate(); } else { createCardMutation.mutate(); } }}>
               <label>Nome<input required value={cardForm.name} onChange={(e) => setCardForm((c) => ({ ...c, name: e.target.value }))} /></label>
               <label>Banco/emissor<input value={cardForm.issuer} onChange={(e) => setCardForm((c) => ({ ...c, issuer: e.target.value }))} /></label>
               <label>Bandeira<input value={cardForm.brand} onChange={(e) => setCardForm((c) => ({ ...c, brand: e.target.value }))} /></label>

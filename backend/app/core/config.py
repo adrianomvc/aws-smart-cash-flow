@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     database_pool_recycle_seconds: int = 300
     default_credit_card_closing_day: int = Field(default=23, ge=1, le=31)
     default_credit_card_due_day: int = Field(default=30, ge=1, le=31)
+    gemini_api_key: str = ""
     cors_origins_raw: str = Field(
         default=(
             "http://localhost:5173,http://127.0.0.1:5173,"

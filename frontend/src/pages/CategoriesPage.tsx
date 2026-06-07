@@ -88,7 +88,7 @@ function RuleRow({ rule, categories, onDelete, onEdit, onPreview }: { rule: Cate
         <div className="row-actions">
           <button className="icon-button" onClick={onPreview} title="Prévia da regra"><Search size={16} /></button>
           <button className="icon-button" onClick={onEdit} title="Editar regra"><Pencil size={16} /></button>
-          <button className="icon-button danger" onClick={onDelete} title="Excluir regra"><Trash2 size={16} /></button>
+          <button className="icon-button danger" onClick={() => { if (window.confirm(`Excluir a regra "${rule.name}"? Esta ação não pode ser desfeita.`)) onDelete(); }} title="Excluir regra"><Trash2 size={16} /></button>
         </div>
       </td>
     </tr>
@@ -189,7 +189,7 @@ export function CategoriesPage({ session }: { session: ApiSession }) {
                 <td>{dateLabel(c.created_at)}</td>
                 <td className="row-actions">
                   <button className="icon-button" onClick={() => { setEditing(c); setName(c.name); setParentCategoryId(c.parent_category_id ?? ""); }}><Pencil size={16} /></button>
-                  <button className="icon-button danger" onClick={() => remove.mutate(c.id)}><Trash2 size={16} /></button>
+                  <button className="icon-button danger" onClick={() => { if (window.confirm(`Excluir a categoria "${c.name}"? Esta ação não pode ser desfeita.`)) remove.mutate(c.id); }}><Trash2 size={16} /></button>
                 </td>
               </tr>
             ))}
@@ -248,7 +248,7 @@ export function RulesPage({ session }: { session: ApiSession }) {
         <div className="transaction-summary-card warning"><span>Tipo financeiro</span><strong>{directionRuleCount}</strong><small>Ajustam despesa/receita/fatura</small></div>
       </div>
       <Panel title={form.id ? "Editar regra" : "Nova regra"}>
-        <form className="rule-form" onSubmit={(e) => { e.preventDefault(); if (!validateRuleForm()) return; form.id ? update.mutate() : create.mutate(); }}>
+        <form className="rule-form" onSubmit={(e) => { e.preventDefault(); if (!validateRuleForm()) return; if (form.id) { update.mutate(); } else { create.mutate(); } }}>
           <label>Nome<input placeholder="Ex: Delivery" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
           <label>Campo<select value={form.field} onChange={(e) => setForm({ ...form, field: e.target.value })}><option value="description">Descrição normalizada</option><option value="raw_description">Descrição original</option><option value="source_name">Origem</option></select></label>
           <label>Comparação<select value={form.match_type} onChange={(e) => setForm({ ...form, match_type: e.target.value })}><option value="contains">Contém</option><option value="starts_with">Começa com</option><option value="equals">Igual</option></select></label>
