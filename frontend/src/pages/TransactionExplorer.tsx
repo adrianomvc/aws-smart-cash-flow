@@ -865,7 +865,7 @@ export function TransactionExplorer({
                   categoryOptions={categoryOptions}
                   key={transaction.id}
                   onDelete={() => { if (window.confirm(`Excluir a transação "${transaction.description}"? Esta ação não pode ser desfeita no MVP.`)) remove.mutate(transaction.id); }}
-                  onSelect={() => onSelect(transaction)}
+                  onSelect={() => onSelect(selected?.id === transaction.id ? null : transaction)}
                   onCategorized={handleCategoryChanged}
                   session={session}
                   transaction={transaction}
