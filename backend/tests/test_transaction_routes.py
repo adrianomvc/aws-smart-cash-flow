@@ -1042,6 +1042,32 @@ def test_list_duplicate_transaction_candidates_is_scoped_by_workspace(
     assert response.json()["total_groups"] == 0
 
 
+def test_list_duplicate_transaction_candidates_excludes_same_file_occurrences(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    # Two identical transactions in the SAME file (e.g., two coffees on the same day)
+    # should NOT be flagged as duplicates — the occurrence suffix in natural_dedupe_key
+    # distinguishes them at import time, but the panel must not re-flag them.
+    ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="extrato.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato.txt",
+        content=(
+            b"01/04/2026;SUPERMERCADO EXTRA;-50,00\n"
+            b"01/04/2026;SUPERMERCADO EXTRA;-50,00\n"
+        ),
+    )
+
+    response = client.get("/v1/transactions/duplicates")
+
+    assert response.status_code == 200
+    assert response.json()["total_groups"] == 0
+
+
 def test_list_transactions_can_filter_duplicate_conflict_rows_by_ids(
     client: TestClient,
     db_session: Session,

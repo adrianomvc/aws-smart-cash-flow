@@ -421,6 +421,7 @@ async def list_duplicate_transaction_candidates(
         (current_key, items)
         for current_key, items in grouped.items()
         if len(items) > 1
+        and len({transaction.source_file_id for transaction, _, _ in items}) > 1
     ]
     duplicate_groups.sort(
         key=lambda group: (
