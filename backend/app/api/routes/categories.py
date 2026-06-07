@@ -1,9 +1,10 @@
 import re
+from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -163,6 +164,20 @@ class RulePreviewResponse(BaseModel):
     direction_change_count: int
     skipped_manual_count: int
     items: list[RulePreviewItem]
+
+
+class RuleSuggestion(BaseModel):
+    pattern: str
+    match_type: str
+    field: str
+    sample_descriptions: list[str]
+    transaction_count: int
+    total_amount: Decimal
+
+
+class RuleSuggestionsResponse(BaseModel):
+    suggestions: list[RuleSuggestion]
+    total_uncategorized: int
 
 
 @router.get("/categories")
@@ -420,6 +435,61 @@ async def delete_rule(
     db.delete(rule)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/categorization-rules/suggestions")
+async def get_rule_suggestions(
+    limit: int = Query(default=15, ge=1, le=100),
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> RuleSuggestionsResponse:
+    # Fetch all transactions without a category assignment
+    assigned_transaction_ids = {
+        row.transaction_id
+        for row in db.scalars(
+            select(TransactionCategoryAssignment).where(
+                TransactionCategoryAssignment.workspace_id == auth.workspace_id
+            )
+        ).all()
+    }
+    all_transactions = db.scalars(
+        select(Transaction).where(Transaction.workspace_id == auth.workspace_id)
+    ).all()
+    uncategorized = [t for t in all_transactions if t.id not in assigned_transaction_ids]
+
+    # Group by normalized first token of description
+    groups: dict[str, list[Transaction]] = defaultdict(list)
+    for tx in uncategorized:
+        pattern = _normalize_description_pattern(tx.description)
+        if pattern:
+            groups[pattern].append(tx)
+
+    # Filter groups with count >= 2, sort by count desc
+    sorted_groups = sorted(
+        [(pattern, txs) for pattern, txs in groups.items() if len(txs) >= 2],
+        key=lambda item: len(item[1]),
+        reverse=True,
+    )
+
+    suggestions = []
+    for pattern, txs in sorted_groups[:limit]:
+        total_amount = sum(Decimal(str(t.amount)) for t in txs)
+        sample_descriptions = list({t.description for t in txs})[:3]
+        suggestions.append(
+            RuleSuggestion(
+                pattern=pattern,
+                match_type="contains",
+                field="description",
+                sample_descriptions=sample_descriptions,
+                transaction_count=len(txs),
+                total_amount=total_amount,
+            )
+        )
+
+    return RuleSuggestionsResponse(
+        suggestions=suggestions,
+        total_uncategorized=len(uncategorized),
+    )
 
 
 @router.post("/categorization-rules/apply")
@@ -1077,3 +1147,11 @@ def _preview_item(
 
 def _normalize_spaces(value: str) -> str:
     return " ".join(value.strip().split())
+
+
+def _normalize_description_pattern(description: str) -> str:
+    """Extract a candidate pattern from description: first token, uppercase, letters only."""
+    normalized = _normalize_spaces(description).upper()
+    first_token = normalized.split()[0] if normalized.split() else ""
+    clean = re.sub(r"[^A-Z]", "", first_token)
+    return clean

@@ -3,7 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
 
 from app.api.routes import (
+    accounts,
     auth,
+    auto_categorization,
     cards,
     categories,
     dashboard,
@@ -30,9 +32,11 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(health.router)
+    app.include_router(accounts.router, prefix="/v1")
     app.include_router(auth.router, prefix="/v1")
     app.include_router(imports.router, prefix="/v1")
     app.include_router(transactions.router, prefix="/v1")
+    app.include_router(auto_categorization.router, prefix="/v1")
     app.include_router(categories.router, prefix="/v1")
     app.include_router(cards.router, prefix="/v1")
     app.include_router(dashboard.router, prefix="/v1")

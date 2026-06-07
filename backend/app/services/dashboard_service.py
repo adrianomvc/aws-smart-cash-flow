@@ -1006,10 +1006,14 @@ class DashboardService:
         self,
         workspace_id: str,
         horizon_days: int,
+        lookback_months: int = 3,
     ) -> dict[str, object]:
         today = date.today()
         horizon_date = date.fromordinal(today.toordinal() + horizon_days)
-        lookback = _add_months(today, -12)
+        # Use configurable lookback (3 or 6 months) — restricting to a shorter window
+        # avoids one-off transactions from older periods distorting the projection.
+        effective_lookback = max(3, min(lookback_months, 6))
+        lookback = _add_months(today, -effective_lookback)
 
         current_balance = self._current_account_balance(workspace_id=workspace_id, date_to=today)
         known_events = self._projection_known_events(
@@ -1019,7 +1023,7 @@ class DashboardService:
             workspace_id=workspace_id,
             date_from=lookback,
             date_to=today,
-            min_months=3,
+            min_months=min(effective_lookback, 3),
             limit=50,
             direction="debit",
         )
@@ -1027,7 +1031,7 @@ class DashboardService:
             workspace_id=workspace_id,
             date_from=lookback,
             date_to=today,
-            min_months=3,
+            min_months=min(effective_lookback, 3),
             limit=20,
             direction="credit",
         )
@@ -1040,7 +1044,8 @@ class DashboardService:
         recurring_items: list[dict[str, object]] = [
             {
                 "description": item["description"],
-                "amount": item["average_amount"],
+                "amount": item["last_amount"],
+                "average_amount": item["average_amount"],
                 "type": "expense",
                 "last_date": item["last_transaction_date"].isoformat(),
                 "month_count": item["month_count"],
@@ -1052,7 +1057,8 @@ class DashboardService:
         ] + [
             {
                 "description": item["description"],
-                "amount": item["average_amount"],
+                "amount": item["last_amount"],
+                "average_amount": item["average_amount"],
                 "type": "income",
                 "last_date": item["last_transaction_date"].isoformat(),
                 "month_count": item["month_count"],

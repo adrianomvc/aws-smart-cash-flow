@@ -83,6 +83,9 @@ export type TransactionRead = {
   source_line: number | null;
   natural_dedupe_key: string | null;
   category: CategoryAssignmentRead | null;
+  category_id: string | null;
+  category_source: string | null;
+  category_review_status: string | null;
 };
 
 export type ManualTransactionPayload = {
@@ -476,6 +479,7 @@ export type ProjectionFeed = {
   recurring_items: Array<{
     description: string;
     amount: string;
+    average_amount: string;
     type: "income" | "expense";
     last_date: string;
     month_count: number;
@@ -495,6 +499,16 @@ export type ProjectionFeed = {
     historical_monthly_amounts: string[];
     monthly_average: string;
   }>;
+};
+
+export type ActiveAccountItem = {
+  kind: "bank" | "credit_card";
+  account_name: string;
+  current_balance?: number | null;
+  balance_date?: string | null;
+  limit_amount?: number | null;
+  used_amount?: number | null;
+  available_amount?: number | null;
 };
 
 export type ReportCardRead = {
@@ -668,8 +682,11 @@ export function getCreditCardInstallments(session: ApiSession, query: string) {
   return apiRequest<CreditCardInstallmentsResponse>(`/dashboard/credit-card-installments${query}`, session);
 }
 
-export function getProjectionFeed(session: ApiSession, horizonDays = 90) {
-  return apiRequest<ProjectionFeed>(`/dashboard/projection-feed?horizon_days=${horizonDays}`, session);
+export function getProjectionFeed(session: ApiSession, horizonDays = 90, lookbackMonths: 3 | 6 = 3) {
+  return apiRequest<ProjectionFeed>(
+    `/dashboard/projection-feed?horizon_days=${horizonDays}&lookback_months=${lookbackMonths}`,
+    session,
+  );
 }
 
 export function getCreditCards(session: ApiSession) {
@@ -831,6 +848,18 @@ export function updateTransactionDirection(session: ApiSession, transactionId: s
   });
 }
 
+export function acceptCategoryReview(session: ApiSession, transactionId: string) {
+  return apiRequest<CategoryAssignmentRead>(`/transactions/${transactionId}/category/accept`, session, {
+    method: "POST",
+  });
+}
+
+export function rejectCategoryReview(session: ApiSession, transactionId: string) {
+  return apiRequest<void>(`/transactions/${transactionId}/category/reject`, session, {
+    method: "POST",
+  });
+}
+
 export function normalizeTransactionDescriptions(session: ApiSession) {
   return apiRequest<DescriptionNormalizationResult>("/transactions/normalize-descriptions", session, {
     method: "POST",
@@ -924,6 +953,27 @@ export function getRulePreview(session: ApiSession, ruleId: string) {
   return apiRequest<RulePreview>(`/categorization-rules/${ruleId}/preview`, session);
 }
 
+export type RuleSuggestion = {
+  pattern: string;
+  match_type: string;
+  field: string;
+  sample_descriptions: string[];
+  transaction_count: number;
+  total_amount: string;
+};
+
+export type RuleSuggestionsResponse = {
+  suggestions: RuleSuggestion[];
+  total_uncategorized: number;
+};
+
+export function getRuleSuggestions(session: ApiSession, limit = 15) {
+  return apiRequest<RuleSuggestionsResponse>(
+    `/categorization-rules/suggestions?limit=${limit}`,
+    session,
+  );
+}
+
 // Auth endpoints
 export async function signup(payload: { email: string; password: string; display_name?: string }) {
   const response = await fetch(`${API_BASE_URL}/auth/signup`, {
@@ -998,4 +1048,8 @@ export async function resetPassword(email: string) {
   }
 
   return response.json() as Promise<{ message: string }>;
+}
+
+export function getActiveAccounts(session: ApiSession) {
+  return apiRequest<{ items: ActiveAccountItem[]; total: number }>("/accounts/active", session);
 }

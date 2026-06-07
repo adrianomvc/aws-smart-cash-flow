@@ -274,6 +274,141 @@ def test_rule_application_categorizes_matching_transactions(
     assert transaction_response.json()["items"][0]["category"]["source"] == "rule"
 
 
+def _seed_ai_assignment(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> tuple[str, str]:
+    """Helper: imports sample transactions, creates a category and an embedding assignment.
+    Returns (transaction_id, category_id)."""
+    import_sample_transactions(db_session=db_session, auth=auth)
+    category_id = client.post("/v1/categories", json={"name": "Alimentacao"}).json()["id"]
+    transaction_id = client.get("/v1/transactions?q=99app").json()["items"][0]["id"]
+
+    from decimal import Decimal
+    from uuid import uuid4
+
+    from app.db.models import TransactionCategoryAssignment
+
+    assignment = TransactionCategoryAssignment(
+        id=str(uuid4()),
+        workspace_id=auth.workspace_id,
+        transaction_id=transaction_id,
+        category_id=category_id,
+        source="embedding",
+        confidence=Decimal("0.8500"),
+        reason="AI suggestion",
+        review_status="pending",
+    )
+    db_session.add(assignment)
+    db_session.commit()
+    return transaction_id, category_id
+
+
+def test_accept_category_review_sets_status_to_accepted(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    transaction_id, category_id = _seed_ai_assignment(client, db_session, auth)
+
+    response = client.post(f"/v1/transactions/{transaction_id}/category/accept")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["review_status"] == "accepted"
+    assert payload["category_id"] == category_id
+    assert payload["source"] == "embedding"
+
+
+def test_accept_category_review_returns_404_when_no_assignment(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    import_sample_transactions(db_session=db_session, auth=auth)
+    transaction_id = client.get("/v1/transactions?q=99app").json()["items"][0]["id"]
+
+    response = client.post(f"/v1/transactions/{transaction_id}/category/accept")
+
+    assert response.status_code == 404
+
+
+def test_accept_category_review_returns_400_for_manual_assignment(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    import_sample_transactions(db_session=db_session, auth=auth)
+    category_id = client.post("/v1/categories", json={"name": "Transporte"}).json()["id"]
+    transaction_id = client.get("/v1/transactions?q=99app").json()["items"][0]["id"]
+    client.patch(f"/v1/transactions/{transaction_id}/category", json={"category_id": category_id})
+
+    response = client.post(f"/v1/transactions/{transaction_id}/category/accept")
+
+    assert response.status_code == 400
+
+
+def test_reject_category_review_deletes_assignment(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    transaction_id, _ = _seed_ai_assignment(client, db_session, auth)
+
+    response = client.post(f"/v1/transactions/{transaction_id}/category/reject")
+
+    assert response.status_code == 204
+    transaction = client.get(f"/v1/transactions?ids={transaction_id}").json()["items"][0]
+    assert transaction["category"] is None
+
+
+def test_reject_category_review_returns_404_when_no_assignment(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    import_sample_transactions(db_session=db_session, auth=auth)
+    transaction_id = client.get("/v1/transactions?q=99app").json()["items"][0]["id"]
+
+    response = client.post(f"/v1/transactions/{transaction_id}/category/reject")
+
+    assert response.status_code == 404
+
+
+def test_reject_category_review_returns_400_for_manual_assignment(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    import_sample_transactions(db_session=db_session, auth=auth)
+    category_id = client.post("/v1/categories", json={"name": "Transporte"}).json()["id"]
+    transaction_id = client.get("/v1/transactions?q=99app").json()["items"][0]["id"]
+    client.patch(f"/v1/transactions/{transaction_id}/category", json={"category_id": category_id})
+
+    response = client.post(f"/v1/transactions/{transaction_id}/category/reject")
+
+    assert response.status_code == 400
+
+
+def test_list_transactions_filters_by_review_status(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    transaction_id, _ = _seed_ai_assignment(client, db_session, auth)
+
+    pending_response = client.get("/v1/transactions?review_status=pending")
+    accepted_response = client.get("/v1/transactions?review_status=accepted")
+    invalid_response = client.get("/v1/transactions?review_status=unknown_status")
+
+    assert pending_response.status_code == 200
+    assert any(item["id"] == transaction_id for item in pending_response.json()["items"])
+    assert accepted_response.status_code == 200
+    assert not any(item["id"] == transaction_id for item in accepted_response.json()["items"])
+    assert invalid_response.status_code == 400
+
+
 def test_rule_application_preserves_manual_category(
     client: TestClient,
     db_session: Session,
