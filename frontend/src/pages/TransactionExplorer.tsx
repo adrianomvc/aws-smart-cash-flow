@@ -728,6 +728,7 @@ export function TransactionExplorer({
           </div>
         ) : null}
 
+        {/* Primary filter bar: search + type tabs + status tabs + period + actions */}
         <div className="transactions-filter-bar">
           <label className="filter-search-label"><Search size={14} /><input placeholder="Buscar descrição..." value={searchInput} onChange={(e) => { setSearchInput(e.target.value); }} /></label>
           <div className="transactions-quick-tabs">
@@ -740,16 +741,7 @@ export function TransactionExplorer({
               <button key={value} className={`quick-tab${statusFilter === value ? " active" : ""}`} onClick={() => { setStatusFilter(value); setPage(0); }} type="button">{label}</button>
             ))}
           </div>
-          <select className={sourceType ? "filter-select active" : "filter-select"} value={sourceType} onChange={(e) => { setSourceType(e.target.value); setPage(0); }} title="Filtrar por origem">
-            <option value="">Todas as origens</option><option value="bank_statement">Conta corrente</option><option value="credit_card_statement">Cartão de crédito</option><option value="unknown">Manual / Outras</option>
-          </select>
-          <CategoryMultiSelect categories={categories.data?.items ?? []} selected={categoryIds} onChange={(next) => { setCategoryIds(next); setPage(0); }} />
-          <div className="filter-amount-range">
-            <input type="number" placeholder="De R$" value={amountMin} min="0" onChange={(e) => { setAmountMin(e.target.value); setPage(0); }} title="Valor mínimo" />
-            <input type="number" placeholder="Até R$" value={amountMax} min="0" onChange={(e) => { setAmountMax(e.target.value); setPage(0); }} title="Valor máximo" />
-          </div>
           <PeriodFilter dateFrom={dateFrom} dateTo={dateTo} periodPreset={periodPreset} onPreset={applyPeriodPreset} onDateFrom={updateDateFrom} onDateTo={updateDateTo} />
-          {activeFilterCount > 0 ? <button className="ghost-button filter-clear" onClick={clearFilters} type="button">Limpar ({activeFilterCount})</button> : null}
           <span className="filter-bar-spacer" />
           {!reviewMode ? (
             <>
@@ -760,6 +752,19 @@ export function TransactionExplorer({
               <button className="primary-button" onClick={() => setShowCreate(true)} type="button"><Plus size={16} />Nova</button>
             </>
           ) : null}
+        </div>
+        {/* Secondary filter bar: advanced filters (origin, category, amount range) */}
+        <div className="transactions-filter-bar-secondary">
+          <select className={sourceType ? "filter-select active" : "filter-select"} value={sourceType} onChange={(e) => { setSourceType(e.target.value); setPage(0); }} title="Filtrar por origem">
+            <option value="">Todas as origens</option><option value="bank_statement">Conta corrente</option><option value="credit_card_statement">Cartão de crédito</option><option value="unknown">Manual / Outras</option>
+          </select>
+          <CategoryMultiSelect categories={categories.data?.items ?? []} selected={categoryIds} onChange={(next) => { setCategoryIds(next); setPage(0); }} />
+          <div className="filter-amount-range">
+            <input type="number" placeholder="De R$" value={amountMin} min="0" onChange={(e) => { setAmountMin(e.target.value); setPage(0); }} title="Valor mínimo" />
+            <input type="number" placeholder="Até R$" value={amountMax} min="0" onChange={(e) => { setAmountMax(e.target.value); setPage(0); }} title="Valor máximo" />
+          </div>
+          <span className="filter-bar-spacer" />
+          {activeFilterCount > 0 ? <button className="ghost-button filter-clear" onClick={clearFilters} type="button">Limpar ({activeFilterCount})</button> : null}
         </div>
 
         <div className="filter-summary"><span>{filterSummary}</span><strong>{totalTransactions} lançamentos</strong></div>

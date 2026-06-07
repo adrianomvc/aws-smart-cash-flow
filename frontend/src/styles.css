@@ -3176,7 +3176,19 @@ select:focus {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  margin-bottom: 4px;
+}
+
+.transactions-filter-bar-secondary {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-bottom: 10px;
+  padding: 6px 10px;
 }
 
 /* KPI section label */
