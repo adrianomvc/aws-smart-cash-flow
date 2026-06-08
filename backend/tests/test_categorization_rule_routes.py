@@ -271,8 +271,8 @@ def test_apply_rules_matches_by_priority_and_preserves_manual_assignments(
     assert assignments["UBER TRIP"].source == "rule"
     assert assignments["UBER EATS"].category_id == food.id
     assert assignments["UBER EATS"].source == "rule"
-    assert assignments["PIX MERCADO"].category_id == market.id
-    assert assignments["PIX MERCADO"].source == "manual"
+    assert assignments["MERCADO"].category_id == market.id
+    assert assignments["MERCADO"].source == "manual"
 
 
 def test_preview_and_apply_financial_direction_rule(
