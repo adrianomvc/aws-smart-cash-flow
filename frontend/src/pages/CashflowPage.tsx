@@ -48,7 +48,6 @@ import {
   dateInputLabel,
   dateLabel,
   formatPercentNumber,
-  isSingleMonthRange,
   money,
   moneyAbs,
   moneyAxisDomain,
