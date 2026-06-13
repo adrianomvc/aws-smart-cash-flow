@@ -603,6 +603,120 @@ async def delete_goal(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+# --- Goal contributions (transactions tagged as aportes) ---------------------
+
+class ContributionItem(BaseModel):
+    id: str
+    transaction_date: date
+    description: str
+    amount: Decimal
+    direction: str
+
+
+class ContributionListResponse(BaseModel):
+    goal_id: str
+    items: list[ContributionItem]
+    total: Decimal
+
+
+def _contribution_item(tx: Transaction) -> ContributionItem:
+    return ContributionItem(
+        id=tx.id,
+        transaction_date=tx.transaction_date,
+        description=tx.description,
+        amount=tx.amount,
+        direction=tx.direction,
+    )
+
+
+@router.get("/goals/{goal_id}/contributions")
+async def list_goal_contributions(
+    goal_id: UUID,
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> ContributionListResponse:
+    goal = _get_goal(db, auth.workspace_id, str(goal_id))
+    rows = db.scalars(
+        select(Transaction)
+        .where(Transaction.workspace_id == auth.workspace_id, Transaction.goal_id == goal.id)
+        .order_by(Transaction.transaction_date.desc())
+    ).all()
+    total = sum((abs(tx.amount) for tx in rows), Decimal("0.00"))
+    return ContributionListResponse(
+        goal_id=goal.id, items=[_contribution_item(tx) for tx in rows], total=total
+    )
+
+
+@router.get("/goals/{goal_id}/contribution-candidates")
+async def list_contribution_candidates(
+    goal_id: UUID,
+    q: str | None = None,
+    limit: int = Query(default=20, ge=1, le=100),
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> ContributionListResponse:
+    """Transactions not yet tagged to any goal, to pick aportes from."""
+    goal = _get_goal(db, auth.workspace_id, str(goal_id))
+    query = select(Transaction).where(
+        Transaction.workspace_id == auth.workspace_id,
+        Transaction.goal_id.is_(None),
+    )
+    if q:
+        query = query.where(Transaction.description.ilike(f"%{q}%"))
+    rows = db.scalars(query.order_by(Transaction.transaction_date.desc()).limit(limit)).all()
+    return ContributionListResponse(
+        goal_id=goal.id, items=[_contribution_item(tx) for tx in rows], total=Decimal("0.00")
+    )
+
+
+@router.post(
+    "/goals/{goal_id}/contributions/{transaction_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def add_goal_contribution(
+    goal_id: UUID,
+    transaction_id: UUID,
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> Response:
+    goal = _get_goal(db, auth.workspace_id, str(goal_id))
+    tx = db.scalar(
+        select(Transaction).where(
+            Transaction.id == str(transaction_id),
+            Transaction.workspace_id == auth.workspace_id,
+        )
+    )
+    if tx is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
+    tx.goal_id = goal.id
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete(
+    "/goals/{goal_id}/contributions/{transaction_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def remove_goal_contribution(
+    goal_id: UUID,
+    transaction_id: UUID,
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> Response:
+    _get_goal(db, auth.workspace_id, str(goal_id))
+    tx = db.scalar(
+        select(Transaction).where(
+            Transaction.id == str(transaction_id),
+            Transaction.workspace_id == auth.workspace_id,
+            Transaction.goal_id == str(goal_id),
+        )
+    )
+    if tx is not None:
+        tx.goal_id = None
+        db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 def _calendar_event_read(event: FinancialCalendarEvent) -> CalendarEventRead:
     return CalendarEventRead(
         id=event.id,
@@ -652,17 +766,18 @@ def _goal_read(goal: Goal, current_override: Decimal | None = None) -> GoalRead:
 
 
 def _validate_goal_tracking(mode: str) -> str:
-    if mode not in {"manual", "account"}:
+    if mode not in {"manual", "account", "contributions"}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid tracking_mode. Use manual or account.",
+            detail="Invalid tracking_mode. Use manual, account or contributions.",
         )
     return mode
 
 
 def _effective_current(db: Session, workspace_id: str, goal: Goal) -> Decimal:
     """Account-tracked goals follow the latest imported balance of the linked
-    account; manual goals use the stored value."""
+    account; contributions-tracked goals sum the tagged transactions; manual
+    goals use the stored value."""
     if goal.tracking_mode == "account" and goal.linked_account:
         balance = db.scalar(
             select(AccountBalance.balance_amount)
@@ -675,6 +790,14 @@ def _effective_current(db: Session, workspace_id: str, goal: Goal) -> Decimal:
         )
         if balance is not None:
             return max(balance, Decimal("0.00"))
+    if goal.tracking_mode == "contributions":
+        total = db.scalar(
+            select(func.coalesce(func.sum(func.abs(Transaction.amount)), 0)).where(
+                Transaction.workspace_id == workspace_id,
+                Transaction.goal_id == goal.id,
+            )
+        )
+        return Decimal(total or 0)
     return goal.current_amount
 
 

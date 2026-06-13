@@ -882,6 +882,33 @@ export function getAccounts(session: ApiSession) {
   return apiRequest<{ workspace_id: string; items: AccountItem[] }>("/accounts", session);
 }
 
+export type ContributionItem = {
+  id: string;
+  transaction_date: string;
+  description: string;
+  amount: string;
+  direction: string;
+};
+
+type ContributionList = { goal_id: string; items: ContributionItem[]; total: string };
+
+export function getGoalContributions(session: ApiSession, goalId: string) {
+  return apiRequest<ContributionList>(`/goals/${goalId}/contributions`, session);
+}
+
+export function getContributionCandidates(session: ApiSession, goalId: string, q = "") {
+  const query = q ? `?q=${encodeURIComponent(q)}` : "";
+  return apiRequest<ContributionList>(`/goals/${goalId}/contribution-candidates${query}`, session);
+}
+
+export function addGoalContribution(session: ApiSession, goalId: string, transactionId: string) {
+  return apiRequest<void>(`/goals/${goalId}/contributions/${transactionId}`, session, { method: "POST" });
+}
+
+export function removeGoalContribution(session: ApiSession, goalId: string, transactionId: string) {
+  return apiRequest<void>(`/goals/${goalId}/contributions/${transactionId}`, session, { method: "DELETE" });
+}
+
 export function getImports(session: ApiSession, query = "?limit=20") {
   return apiRequest<ListResponse<ImportJobRead>>(`/imports${query}`, session);
 }

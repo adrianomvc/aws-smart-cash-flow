@@ -216,6 +216,10 @@ class Transaction(Base):
     dedupe_key: Mapped[str] = mapped_column(String(64), nullable=False)
     natural_dedupe_key: Mapped[str | None] = mapped_column(String(64))
     duplicate_group_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # Optional link to a goal: tags this transaction as a contribution/aporte.
+    goal_id: Mapped[str | None] = mapped_column(
+        UUID_TYPE, ForeignKey("goals.id", ondelete="SET NULL"), index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

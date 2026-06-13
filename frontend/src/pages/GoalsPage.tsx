@@ -2,7 +2,18 @@ import { useEffect, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { createGoal, deleteGoal, getAccounts, getDashboardSummary, getGoals, updateGoal } from "../lib/api";
+import {
+  addGoalContribution,
+  createGoal,
+  deleteGoal,
+  getAccounts,
+  getContributionCandidates,
+  getDashboardSummary,
+  getGoalContributions,
+  getGoals,
+  removeGoalContribution,
+  updateGoal,
+} from "../lib/api";
 import { apiErrorMessage, dateInputLabel, moneyAbs } from "../lib/utils";
 import { usePeriod } from "../hooks";
 import type { AccountItem, ApiSession, DashboardSummary, GoalRead } from "../lib/api";
@@ -137,13 +148,14 @@ function Ring({ value, size = 64, thickness = 7, color }: { value: number; size?
 // Goal Card
 // ---------------------------------------------------------------------------
 
-function GoalCard({ goal, color, monthlyIncome, onEdit, onDelete, onAporte }: {
+function GoalCard({ goal, color, monthlyIncome, onEdit, onDelete, onAporte, onManageContributions }: {
   goal: GoalRow;
   color: string;
   monthlyIncome: number;
   onEdit: (g: GoalRead) => void;
   onDelete: (g: GoalRead) => void;
   onAporte: (g: GoalRead) => void;
+  onManageContributions: (g: GoalRead) => void;
 }) {
   const pct = Math.min(goal.ratio * 100, 100);
   const remaining = Math.max(goal.target - goal.current, 0);
@@ -198,9 +210,14 @@ function GoalCard({ goal, color, monthlyIncome, onEdit, onDelete, onAporte }: {
 
       {raw && (
         <div style={{ display: "flex", gap: 6, marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--line)" }}>
-          {!isAccount && (
+          {raw.tracking_mode === "manual" && (
             <button className="btn btn-quiet btn-sm" type="button" onClick={() => onAporte(raw)} title="Registrar aporte">
               <GIcon name="plus" size={13} /> Aporte
+            </button>
+          )}
+          {raw.tracking_mode === "contributions" && (
+            <button className="btn btn-quiet btn-sm" type="button" onClick={() => onManageContributions(raw)} title="Vincular transações/aportes">
+              <GIcon name="link" size={13} /> Aportes
             </button>
           )}
           <span style={{ flex: 1 }} />
@@ -276,20 +293,27 @@ function GoalModal({
           </label>
 
           <div className="fld">
-            <span className="fld-label">Acompanhamento do valor atual</span>
+            <span className="fld-label">Como o valor atual evolui</span>
             <div className="seg" style={{ width: "100%" }}>
-              <button type="button" className={form.trackingMode === "manual" ? "on" : ""} style={{ flex: 1 }} onClick={() => setForm({ ...form, trackingMode: "manual" })}>Manual / Aportes</button>
-              <button type="button" className={form.trackingMode === "account" ? "on" : ""} style={{ flex: 1 }} onClick={() => setForm({ ...form, trackingMode: "account" })}>Vincular a conta</button>
+              <button type="button" className={form.trackingMode === "manual" ? "on" : ""} style={{ flex: 1 }} onClick={() => setForm({ ...form, trackingMode: "manual" })}>Manual</button>
+              <button type="button" className={form.trackingMode === "contributions" ? "on" : ""} style={{ flex: 1 }} onClick={() => setForm({ ...form, trackingMode: "contributions" })}>Aportes</button>
+              <button type="button" className={form.trackingMode === "account" ? "on" : ""} style={{ flex: 1 }} onClick={() => setForm({ ...form, trackingMode: "account" })}>Conta</button>
             </div>
-            <div className="fld-help">{form.trackingMode === "account" ? "O valor atual segue o saldo importado da conta escolhida." : "Você atualiza o valor manualmente (botão Aporte na meta)."}</div>
+            <div className="fld-help">
+              {form.trackingMode === "account"
+                ? "Segue o saldo importado da conta escolhida."
+                : form.trackingMode === "contributions"
+                  ? "Some as transações (transferências/aportes) que você vincular à meta — gerencie em “Aportes” no card."
+                  : "Você atualiza o valor manualmente (botão Aporte no card)."}
+            </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: form.trackingMode === "manual" || form.trackingMode === "account" ? "1fr 1fr" : "1fr", gap: 12 }}>
             <label className="fld">
               <span className="fld-label">Valor alvo</span>
               <input className="fld-input" min="0.01" required step="0.01" type="number" placeholder="0,00" value={form.targetAmount} onChange={(e) => setForm({ ...form, targetAmount: e.target.value })} />
             </label>
-            {form.trackingMode === "account" ? (
+            {form.trackingMode === "account" && (
               <label className="fld">
                 <span className="fld-label">Conta vinculada</span>
                 <select className="fld-select" value={form.linkedAccount} onChange={(e) => setForm({ ...form, linkedAccount: e.target.value })}>
@@ -299,7 +323,8 @@ function GoalModal({
                   ))}
                 </select>
               </label>
-            ) : (
+            )}
+            {form.trackingMode === "manual" && (
               <label className="fld">
                 <span className="fld-label">Valor atual</span>
                 <input className="fld-input" min="0" step="0.01" type="number" placeholder="0,00" value={form.currentAmount} onChange={(e) => setForm({ ...form, currentAmount: e.target.value })} />
@@ -334,6 +359,90 @@ function GoalModal({
 }
 
 // ---------------------------------------------------------------------------
+// Contributions (aportes) modal
+// ---------------------------------------------------------------------------
+
+function ContributionsModal({ session, goal, onClose }: { session: ApiSession; goal: GoalRead; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [q, setQ] = useState("");
+  const linked = useQuery({ queryKey: ["goal-contribs", goal.id], queryFn: () => getGoalContributions(session, goal.id) });
+  const candidates = useQuery({ queryKey: ["goal-cands", goal.id, q], queryFn: () => getContributionCandidates(session, goal.id, q) });
+
+  function refresh() {
+    void queryClient.invalidateQueries({ queryKey: ["goal-contribs", goal.id] });
+    void queryClient.invalidateQueries({ queryKey: ["goal-cands", goal.id] });
+    void queryClient.invalidateQueries({ queryKey: ["goals"] });
+  }
+  const add = useMutation({ mutationFn: (txId: string) => addGoalContribution(session, goal.id, txId), onSuccess: refresh });
+  const remove = useMutation({ mutationFn: (txId: string) => removeGoalContribution(session, goal.id, txId), onSuccess: refresh });
+
+  const linkedItems = linked.data?.items ?? [];
+
+  return (
+    <div className="mdl-backdrop" onClick={onClose}>
+      <div className="mdl" style={{ maxWidth: 560 }} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <div className="mdl-head">
+          <span className="mh-ic"><GIcon name="link" size={17} /></span>
+          <div style={{ minWidth: 0 }}>
+            <div className="mh-ttl">Aportes — {goal.name}</div>
+            <div className="mh-sub">Vincule transferências/aportes; o valor da meta é a soma deles.</div>
+          </div>
+          <button className="mh-close" onClick={onClose} aria-label="Fechar"><GIcon name="x" size={18} /></button>
+        </div>
+        <div className="mdl-body" style={{ maxHeight: "60vh", overflowY: "auto" }}>
+          {/* Linked contributions */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <span className="fld-label" style={{ margin: 0 }}>Vinculados ({linkedItems.length})</span>
+            <span style={{ fontWeight: 700, fontFamily: "var(--font-mono)" }}>{moneyAbs(Number(linked.data?.total ?? 0))}</span>
+          </div>
+          {linkedItems.length === 0 ? (
+            <p style={{ fontSize: 12.5, color: "var(--ink-3)", marginBottom: 12 }}>Nenhum aporte vinculado ainda.</p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+              {linkedItems.map((tx) => (
+                <div key={tx.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 10px", border: "1px solid var(--line)", borderRadius: 9 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{tx.description}</div>
+                    <div className="t-sub mono">{dateInputLabel(tx.transaction_date)}</div>
+                  </div>
+                  <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700 }}>{moneyAbs(Number(tx.amount))}</span>
+                  <button className="btn btn-quiet btn-sm" style={{ color: "var(--neg)" }} type="button" disabled={remove.isPending} onClick={() => remove.mutate(tx.id)} title="Desvincular"><GIcon name="x" size={13} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <hr className="divider" style={{ margin: "4px 0 12px" }} />
+
+          {/* Candidate search */}
+          <span className="fld-label">Adicionar transação</span>
+          <input className="fld-input" placeholder="Buscar por descrição (transferência, aporte…)" value={q} onChange={(e) => setQ(e.target.value)} style={{ marginBottom: 8 }} />
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {(candidates.data?.items ?? []).map((tx) => (
+              <div key={tx.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 10px", border: "1px solid var(--line)", borderRadius: 9 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{tx.description}</div>
+                  <div className="t-sub mono">{dateInputLabel(tx.transaction_date)}</div>
+                </div>
+                <span style={{ fontFamily: "var(--font-mono)" }}>{moneyAbs(Number(tx.amount))}</span>
+                <button className="btn btn-quiet btn-sm" type="button" disabled={add.isPending} onClick={() => add.mutate(tx.id)} title="Vincular como aporte"><GIcon name="plus" size={13} /></button>
+              </div>
+            ))}
+            {(candidates.data?.items ?? []).length === 0 && (
+              <p style={{ fontSize: 12.5, color: "var(--ink-3)" }}>Nenhuma transação disponível.</p>
+            )}
+          </div>
+        </div>
+        <div className="mdl-foot">
+          <span style={{ flex: 1 }} />
+          <button className="btn btn-primary" onClick={onClose}>Concluir</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
@@ -351,6 +460,7 @@ export function GoalsPage({
   const [formError, setFormError] = useState("");
   const [aporteGoal, setAporteGoal] = useState<GoalRead | null>(null);
   const [aporteValue, setAporteValue] = useState("");
+  const [contribGoal, setContribGoal] = useState<GoalRead | null>(null);
 
   const queryClient = useQueryClient();
   const period = usePeriod(goalPeriod, setPeriod);
@@ -375,7 +485,7 @@ export function GoalsPage({
   const saveGoalMutation = useMutation({
     mutationFn: () => {
       const payload = {
-        current_amount: goalForm.trackingMode === "account" ? "0" : (goalForm.currentAmount || "0"),
+        current_amount: goalForm.trackingMode === "manual" ? (goalForm.currentAmount || "0") : "0",
         description: goalForm.description || null,
         name: goalForm.name,
         target_amount: goalForm.targetAmount,
@@ -531,6 +641,7 @@ export function GoalsPage({
               onEdit={openEdit}
               onDelete={(g) => { if (window.confirm(`Excluir a meta “${g.name}”?`)) removeGoalMutation.mutate(g.id); }}
               onAporte={(g) => { setAporteValue(""); setAporteGoal(g); }}
+              onManageContributions={(g) => setContribGoal(g)}
             />
           ))}
           {/* Add tile */}
@@ -589,6 +700,11 @@ export function GoalsPage({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Contributions (aportes) modal */}
+      {contribGoal && (
+        <ContributionsModal session={session} goal={contribGoal} onClose={() => setContribGoal(null)} />
       )}
     </div>
   );
