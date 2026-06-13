@@ -20,7 +20,13 @@ import { PageState } from "../components/ui";
 import type { ApiSession, ProjectionFeed } from "../lib/api";
 import type { Page } from "../types";
 
-const HORIZONS = [30, 60, 90];
+const HORIZONS = [
+  { days: 30, label: "1 mês" },
+  { days: 90, label: "3 meses" },
+  { days: 180, label: "6 meses" },
+  { days: 365, label: "1 ano" },
+];
+const MONTH_ABBR = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 
 function axisFmt(v: number) {
   const abs = Math.abs(v);
@@ -80,8 +86,9 @@ export function PlanningPage({ session, onNavigate }: { session: ApiSession; onN
   const [h, setH] = useState(90);
   const feedQuery = useQuery({
     queryKey: ["projection-feed", session.token],
-    queryFn: () => getProjectionFeed(session, 90, 3),
+    queryFn: () => getProjectionFeed(session, 365, 3),
   });
+  const selLabel = HORIZONS.find((hz) => hz.days === h)?.label ?? `${h} dias`;
 
   if (feedQuery.isLoading) {
     return <PageState icon={Loader2} title="Calculando projeção" description="Lendo saldo, recorrências e parcelas." spin />;
@@ -114,11 +121,13 @@ export function PlanningPage({ session, onNavigate }: { session: ApiSession; onN
   const balanceAt = (days: number) => start + monthlyNet * (days / 30) - sumInstallments(days) + sumKnown(days);
   const spreadAt = (days: number) => varExpense * 0.4 * (days / 30);
 
-  const days = [0, ...HORIZONS.filter((d) => d <= h)];
-  const points: ChartPoint[] = days.map((d) => {
+  const stepDays: number[] = [];
+  for (let d = 0; d <= h; d += 30) stepDays.push(d);
+  if (stepDays[stepDays.length - 1] < h) stepDays.push(h);
+  const points: ChartPoint[] = stepDays.map((d) => {
     const b = balanceAt(d);
     const sp = spreadAt(d);
-    return { x: d === 0 ? "Hoje" : `${d}d`, prov: Math.round(b), best: Math.round(b + sp), worst: Math.round(b - sp) };
+    return { x: MONTH_ABBR[endDate(d).getMonth()], prov: Math.round(b), best: Math.round(b + sp), worst: Math.round(b - sp) };
   });
 
   const saldoFim = balanceAt(h);
@@ -165,8 +174,8 @@ export function PlanningPage({ session, onNavigate }: { session: ApiSession; onN
           <p className="section-sub">Parte do saldo real da conta e projeta com suas recorrências e parcelas — cenário provável + estimativas otimista/pessimista.</p>
         </div>
         <div className="seg" style={{ flex: "none" }}>
-          {HORIZONS.map((d) => (
-            <button key={d} type="button" className={h === d ? "on" : ""} onClick={() => setH(d)}>{d} dias</button>
+          {HORIZONS.map((hz) => (
+            <button key={hz.days} type="button" className={h === hz.days ? "on" : ""} onClick={() => setH(hz.days)}>{hz.label}</button>
           ))}
         </div>
       </div>
@@ -194,7 +203,7 @@ export function PlanningPage({ session, onNavigate }: { session: ApiSession; onN
             <div className="kpi-ic"><BarChart3 size={15} /></div>
             <div>
               <span className="ttl">Trajetória do saldo</span>
-              <div className="sub">Cenários para os próximos {h} dias</div>
+              <div className="sub">Cenários para {selLabel}</div>
             </div>
           </div>
           <div className="card-body" style={{ height: 280 }}>
@@ -206,7 +215,7 @@ export function PlanningPage({ session, onNavigate }: { session: ApiSession; onN
                 <YAxis tickFormatter={axisFmt} tickLine={false} axisLine={false} width={52} tick={{ fontSize: 11, fill: "var(--ink-3)" }} />
                 <Tooltip content={<ChartTooltip />} />
                 <Line dataKey="best" name="Melhor cenário" stroke="#7fbf9f" strokeWidth={2} strokeDasharray="5 4" dot={false} isAnimationActive={false} />
-                <Line dataKey="prov" name="Cenário provável" stroke="var(--acc)" strokeWidth={2.5} dot={{ r: 3 }} isAnimationActive={false} />
+                <Line dataKey="prov" name="Cenário provável" stroke="var(--acc)" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
                 <Line dataKey="worst" name="Pior cenário" stroke="#d99a8f" strokeWidth={2} strokeDasharray="5 4" dot={false} isAnimationActive={false} />
               </LineChart>
             </ResponsiveContainer>
@@ -284,7 +293,7 @@ export function PlanningPage({ session, onNavigate }: { session: ApiSession; onN
           <div className={`alert ${risk.cls === "b-neg" ? "neg" : risk.cls === "b-warn" ? "warn" : "info"}`}>
             <span className="alert-ic"><ShieldCheck size={16} /></span>
             <div>
-              <div className="a-ttl">{risk.label} no horizonte de {h} dias</div>
+              <div className="a-ttl">{risk.label} no horizonte de {selLabel}</div>
               <div className="a-txt">{risk.text}</div>
             </div>
           </div>
