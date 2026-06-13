@@ -564,6 +564,12 @@ class Goal(Base):
         String(16), nullable=False, default="manual", server_default="manual"
     )
     linked_account: Mapped[str | None] = mapped_column(Text)
+    # Auto-link rule (contributions mode): description match + optional value range.
+    aporte_match_text: Mapped[str | None] = mapped_column(Text)
+    aporte_min: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    aporte_max: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    color: Mapped[str | None] = mapped_column(Text)
+    icon: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="active", server_default="active"
     )

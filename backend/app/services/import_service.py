@@ -467,6 +467,14 @@ class ImportService:
             auto_associate_statements(self.db, workspace_id)
         except Exception:  # noqa: BLE001 - association must never break the import
             self.db.rollback()
+        # Best-effort: auto-link new aportes to their goals (contributions rules).
+        try:
+            from app.services.goal_contribution_service import apply_goal_aporte_rules
+
+            apply_goal_aporte_rules(self.db, workspace_id)
+            self.db.commit()
+        except Exception:  # noqa: BLE001 - goal linking must never break the import
+            self.db.rollback()
         return ImportResult(
             import_job_id=import_job.id,
             source_file_id=source_file.id,

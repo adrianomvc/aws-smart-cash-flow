@@ -36,7 +36,17 @@ const G_ICONS: Record<string, string> = {
   wallet:  "M3 7h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a2 2 0 0 1 2-2h11 M16 12h.01",
   star:    "M12 2l3.1 6.3L22 9.3l-5 4.9 1.2 6.8L12 17.7l-6.2 3.3L7 14.2 2 9.3l6.9-1L12 2z",
   chevR:   "M9 18l6-6-6-6",
+  home:    "M4 11l8-6 8 6 M6 10v9a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-9 M10 20v-5h4v5",
+  plane:   "M10 19l1-5-4 1v-2l5-2 1-6a1.3 1.3 0 0 1 2.6 0l1 6 5 2v2l-4-1 1 5-2 1-2-3-2 3z",
+  cap:     "M3 9l9-4 9 4-9 4z M6 11v4c0 1.5 2.7 3 6 3s6-1.5 6-3v-4 M21 9v4",
+  shield:  "M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z M9 12l2 2 4-4",
+  coins:   "M9 9m-6 0a6 3 0 1 0 12 0a6 3 0 1 0-12 0 M3 9v5c0 1.66 2.7 3 6 3 M3 11.5c0 1.66 2.7 3 6 3 M15 6c3.3 0 6 1.34 6 3v6c0 1.66-2.7 3-6 3-1.1 0-2.13-.15-3-.41",
+  car:     "M5 13l1.5-4.5A2 2 0 0 1 8.4 7h7.2a2 2 0 0 1 1.9 1.5L19 13 M4 13h16v4H4z M7 17v1.5 M17 17v1.5",
+  heart:   "M12 20s-7-4.35-9.5-8.5C1 8.5 2.5 5 6 5c2 0 3.5 1.5 4 2.5C10.5 6.5 12 5 14 5c3.5 0 5 3.5 3.5 6.5C19 15.65 12 20 12 20z",
 };
+
+const GOAL_ICONS = ["target", "shield", "home", "plane", "cap", "car", "coins", "wallet", "star", "heart", "flag"];
+const GOAL_COLOR_CHOICES = ["#2a9d8f", "#6a4ba8", "#c98a2b", "#2a4d8f", "#a35a7d", "#1f8a5b", "#c0392b", "#16a085", "#8e44ad", "#34495e"];
 
 function GIcon({ name, size = 15 }: { name: string; size?: number }) {
   const d = G_ICONS[name];
@@ -164,13 +174,15 @@ function GoalCard({ goal, color, monthlyIncome, onEdit, onDelete, onAporte, onMa
   const badge = goalBadge(goal.ratio, goal.targetDate);
   const raw = goal.goal;
   const isAccount = raw?.tracking_mode === "account";
+  const cardColor = raw?.color || color;
+  const cardIcon = raw?.icon || "target";
 
   return (
     <div className="card card-pad">
       {/* Head */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-        <span style={{ width: 38, height: 38, borderRadius: 11, display: "grid", placeItems: "center", flex: "none", background: color + "1e", color }}>
-          <GIcon name="target" size={19} />
+        <span style={{ width: 38, height: 38, borderRadius: 11, display: "grid", placeItems: "center", flex: "none", background: cardColor + "1e", color: cardColor }}>
+          <GIcon name={cardIcon} size={19} />
         </span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: 14 }}>{goal.name}</div>
@@ -188,7 +200,7 @@ function GoalCard({ goal, color, monthlyIncome, onEdit, onDelete, onAporte, onMa
 
       {/* Ring + value */}
       <div style={{ display: "flex", alignItems: "flex-end", gap: 10, marginBottom: 8 }}>
-        <Ring value={pct} size={64} thickness={7} color={color} />
+        <Ring value={pct} size={64} thickness={7} color={cardColor} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontFamily: "var(--font-display)", fontSize: 20, fontWeight: 700, fontVariantNumeric: "tabular-nums", letterSpacing: "-.4px" }}>{moneyAbs(goal.current)}</div>
           <div className="t-sub">de {moneyAbs(goal.target)}</div>
@@ -242,10 +254,15 @@ interface GoalFormState {
   targetDate: string;
   trackingMode: string;
   linkedAccount: string;
+  icon: string;
+  color: string;
+  aporteText: string;
+  aporteMin: string;
+  aporteMax: string;
 }
 
 function emptyGoalForm(): GoalFormState {
-  return { id: null, currentAmount: "0", description: "", name: "", targetAmount: "", targetDate: "", trackingMode: "manual", linkedAccount: "" };
+  return { id: null, currentAmount: "0", description: "", name: "", targetAmount: "", targetDate: "", trackingMode: "manual", linkedAccount: "", icon: "target", color: "", aporteText: "", aporteMin: "", aporteMax: "" };
 }
 
 function GoalModal({
@@ -293,6 +310,32 @@ function GoalModal({
           </label>
 
           <div className="fld">
+            <span className="fld-label">Ícone e cor</span>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {GOAL_ICONS.map((ic) => {
+                const sel = form.icon === ic;
+                const c = form.color || GOAL_COLOR_CHOICES[0];
+                return (
+                  <button key={ic} type="button" onClick={() => setForm({ ...form, icon: ic })}
+                    style={{ width: 34, height: 34, borderRadius: 9, display: "grid", placeItems: "center", cursor: "pointer",
+                      border: "1px solid " + (sel ? c : "var(--line)"),
+                      background: sel ? c + "1e" : "var(--card-2)", color: sel ? c : "var(--ink-3)" }}>
+                    <GIcon name={ic} size={16} />
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+              {GOAL_COLOR_CHOICES.map((c) => (
+                <button key={c} type="button" onClick={() => setForm({ ...form, color: c })} title={c}
+                  style={{ width: 24, height: 24, borderRadius: 6, background: c, cursor: "pointer", border: "2px solid " + (form.color === c ? "var(--ink)" : "transparent") }} />
+              ))}
+              <button type="button" onClick={() => setForm({ ...form, color: "" })} title="Automática"
+                style={{ width: 24, height: 24, borderRadius: 6, background: "var(--bg-sunken)", fontSize: 9, fontWeight: 700, color: "var(--ink-3)", cursor: "pointer", border: "2px solid " + (form.color === "" ? "var(--ink)" : "transparent") }}>A</button>
+            </div>
+          </div>
+
+          <div className="fld">
             <span className="fld-label">Como o valor atual evolui</span>
             <div className="seg" style={{ width: "100%" }}>
               <button type="button" className={form.trackingMode === "manual" ? "on" : ""} style={{ flex: 1 }} onClick={() => setForm({ ...form, trackingMode: "manual" })}>Manual</button>
@@ -331,6 +374,18 @@ function GoalModal({
               </label>
             )}
           </div>
+
+          {form.trackingMode === "contributions" && (
+            <div className="fld">
+              <span className="fld-label">Auto-vincular aportes (opcional)</span>
+              <input className="fld-input" placeholder='Descrição contém — ex.: "APORTE XP", "TRANSF INVEST"' value={form.aporteText} onChange={(e) => setForm({ ...form, aporteText: e.target.value })} style={{ marginBottom: 8 }} />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <input className="fld-input" type="number" step="0.01" placeholder="Valor mín. (opcional)" value={form.aporteMin} onChange={(e) => setForm({ ...form, aporteMin: e.target.value })} />
+                <input className="fld-input" type="number" step="0.01" placeholder="Valor máx. (opcional)" value={form.aporteMax} onChange={(e) => setForm({ ...form, aporteMax: e.target.value })} />
+              </div>
+              <div className="fld-help">Vincula sozinho os lançamentos que casarem — retroativo ao salvar e nas próximas importações. Você ainda pode vincular/desvincular manualmente em “Aportes”.</div>
+            </div>
+          )}
 
           <label className="fld">
             <span className="fld-label">Prazo (opcional)</span>
@@ -492,6 +547,11 @@ export function GoalsPage({
         target_date: goalForm.targetDate || null,
         tracking_mode: goalForm.trackingMode,
         linked_account: goalForm.trackingMode === "account" ? (goalForm.linkedAccount || null) : null,
+        icon: goalForm.icon || null,
+        color: goalForm.color || null,
+        aporte_match_text: goalForm.trackingMode === "contributions" ? (goalForm.aporteText.trim() || null) : null,
+        aporte_min: goalForm.trackingMode === "contributions" && goalForm.aporteMin ? goalForm.aporteMin : null,
+        aporte_max: goalForm.trackingMode === "contributions" && goalForm.aporteMax ? goalForm.aporteMax : null,
       };
       return goalForm.id ? updateGoal(session, goalForm.id, payload) : createGoal(session, payload);
     },
@@ -528,6 +588,11 @@ export function GoalsPage({
       targetDate: g.target_date ?? "",
       trackingMode: g.tracking_mode,
       linkedAccount: g.linked_account ?? "",
+      icon: g.icon ?? "target",
+      color: g.color ?? "",
+      aporteText: g.aporte_match_text ?? "",
+      aporteMin: g.aporte_min ?? "",
+      aporteMax: g.aporte_max ?? "",
     });
     setFormError("");
     setShowModal(true);

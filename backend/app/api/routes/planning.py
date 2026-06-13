@@ -18,6 +18,7 @@ from app.db.models import (
     TransactionCategoryAssignment,
 )
 from app.db.session import get_db
+from app.services.goal_contribution_service import apply_goal_aporte_rule
 from app.services.projection_service import ProjectionService
 
 router = APIRouter(tags=["planning"])
@@ -111,6 +112,11 @@ class GoalCreate(BaseModel):
     target_date: date | None = None
     tracking_mode: str = Field(default="manual", max_length=16)
     linked_account: str | None = Field(default=None, max_length=160)
+    aporte_match_text: str | None = Field(default=None, max_length=200)
+    aporte_min: Decimal | None = None
+    aporte_max: Decimal | None = None
+    color: str | None = Field(default=None, max_length=32)
+    icon: str | None = Field(default=None, max_length=32)
     status: str = Field(default="active", min_length=1, max_length=32)
     priority: int = 100
 
@@ -123,6 +129,11 @@ class GoalUpdate(BaseModel):
     target_date: date | None = None
     tracking_mode: str | None = Field(default=None, max_length=16)
     linked_account: str | None = Field(default=None, max_length=160)
+    aporte_match_text: str | None = Field(default=None, max_length=200)
+    aporte_min: Decimal | None = None
+    aporte_max: Decimal | None = None
+    color: str | None = Field(default=None, max_length=32)
+    icon: str | None = Field(default=None, max_length=32)
     status: str | None = Field(default=None, min_length=1, max_length=32)
     priority: int | None = None
 
@@ -137,6 +148,11 @@ class GoalRead(BaseModel):
     target_date: date | None
     tracking_mode: str
     linked_account: str | None
+    aporte_match_text: str | None
+    aporte_min: Decimal | None
+    aporte_max: Decimal | None
+    color: str | None
+    icon: str | None
     status: str
     priority: int
     created_at: datetime
@@ -548,10 +564,17 @@ async def create_goal(
         target_date=payload.target_date,
         tracking_mode=_validate_goal_tracking(payload.tracking_mode),
         linked_account=_normalize_optional_text(payload.linked_account),
+        aporte_match_text=_normalize_optional_text(payload.aporte_match_text),
+        aporte_min=payload.aporte_min,
+        aporte_max=payload.aporte_max,
+        color=_normalize_optional_text(payload.color),
+        icon=_normalize_optional_text(payload.icon),
         status=_validate_goal_status(payload.status),
         priority=payload.priority,
     )
     db.add(goal)
+    db.flush()
+    apply_goal_aporte_rule(db, auth.workspace_id, goal)
     db.commit()
     db.refresh(goal)
     return _goal_read(goal, _effective_current(db, auth.workspace_id, goal))
@@ -582,10 +605,22 @@ async def update_goal(
         goal.tracking_mode = _validate_goal_tracking(payload.tracking_mode)
     if "linked_account" in payload.model_fields_set:
         goal.linked_account = _normalize_optional_text(payload.linked_account)
+    if "aporte_match_text" in payload.model_fields_set:
+        goal.aporte_match_text = _normalize_optional_text(payload.aporte_match_text)
+    if "aporte_min" in payload.model_fields_set:
+        goal.aporte_min = payload.aporte_min
+    if "aporte_max" in payload.model_fields_set:
+        goal.aporte_max = payload.aporte_max
+    if "color" in payload.model_fields_set:
+        goal.color = _normalize_optional_text(payload.color)
+    if "icon" in payload.model_fields_set:
+        goal.icon = _normalize_optional_text(payload.icon)
     if payload.status is not None:
         goal.status = _validate_goal_status(payload.status)
     if payload.priority is not None:
         goal.priority = payload.priority
+    db.flush()
+    apply_goal_aporte_rule(db, auth.workspace_id, goal)
     db.commit()
     db.refresh(goal)
     return _goal_read(goal, _effective_current(db, auth.workspace_id, goal))
@@ -759,6 +794,11 @@ def _goal_read(goal: Goal, current_override: Decimal | None = None) -> GoalRead:
         target_date=goal.target_date,
         tracking_mode=goal.tracking_mode,
         linked_account=goal.linked_account,
+        aporte_match_text=goal.aporte_match_text,
+        aporte_min=goal.aporte_min,
+        aporte_max=goal.aporte_max,
+        color=goal.color,
+        icon=goal.icon,
         status=goal.status,
         priority=goal.priority,
         created_at=goal.created_at,

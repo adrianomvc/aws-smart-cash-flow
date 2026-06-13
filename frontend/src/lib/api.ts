@@ -432,6 +432,11 @@ export type GoalRead = {
   target_date: string | null;
   tracking_mode: string;
   linked_account: string | null;
+  aporte_match_text: string | null;
+  aporte_min: string | null;
+  aporte_max: string | null;
+  color: string | null;
+  icon: string | null;
   status: string;
   priority: number;
   created_at: string;
@@ -602,6 +607,11 @@ export type GoalPayload = {
   target_date?: string | null;
   tracking_mode?: string;
   linked_account?: string | null;
+  aporte_match_text?: string | null;
+  aporte_min?: string | null;
+  aporte_max?: string | null;
+  color?: string | null;
+  icon?: string | null;
   status?: string;
   priority?: number;
 };
