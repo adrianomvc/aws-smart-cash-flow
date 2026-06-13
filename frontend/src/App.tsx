@@ -585,7 +585,7 @@ function ProtectedApp({
       {page === "cards" ? <CardsPage onOpenTransactions={onOpenTransactions} period={dashboardPeriod} session={session} setPeriod={setDashboardPeriod} /> : null}
       {page === "budgets" ? <BudgetsPage onOpenTransactions={onOpenTransactions} period={dashboardPeriod} setPeriod={setDashboardPeriod} session={session} /> : null}
       {page === "goals" ? <GoalsPage session={session} period={dashboardPeriod} setPeriod={setDashboardPeriod} /> : null}
-      {page === "planning" ? <PlanningPage session={session} /> : null}
+      {page === "planning" ? <PlanningPage session={session} onNavigate={onNavigate} /> : null}
       {page === "reports" ? <ReportsPage onNavigate={onNavigate} session={session} /> : null}
       {page === "imports" ? <ImportsPage drilldown={importDrilldown} onOpenTransactions={onOpenTransactions} session={session} /> : null}
       {page === "transactions" ? <TransactionsPage drilldown={transactionDrilldown} session={session} /> : null}

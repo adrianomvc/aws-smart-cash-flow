@@ -37,7 +37,6 @@ import {
   dayTickLabel,
   monthRange,
   withQueryParams,
-  yearQueryFromDate,
   trailingMonthsQuery,
 } from "../lib/utils";
 import { buildDailyCashflow, buildMonthlyCashflow } from "../lib/cashflow";
@@ -352,7 +351,6 @@ function SankeyChart({
   const [hoverNode, setHoverNode] = useState<string | null>(null);
   const { nodes, flows } = useMemo(
     () => layoutSankey(columns, links, { width, height, nodeW, gap, padX, padTopBot }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [JSON.stringify(columns), JSON.stringify(links), height, width, nodeW, gap, padX, padTopBot],
   );
   function flowPath(f: LayoutFlow) {
@@ -1103,7 +1101,7 @@ export function CashflowPage({
       />
 
       {/* Tendência mensal + composição */}
-      <div className="dash-main">
+      <div className="dash-main" style={{ marginBottom: 16 }}>
         <div className="card">
           <div className="card-head">
             <div>
@@ -1198,8 +1196,8 @@ export function CashflowPage({
         </div>
 
         {/* Painel direito: Composição das despesas + Receitas recorrentes */}
-        <div className="vstack" style={{ gap: 16 }}>
-          <div className="card card-pad">
+        <div className="vstack" style={{ gap: 16, height: "100%" }}>
+          <div className="card card-pad" style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
             <div className="eyebrow" style={{ marginBottom: 12 }}>Composição das despesas</div>
             <SplitBar fixed={recurringFixed} variable={recurringVariable} />
             <div style={{ display: "flex", gap: 16, marginTop: 14 }}>
@@ -1207,7 +1205,7 @@ export function CashflowPage({
               <MiniStat dot="var(--warn)" label="Variáveis" value={recurringVariable} pct={varPct} />
             </div>
           </div>
-          <div className="card card-pad">
+          <div className="card card-pad" style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
             <div className="eyebrow" style={{ marginBottom: 6 }}>Receitas recorrentes</div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
               <span style={{ fontFamily: "var(--font-display)", fontSize: 24, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
