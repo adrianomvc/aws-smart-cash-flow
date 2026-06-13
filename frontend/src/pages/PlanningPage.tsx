@@ -12,7 +12,7 @@ import {
   TrendingUp,
   Wallet,
 } from "lucide-react";
-import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Area, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { getProjectionFeed } from "../lib/api";
 import { dateLabel, money, moneyAbs } from "../lib/utils";
@@ -208,16 +208,22 @@ export function PlanningPage({ session, onNavigate }: { session: ApiSession; onN
           </div>
           <div className="card-body" style={{ height: 280 }}>
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={points} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+              <ComposedChart data={points} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+                <defs>
+                  <linearGradient id="provGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="var(--acc)" stopOpacity={0.22} />
+                    <stop offset="95%" stopColor="var(--acc)" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
                 <CartesianGrid stroke="var(--line)" strokeDasharray="3 3" />
-                <ReferenceLine y={0} stroke="var(--neg)" strokeDasharray="4 3" />
+                {minWorst < 0 && <ReferenceLine y={0} stroke="var(--neg)" strokeDasharray="4 3" />}
                 <XAxis dataKey="x" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--ink-3)" }} />
                 <YAxis tickFormatter={axisFmt} tickLine={false} axisLine={false} width={52} tick={{ fontSize: 11, fill: "var(--ink-3)" }} />
                 <Tooltip content={<ChartTooltip />} />
+                <Area dataKey="prov" name="Cenário provável" stroke="var(--acc)" strokeWidth={2.5} fill="url(#provGrad)" dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
                 <Line dataKey="best" name="Melhor cenário" stroke="#7fbf9f" strokeWidth={2} strokeDasharray="5 4" dot={false} isAnimationActive={false} />
-                <Line dataKey="prov" name="Cenário provável" stroke="var(--acc)" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
                 <Line dataKey="worst" name="Pior cenário" stroke="#d99a8f" strokeWidth={2} strokeDasharray="5 4" dot={false} isAnimationActive={false} />
-              </LineChart>
+              </ComposedChart>
             </ResponsiveContainer>
           </div>
           <div className="legend" style={{ marginTop: 4, padding: "12px 20px 16px", borderTop: "1px solid var(--line)" }}>
