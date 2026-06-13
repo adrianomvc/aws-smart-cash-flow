@@ -82,7 +82,7 @@ export function PlanningPage({ session }: { session: ApiSession }) {
   }
 
   return (
-    <section className="page-stack">
+    <div className="canvas stg">
       <div className="metric-grid executive">
         <MetricCard
           icon={Presentation}
@@ -193,6 +193,6 @@ export function PlanningPage({ session }: { session: ApiSession }) {
           ))}
         </div>
       </Panel>
-    </section>
+    </div>
   );
 }

@@ -293,8 +293,11 @@ class DashboardService:
         empty_category = {
             "category_id": None,
             "category_name": "Sem categoria",
+            "color": None,
+            "icon": None,
             "amount": ZERO,
             "count": 0,
+            "last_transaction_date": None,
         }
         totals: dict[tuple[str | None, str], dict[str, object]] = defaultdict(
             lambda: empty_category.copy()
@@ -311,8 +314,13 @@ class DashboardService:
             )
             totals[key]["category_id"] = key[0]
             totals[key]["category_name"] = key[1]
+            totals[key]["color"] = display_category.color if display_category is not None else None
+            totals[key]["icon"] = display_category.icon if display_category is not None else None
             totals[key]["amount"] = Decimal(totals[key]["amount"]) + abs(transaction.amount)
             totals[key]["count"] = int(totals[key]["count"]) + 1
+            last = totals[key]["last_transaction_date"]
+            if last is None or transaction.transaction_date > last:
+                totals[key]["last_transaction_date"] = transaction.transaction_date
 
         ranked = sorted(
             totals.values(),
@@ -374,6 +382,7 @@ class DashboardService:
             lambda: {
                 "category_id": None,
                 "subcategory_name": "Sem subcategoria",
+                "color": None,
                 "amount": ZERO,
                 "count": 0,
             }
@@ -393,8 +402,9 @@ class DashboardService:
                 key = (category.id, "Sem subcategoria")
             else:
                 key = (category.id, category.name)
-            totals[key]["category_id"] = key[0]
+            totals[key]["category_id"] = parent_id
             totals[key]["subcategory_name"] = key[1]
+            totals[key]["color"] = parent_category.color if parent_category is not None else None
             totals[key]["amount"] = Decimal(totals[key]["amount"]) + abs(transaction.amount)
             totals[key]["count"] = int(totals[key]["count"]) + 1
 

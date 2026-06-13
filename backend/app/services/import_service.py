@@ -26,6 +26,7 @@ from app.domain.imports import (
     PreviewTransaction,
     SourceKind,
 )
+from app.services.billing_dates import compute_payment_date
 from app.services.categorization_service import CategorizationService
 from app.services.file_classifier import classify_file
 from app.services.parsers import (
@@ -458,6 +459,14 @@ class ImportService:
                 transaction_ids=persisted_transaction_ids,
             )
         self.db.commit()
+        # Best-effort: link any credit-card files to a card now that new data
+        # (invoice or its settling payment) may have arrived.
+        try:
+            from app.services.card_association_service import auto_associate_statements
+
+            auto_associate_statements(self.db, workspace_id)
+        except Exception:  # noqa: BLE001 - association must never break the import
+            self.db.rollback()
         return ImportResult(
             import_job_id=import_job.id,
             source_file_id=source_file.id,
@@ -568,6 +577,11 @@ class ImportService:
             "source_name": None,
             "account_or_card": None,
             "transaction_date": parsed_transaction.transaction_date,
+            "payment_date": compute_payment_date(
+                parsed_transaction.transaction_date,
+                source_type,
+                parsed_transaction.installment_current,
+            ),
             "description": parsed_transaction.description,
             "raw_description": parsed_transaction.raw_description,
             "amount": parsed_transaction.amount,

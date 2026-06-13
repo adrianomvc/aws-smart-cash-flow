@@ -201,6 +201,8 @@ class Transaction(Base):
     source_name: Mapped[str | None] = mapped_column(Text)
     account_or_card: Mapped[str | None] = mapped_column(Text)
     transaction_date: Mapped[date] = mapped_column(Date, nullable=False)
+    # Effective cash-out date (credit-card invoice due date for card purchases).
+    payment_date: Mapped[date | None] = mapped_column(Date)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     raw_description: Mapped[str] = mapped_column(Text, nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
@@ -273,6 +275,7 @@ class CreditCard(Base):
     issuer: Mapped[str | None] = mapped_column(Text)
     brand: Mapped[str | None] = mapped_column(Text)
     last_four: Mapped[str | None] = mapped_column(String(4))
+    color: Mapped[str | None] = mapped_column(Text)
     closing_day: Mapped[int] = mapped_column(Integer, nullable=False)
     due_day: Mapped[int] = mapped_column(Integer, nullable=False)
     limit_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
@@ -351,6 +354,8 @@ class Category(Base):
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     parent_category_id: Mapped[str | None] = mapped_column(UUID_TYPE, ForeignKey("categories.id"))
+    color: Mapped[str | None] = mapped_column(Text)
+    icon: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -513,7 +518,10 @@ class Budget(Base):
     category_id: Mapped[str | None] = mapped_column(UUID_TYPE, ForeignKey("categories.id"))
     name: Mapped[str] = mapped_column(Text, nullable=False)
     period_start: Mapped[date] = mapped_column(Date, nullable=False)
-    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date | None] = mapped_column(Date)
+    recurring: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     limit_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     alert_threshold: Mapped[Decimal] = mapped_column(
         Numeric(5, 4), nullable=False, default=Decimal("0.8500"), server_default="0.8500"
@@ -548,6 +556,10 @@ class Goal(Base):
         Numeric(14, 2), nullable=False, default=Decimal("0"), server_default="0"
     )
     target_date: Mapped[date | None] = mapped_column(Date)
+    tracking_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="manual", server_default="manual"
+    )
+    linked_account: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="active", server_default="active"
     )

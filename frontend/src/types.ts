@@ -53,6 +53,7 @@ export type TransactionDrilldown = {
   dateTo?: string;
   direction?: string;
   importJobId?: string;
+  sourceFileId?: string;
   label?: string;
   periodPreset?: TransactionPeriodPreset;
   search?: string;
@@ -177,9 +178,13 @@ export type SubcategorySummary = {
  */
 export type CalendarEvent = {
   amount: string | number;
+  category?: string | null;
+  categoryColor?: string | null;
   date: string;
   detail: string;
   direction?: string;
+  forecast?: boolean;
+  recurring?: boolean;
   kind: string;
   label: string;
   search?: string;

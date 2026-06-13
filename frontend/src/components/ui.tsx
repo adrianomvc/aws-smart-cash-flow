@@ -289,13 +289,15 @@ export function Drawer({
   onClose: () => void;
 }) {
   return (
-    <aside className="drawer">
-      <div className="drawer-header">
-        <h3>{title}</h3>
-        <button className="icon-button" onClick={onClose}><X size={18} /></button>
-      </div>
-      {children}
-    </aside>
+    <div className="drawer-backdrop" onClick={onClose}>
+      <aside className="drawer" onClick={(e) => e.stopPropagation()}>
+        <div className="drawer-header">
+          <h3>{title}</h3>
+          <button className="icon-button" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="drawer-body">{children}</div>
+      </aside>
+    </div>
   );
 }
 

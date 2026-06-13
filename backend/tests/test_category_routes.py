@@ -76,6 +76,51 @@ def test_create_and_list_categories_for_current_workspace(
     assert [item["name"] for item in payload["items"]] == ["Transporte"]
 
 
+def test_create_category_persists_color_and_icon(client: TestClient) -> None:
+    response = client.post(
+        "/v1/categories",
+        json={"name": "Moradia", "color": "#1F8A5B", "icon": "folder"},
+    )
+
+    assert response.status_code == 201
+    created = response.json()
+    # Hex color is normalized to lowercase, icon kept as-is.
+    assert created["color"] == "#1f8a5b"
+    assert created["icon"] == "folder"
+
+    fetched = client.get("/v1/categories").json()["items"][0]
+    assert fetched["color"] == "#1f8a5b"
+    assert fetched["icon"] == "folder"
+
+
+def test_create_category_rejects_invalid_color(client: TestClient) -> None:
+    response = client.post(
+        "/v1/categories",
+        json={"name": "Lazer", "color": "verde"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_update_category_changes_color_and_icon(client: TestClient) -> None:
+    created = client.post(
+        "/v1/categories",
+        json={"name": "Saude", "color": "#3567b8", "icon": "tag"},
+    ).json()
+
+    response = client.patch(
+        f"/v1/categories/{created['id']}",
+        json={"color": "#cf4d43", "icon": "alert"},
+    )
+
+    assert response.status_code == 200
+    updated = response.json()
+    assert updated["color"] == "#cf4d43"
+    assert updated["icon"] == "alert"
+    # Name and parent are untouched when only color/icon are sent.
+    assert updated["name"] == "Saude"
+
+
 def test_create_category_rejects_duplicate_root_name_in_same_workspace(
     client: TestClient,
     db_session: Session,

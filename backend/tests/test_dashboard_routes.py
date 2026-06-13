@@ -689,6 +689,9 @@ def test_dashboard_subcategory_ranking_matches_parent_category_total(
     assert sum(float(item["amount"]) for item in subcategory_payload["items"]) == 175.0
     assert subcategory_payload["items"][0]["subcategory_name"] == "Escola"
     assert subcategory_payload["items"][0]["amount"] == "150.00"
+    # category_id of each subcategory must be the PARENT id so the frontend can
+    # group subcategories under their parent category in the dashboard.
+    assert all(item["category_id"] == parent_id for item in subcategory_payload["items"])
 
 
 def test_dashboard_merchant_ranking_groups_by_normalized_description(

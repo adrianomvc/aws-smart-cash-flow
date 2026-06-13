@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import AuthContext, AuthDependency
@@ -24,11 +24,15 @@ DbDependency = Depends(get_db)
 class CategoryCreate(BaseModel):
     name: str
     parent_category_id: str | None = None
+    color: str | None = None
+    icon: str | None = None
 
 
 class CategoryUpdate(BaseModel):
     name: str | None = None
     parent_category_id: str | None = None
+    color: str | None = None
+    icon: str | None = None
 
 
 class CategoryRead(BaseModel):
@@ -36,6 +40,8 @@ class CategoryRead(BaseModel):
     workspace_id: str
     name: str
     parent_category_id: str | None
+    color: str | None
+    icon: str | None
     created_at: datetime
 
 
@@ -205,6 +211,8 @@ async def create_category(
         workspace_id=auth.workspace_id,
         name=name,
         parent_category_id=payload.parent_category_id,
+        color=_normalize_color(payload.color),
+        icon=_normalize_icon(payload.icon),
     )
     db.add(category)
     db.commit()
@@ -254,6 +262,10 @@ async def update_category(
             exclude_category_id=category.id,
         )
         category.parent_category_id = payload.parent_category_id
+    if "color" in payload.model_fields_set:
+        category.color = _normalize_color(payload.color)
+    if "icon" in payload.model_fields_set:
+        category.icon = _normalize_icon(payload.icon)
 
     db.commit()
     db.refresh(category)
@@ -278,17 +290,13 @@ async def delete_category(
             status_code=status.HTTP_409_CONFLICT,
             detail="Category has child categories",
         )
-    assignment = db.scalar(
-        select(TransactionCategoryAssignment).where(
+    # Deleting a category uncategorizes its transactions (removes assignments).
+    db.execute(
+        delete(TransactionCategoryAssignment).where(
             TransactionCategoryAssignment.workspace_id == auth.workspace_id,
             TransactionCategoryAssignment.category_id == category.id,
         )
     )
-    if assignment is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Category is assigned to transactions",
-        )
     rule = db.scalar(
         select(CategorizationRule).where(
             CategorizationRule.workspace_id == auth.workspace_id,
@@ -440,23 +448,57 @@ async def apply_rules(
         .where(Transaction.workspace_id == auth.workspace_id)
         .order_by(Transaction.transaction_date, Transaction.id)
     ).all()
+
+    # Batch-load existing assignments in a single query to avoid an N+1 query
+    # pattern (one DB round-trip per transaction) against the remote database.
+    existing_assignments = {
+        assignment.transaction_id: assignment
+        for assignment in db.scalars(
+            select(TransactionCategoryAssignment).where(
+                TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+            )
+        ).all()
+    }
+
+    # Pre-normalize each rule's pattern once (instead of once per transaction)
+    # and remember which transaction fields the rules read. With many rules this
+    # turns ~N_transactions * N_rules string normalizations into ~N_rules.
+    compiled_rules = [
+        (rule, _normalize_spaces(rule.pattern).casefold(), rule.match_type, rule.field)
+        for rule in rules
+    ]
+    fields_used = {rule.field for rule in rules}
+
     applied_count = 0
     category_applied_count = 0
     direction_applied_count = 0
     skipped_manual_count = 0
 
     for transaction in transactions:
-        existing_assignment = db.scalar(
-            select(TransactionCategoryAssignment).where(
-                TransactionCategoryAssignment.workspace_id == auth.workspace_id,
-                TransactionCategoryAssignment.transaction_id == transaction.id,
-            )
-        )
+        existing_assignment = existing_assignments.get(transaction.id)
 
-        matching_rule = next(
-            (rule for rule in rules if _rule_matches_transaction(rule, transaction)),
-            None,
-        )
+        # Normalize the transaction's fields once, then reuse for every rule.
+        norm_fields: dict[str, str | None] = {}
+        for field in fields_used:
+            raw = getattr(transaction, field, None)
+            norm_fields[field] = None if raw is None else _normalize_spaces(str(raw)).casefold()
+
+        matching_rule = None
+        for rule, pattern, match_type, field in compiled_rules:
+            value = norm_fields.get(field)
+            if value is None:
+                continue
+            if match_type == "contains":
+                matched = pattern in value
+            elif match_type == "starts_with":
+                matched = value.startswith(pattern)
+            elif match_type == "equals":
+                matched = value == pattern
+            else:
+                matched = False
+            if matched:
+                matching_rule = rule
+                break
         if matching_rule is None:
             continue
 
@@ -798,8 +840,34 @@ def _category_read(category: Category) -> CategoryRead:
         workspace_id=category.workspace_id,
         name=category.name,
         parent_category_id=category.parent_category_id,
+        color=category.color,
+        icon=category.icon,
         created_at=category.created_at,
     )
+
+
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _normalize_color(color: str | None) -> str | None:
+    if color is None:
+        return None
+    value = color.strip()
+    if value == "":
+        return None
+    if not _HEX_COLOR_RE.match(value):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Color must be a hex value like #1f8a5b",
+        )
+    return value.lower()
+
+
+def _normalize_icon(icon: str | None) -> str | None:
+    if icon is None:
+        return None
+    value = icon.strip()
+    return value or None
 
 
 def _order_category_tree(categories: list[Category]) -> list[Category]:

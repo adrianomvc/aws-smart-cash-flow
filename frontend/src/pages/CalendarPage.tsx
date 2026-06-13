@@ -1,25 +1,15 @@
 import { useMemo, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  ArrowDownCircle,
-  CalendarDays,
-  CheckCircle,
-  CreditCard,
-  Gauge,
-  Loader2,
-  Plus,
-  ShieldCheck,
-  TriangleAlert,
-  X,
-} from "lucide-react";
 
 import {
   createCalendarEvent,
   getCalendarEvents,
+  getCreditCards,
   getCreditCardInstallments,
-  getDashboardSummary,
   getRecurringExpenses,
   getTransactions,
+  getWeekdaySpending,
 } from "../lib/api";
 import {
   apiErrorMessage,
@@ -28,18 +18,49 @@ import {
   isoDate,
   money,
   moneyAbs,
-  periodRange,
   withQueryParams,
 } from "../lib/utils";
-import { usePeriod } from "../hooks";
-import {
-  InlineError,
-  MetricCard,
-  PageState,
-  PeriodFilter,
-} from "../components/ui";
+import { useCategories, usePeriod } from "../hooks";
 import type { ApiSession } from "../lib/api";
 import type { CalendarEvent, PeriodState, TransactionDrilldown } from "../types";
+
+// ---------------------------------------------------------------------------
+// Local SVG icon system
+// ---------------------------------------------------------------------------
+
+const CAL_ICONS: Record<string, string> = {
+  calendar: "M3 5h18a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z M16 3v4 M8 3v4 M3 10h18",
+  plus:     "M12 5v14 M5 12h14",
+  check:    "M5 12l5 5 9-10",
+  x:        "M18 6L6 18 M6 6l12 12",
+  edit:     "M11 4H4a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7 M18.5 2.5a2 2 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z",
+  trash:    "M4 7h16 M10 11v6 M14 11v6 M5 7l1 12a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1l1-12 M9 7V4h6v3",
+  chevR:    "M9 18l6-6-6-6",
+  chevL:    "M15 18l-6-6 6-6",
+  clock:    "M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0 M12 7v5l3 2",
+  alert:    "M12 9v4 M12 17h.01 M10.3 4l-7 12a2 2 0 0 0 1.7 3h14a2 2 0 0 0 1.7-3l-7-12a2 2 0 0 0-3.4 0z",
+  wallet:   "M3 7h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a2 2 0 0 1 2-2h11 M16 12h.01",
+  info:     "M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0 M12 11v5 M12 8h.01",
+  repeat:   "M17 1l4 4-4 4 M3 11V9a4 4 0 0 1 4-4h14 M7 23l-4-4 4-4 M21 13v2a4 4 0 0 1-4 4H3",
+  card:     "M2 6h20v12H2z M2 10h20",
+  shield:   "M12 2l7 4v5c0 4.42-2.99 8.57-7 9.93C7.99 19.57 5 15.42 5 11V6z",
+  gauge:    "M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0 M12 12l4-3",
+  arrowDown:"M12 5v14 M5 12l7 7 7-7",
+  spin:     "M12 2v4 M12 18v4 M4.93 4.93l2.83 2.83 M16.24 16.24l2.83 2.83 M2 12h4 M18 12h4 M4.93 19.07l2.83-2.83 M16.24 7.76l2.83-2.83",
+};
+
+function CalIcon({ name, size = 15 }: { name: string; size?: number }) {
+  const d = CAL_ICONS[name];
+  if (!d) return null;
+  const segs = d.split(" M");
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round"
+      style={{ flex: "none" }}>
+      {segs.map((seg, i) => <path key={i} d={i === 0 ? seg : "M" + seg} />)}
+    </svg>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -58,13 +79,25 @@ function daysUntil(date: Date): number {
   return Math.ceil((date.getTime() - now.getTime()) / 86400000);
 }
 
-function fmtShortDate(date: Date): string {
-  return `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}`;
-}
 
 function nextOccurrenceLabel(lastDate: string): string {
   const d = new Date(lastDate + "T00:00:00");
   return `Todo dia ${d.getDate()}`;
+}
+
+// Stable color per event kind/category, so calendar chips look category-colored.
+const KIND_PALETTE = [
+  "#3567b8", "#1f8a5b", "#6a52c9", "#c98a2b", "#cf4d43",
+  "#d98234", "#2a9d8f", "#9a6b14", "#7c8696", "#a35a7d", "#3d7d63", "#5a7dc9",
+];
+function kindColor(kind: string): string {
+  const h = kind.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
+  return KIND_PALETTE[h % KIND_PALETTE.length];
+}
+function signedCompact(amount: string | number): string {
+  const n = Number(amount);
+  const sign = n < 0 ? "−" : n > 0 ? "+" : "";
+  return sign + compactMoneyAbs(amount);
 }
 
 type CalendarFilter = "all" | "saidas" | "entradas" | "parcelas" | "recorrencias";
@@ -78,24 +111,29 @@ function filterEvents(events: CalendarEvent[], filter: CalendarFilter): Calendar
   return events;
 }
 
-type RiskInfo = { level: "low" | "medium" | "high"; label: string; tone: string; reason: string; recommendation: string };
+// ---------------------------------------------------------------------------
+// Tone → badge class mapping
+// ---------------------------------------------------------------------------
+function toneToEvtClass(tone: string): string {
+  if (tone === "positive") return "b-real";
+  if (tone === "negative") return "b-neg";
+  if (tone === "warning") return "b-warn";
+  return "b-info";
+}
 
-function getRiskInfo(balance: number): RiskInfo {
-  if (balance > 500) return {
-    level: "low", label: "Baixo risco", tone: "positive",
-    reason: "Saldo projetado positivo com margem confortável.",
-    recommendation: "Boa saúde financeira para o período.",
-  };
-  if (balance >= 0) return {
-    level: "medium", label: "Atenção",  tone: "warning",
-    reason: "Saldo projetado próximo de zero.",
-    recommendation: "Evite gastos extras este mês.",
-  };
-  return {
-    level: "high", label: "Alto risco", tone: "negative",
-    reason: "Saldo projetado negativo.",
-    recommendation: "Revise despesas e priorize receitas urgentes.",
-  };
+// ---------------------------------------------------------------------------
+// Spinning loader (inline, no Lucide)
+// ---------------------------------------------------------------------------
+function Spinner({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth={2} strokeLinecap="round"
+      style={{ flex: "none", animation: "spin 1s linear infinite" }}
+    >
+      <path d="M12 2v4 M12 18v4 M4.93 4.93l2.83 2.83 M16.24 16.24l2.83 2.83 M2 12h4 M18 12h4 M4.93 19.07l2.83-2.83 M16.24 7.76l2.83-2.83" />
+    </svg>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -108,6 +146,7 @@ function CalendarMonthGrid({
   dateFrom,
   loading,
   onEventClick,
+  onDayClick,
 }: {
   events: CalendarEvent[];
   allEvents: CalendarEvent[];
@@ -115,6 +154,7 @@ function CalendarMonthGrid({
   dateTo: string;
   loading: boolean;
   onEventClick: (event: CalendarEvent) => void;
+  onDayClick: (date: string) => void;
 }) {
   const parts = dateFrom.split("-").map(Number);
   const year = parts[0];
@@ -147,53 +187,97 @@ function CalendarMonthGrid({
   const today = isoDate(new Date());
   const weekdays = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"] as const;
 
-  if (loading) return <PageState icon={Loader2} title="Carregando calendário" description="Organizando compromissos." spin compact />;
+  if (loading) {
+    return (
+      <div className="state" style={{ minHeight: 240 }}>
+        <div className="state-ic"><Spinner size={22} /></div>
+        <h4>Carregando calendário</h4>
+        <p>Organizando compromissos.</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="calendar-month-grid-wrap">
-      <div className="calendar-month-header">
-        {weekdays.map((d) => <div className="calendar-month-weekday" key={d}>{d}</div>)}
+    <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+      {/* Weekday headers */}
+      <div className="cal-grid" style={{ marginBottom: 4 }}>
+        {weekdays.map((d) => (
+          <div className="cal-dow" key={d}>{d}</div>
+        ))}
       </div>
-      <div className="calendar-month-grid">
+      {/* Day cells */}
+      <div className="cal-grid">
         {cells.map((day, idx) => {
-          if (!day) return <div className="calendar-month-cell empty" key={`empty-${idx}`} />;
+          if (!day) return <div className="cal-cell empty" key={`empty-${idx}`} />;
           const mm = String(month).padStart(2, "0");
           const dd = String(day).padStart(2, "0");
           const dateKey = `${year}-${mm}-${dd}`;
           const allDayEvents = allByDate.get(dateKey) ?? [];
-          const dayEvents = eventsByDate.get(dateKey) ?? [];
+          // Real (imported) transactions first, then forecast — so the 2 visible
+          // chips favour the actual movements over the projections.
+          const dayEvents = [...(eventsByDate.get(dateKey) ?? [])]
+            .sort((a, b) => Number(a.forecast ?? false) - Number(b.forecast ?? false));
           const visible = dayEvents.slice(0, 2);
           const hidden = dayEvents.length - visible.length;
           const isToday = dateKey === today;
 
           const totalNet = allDayEvents.reduce((sum, e) => sum + Number(e.amount ?? 0), 0);
-          let heatmapClass = "";
-          if (allDayEvents.length > 0) {
-            if (totalNet > 0) heatmapClass = " heatmap-income";
-            else if (totalNet < -500) heatmapClass = " heatmap-high";
-            else if (totalNet < -100) heatmapClass = " heatmap-medium";
-          }
+          const hasCrit = allDayEvents.some((e) => e.tone === "warning" || e.tone === "negative");
 
           return (
-            <div className={`calendar-month-cell${isToday ? " today" : ""}${heatmapClass}`} key={dateKey}>
-              <span className="calendar-day-number">{day}</span>
-              {allDayEvents.length > 0 && (
-                <span className={`calendar-day-total ${totalNet >= 0 ? "positive" : "negative"}`}>
-                  {compactMoneyAbs(totalNet)}
-                </span>
-              )}
-              {visible.map((ev, i) => (
+            <div
+              className={`cal-cell${isToday ? " today" : ""}${hasCrit && !isToday ? " crit" : ""}`}
+              key={dateKey}
+              onClick={() => onDayClick(dateKey)}
+              title="Ver lançamentos do dia"
+            >
+              <div className="cal-cell-head">
+                <span className="cal-day">{day}</span>
+                {allDayEvents.length > 0 && (
+                  <span className={`cal-count${hasCrit ? " crit" : ""}`}>
+                    {allDayEvents.length}
+                  </span>
+                )}
+              </div>
+              <div className="cal-evts">
+                {visible.map((ev, i) => {
+                  const catLabel = ev.category ?? ev.kind;
+                  // Colour by tone, matching the legend (Entrada/Saída/Atenção/Previsto).
+                  const bg = ev.tone === "positive" ? "var(--pos-soft)" : ev.tone === "negative" ? "var(--neg-soft)" : ev.tone === "warning" ? "var(--warn-soft)" : "var(--info-soft)";
+                  const fg = ev.tone === "positive" ? "var(--pos)" : ev.tone === "negative" ? "var(--neg)" : ev.tone === "warning" ? "var(--warn)" : "var(--info)";
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      className={`cal-evt`}
+                      onClick={(e) => { e.stopPropagation(); onEventClick(ev); }}
+                      title={`${ev.label} — ${catLabel} — ${moneyAbs(ev.amount)}`}
+                      style={{ background: bg, color: fg, borderLeft: `2px solid ${fg}` }}
+                    >
+                      <span className="cal-evt-cat">{catLabel}</span>
+                      <span className="cal-evt-val">{signedCompact(ev.amount)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {hidden > 0 && (
                 <button
-                  className={`calendar-event-chip ${ev.tone}`}
-                  key={i}
-                  onClick={() => onEventClick(ev)}
-                  title={`${ev.label} — ${moneyAbs(ev.amount)}`}
                   type="button"
+                  className="cal-more"
+                  style={{ cursor: "pointer", textAlign: "left", background: "none", border: "none" }}
+                  onClick={(e) => { e.stopPropagation(); onDayClick(dateKey); }}
                 >
-                  {ev.label}
+                  +{hidden} mais
                 </button>
-              ))}
-              {hidden > 0 ? <span className="calendar-event-more">+{hidden}</span> : null}
+              )}
+              {allDayEvents.length > 0 && (
+                <div className="cal-total">
+                  <span style={{ color: "var(--ink-faint)", fontSize: 9 }}>total</span>
+                  <span style={{ color: totalNet >= 0 ? "var(--pos)" : "var(--neg)" }}>
+                    {compactMoneyAbs(totalNet)}
+                  </span>
+                </div>
+              )}
             </div>
           );
         })}
@@ -208,16 +292,16 @@ function CalendarMonthGrid({
 
 export function CalendarPage({
   onOpenTransactions,
+  period: calendarPeriod,
   session,
+  setPeriod: setCalendarPeriod,
 }: {
   onOpenTransactions: (drilldown?: TransactionDrilldown) => void;
+  period: PeriodState;
   session: ApiSession;
+  setPeriod: Dispatch<SetStateAction<PeriodState>>;
 }) {
-  const [calendarPeriod, setCalendarPeriod] = useState<PeriodState>(() => {
-    const range = periodRange("current_month");
-    return { ...range, periodPreset: "current_month" };
-  });
-  const [showEventDrawer, setShowEventDrawer] = useState(false);
+  const [showEventModal, setShowEventModal] = useState(false);
   const [calFilter, setCalFilter] = useState<CalendarFilter>("all");
   const [eventForm, setEventForm] = useState(() => ({
     amount: "",
@@ -240,86 +324,177 @@ export function CalendarPage({
       }),
     onSuccess: () => {
       setEventForm((current) => ({ ...current, amount: "", title: "" }));
-      setShowEventDrawer(false);
+      setShowEventModal(false);
       void queryClient.invalidateQueries({ queryKey: ["calendar-events"] });
     },
   });
 
-  const summary = useQuery({
-    queryKey: ["calendar-summary", session.token, period.query],
-    queryFn: () => getDashboardSummary(session, period.query),
-  });
   const persistedEvents = useQuery({
     queryKey: ["calendar-events", session.token, period.query],
     queryFn: () => getCalendarEvents(session, period.query),
   });
   const recurring = useQuery({
     queryKey: ["calendar-recurring", session.token, period.recurringQuery],
-    queryFn: () => getRecurringExpenses(session, withQueryParams(period.recurringQuery, { limit: "8", min_months: "2" })),
+    queryFn: () => getRecurringExpenses(session, withQueryParams(period.recurringQuery, { limit: "50", min_months: "2" })),
   });
   const installments = useQuery({
     queryKey: ["calendar-installments", session.token, period.dateTo],
     queryFn: () =>
       getCreditCardInstallments(
         session,
-        period.dateTo ? withQueryParams("", { date_to: period.dateTo, limit: "8" }) : withQueryParams("", { limit: "8" }),
+        period.dateTo
+          ? withQueryParams("", { date_to: period.dateTo, limit: "8" })
+          : withQueryParams("", { limit: "8" }),
       ),
   });
   const recentTransactions = useQuery({
     queryKey: ["calendar-recent-transactions", session.token, period.query],
-    queryFn: () => getTransactions(session, withQueryParams(period.query, { limit: "6", sort_by: "transaction_date", sort_dir: "desc" })),
+    queryFn: () =>
+      getTransactions(session, withQueryParams(period.query, { limit: "500", sort_by: "transaction_date", sort_dir: "desc" })),
+  });
+  const categories = useCategories(session);
+  const weekday = useQuery({
+    queryKey: ["calendar-weekday", session.token, period.query],
+    queryFn: () => getWeekdaySpending(session, period.query),
+  });
+  const creditCards = useQuery({
+    queryKey: ["credit-cards", session.token],
+    queryFn: () => getCreditCards(session),
+    staleTime: 5 * 60 * 1000,
   });
 
   const calendarEvents = useMemo(() => buildCalendarEvents({
     apiEvents: persistedEvents.data?.items,
+    categories: categories.data?.items ?? [],
     installments: installments.data?.items ?? [],
     recurring: recurring.data?.items ?? [],
     transactions: recentTransactions.data?.items ?? [],
-  }), [installments.data?.items, persistedEvents.data?.items, recurring.data?.items, recentTransactions.data?.items]);
+  }), [categories.data?.items, installments.data?.items, persistedEvents.data?.items, recurring.data?.items, recentTransactions.data?.items]);
 
-  const filteredEvents = useMemo(() => filterEvents(calendarEvents, calFilter), [calendarEvents, calFilter]);
+  // "Previsto" (forecast) only applies to the future: once a day has passed it
+  // shows only the real (imported) transactions, not the projections.
+  const visibleEvents = useMemo(() => {
+    const today = isoDate(new Date());
+    return calendarEvents.filter((e) => !e.forecast || e.date >= today);
+  }, [calendarEvents]);
 
-  const totalPlannedOutflow = useMemo(() =>
-    calendarEvents.reduce((t, e) => t + Number(e.amount ?? 0), 0), [calendarEvents]);
-  const riskEvents = useMemo(() =>
-    calendarEvents.filter((e) => e.tone === "warning" || e.tone === "negative").length, [calendarEvents]);
+  const filteredEvents = useMemo(() => filterEvents(visibleEvents, calFilter), [visibleEvents, calFilter]);
 
   const upcomingEvents = useMemo(() => {
     const today = isoDate(new Date());
     const limit = isoDate(new Date(Date.now() + 30 * 86400000));
-    return calendarEvents
-      .filter((e) => e.date >= today && e.date <= limit)
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .slice(0, 15);
-  }, [calendarEvents]);
+    return visibleEvents
+      .filter((e) => !e.recurring && e.date >= today && e.date <= limit)
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }, [visibleEvents]);
 
   const projectedInflow = useMemo(() =>
-    calendarEvents.filter((e) => Number(e.amount) > 0).reduce((s, e) => s + Number(e.amount), 0),
-    [calendarEvents]);
+    filteredEvents.filter((e) => Number(e.amount) > 0).reduce((s, e) => s + Number(e.amount), 0),
+    [filteredEvents]);
   const projectedOutflow = useMemo(() =>
-    calendarEvents.filter((e) => Number(e.amount) < 0).reduce((s, e) => s + Math.abs(Number(e.amount)), 0),
-    [calendarEvents]);
-  const projectedBalance = projectedInflow - projectedOutflow;
-
+    filteredEvents.filter((e) => Number(e.amount) < 0).reduce((s, e) => s + Math.abs(Number(e.amount)), 0),
+    [filteredEvents]);
   const calendarTotal = useMemo(() =>
     filteredEvents.reduce((s, e) => s + Number(e.amount ?? 0), 0), [filteredEvents]);
 
-  const totalFlow = projectedInflow + projectedOutflow;
-  const inflowPct = totalFlow > 0 ? (projectedInflow / totalFlow) * 100 : 0;
-  const outflowPct = totalFlow > 0 ? (projectedOutflow / totalFlow) * 100 : 0;
+  // ── Aggregates for the KPI strip + side panels (respect the active filter) ──
+  const outCount = useMemo(() => filteredEvents.filter((e) => Number(e.amount) < 0).length, [filteredEvents]);
+  const inCount = useMemo(() => filteredEvents.filter((e) => Number(e.amount) > 0).length, [filteredEvents]);
+  const monthParts = period.dateFrom.split("-").map(Number);
+  const daysInMonth = monthParts[0] && monthParts[1] ? new Date(monthParts[0], monthParts[1], 0).getDate() : 30;
+  const daysWith = useMemo(() => new Set(filteredEvents.map((e) => e.date)).size, [filteredEvents]);
+  const heaviest = useMemo(() => {
+    const net = new Map<string, number>();
+    for (const e of filteredEvents) net.set(e.date, (net.get(e.date) ?? 0) + Number(e.amount ?? 0));
+    let best = { date: "", net: 0 };
+    for (const [date, value] of net) if (value < best.net) best = { date, net: value };
+    return best;
+  }, [filteredEvents]);
+  // Outflows grouped by real category for the distribution panel.
+  const catDist = useMemo(() => {
+    const map = new Map<string, { value: number; color: string | null }>();
+    for (const e of filteredEvents) {
+      if (Number(e.amount) >= 0) continue;
+      const name = e.category ?? "Sem categoria";
+      const cur = map.get(name) ?? { value: 0, color: e.categoryColor ?? null };
+      cur.value += Math.abs(Number(e.amount));
+      if (!cur.color && e.categoryColor) cur.color = e.categoryColor;
+      map.set(name, cur);
+    }
+    return [...map.entries()]
+      .map(([name, v]) => ({ name, value: v.value, color: v.color }))
+      .sort((a, b) => b.value - a.value);
+  }, [filteredEvents]);
+  const catDistTotal = catDist.reduce((s, d) => s + d.value, 0) || 1;
+  // Days with the most negative net — risk of a tight balance.
+  const criticalDays = useMemo(() => {
+    const byDate = new Map<string, { net: number; count: number; label: string; worst: number }>();
+    for (const e of filteredEvents) {
+      const amt = Number(e.amount ?? 0);
+      const cur = byDate.get(e.date) ?? { net: 0, count: 0, label: e.label, worst: 0 };
+      cur.net += amt;
+      cur.count += 1;
+      if (amt < cur.worst) { cur.worst = amt; cur.label = e.label; }
+      byDate.set(e.date, cur);
+    }
+    return [...byDate.entries()]
+      .filter(([, v]) => v.net < 0)
+      .sort((a, b) => a[1].net - b[1].net)
+      .map(([date, v]) => ({ date, ...v }));
+  }, [filteredEvents]);
 
-  const risk = getRiskInfo(projectedBalance);
+  // Inflows grouped by category, for the "Entradas" card.
+  const incomeDist = useMemo(() => {
+    const map = new Map<string, { value: number; color: string | null }>();
+    for (const e of filteredEvents) {
+      if (Number(e.amount) <= 0) continue;
+      const name = e.category ?? e.kind;
+      const cur = map.get(name) ?? { value: 0, color: e.categoryColor ?? null };
+      cur.value += Number(e.amount);
+      if (!cur.color && e.categoryColor) cur.color = e.categoryColor;
+      map.set(name, cur);
+    }
+    return [...map.entries()]
+      .map(([name, v]) => ({ name, value: v.value, color: v.color }))
+      .sort((a, b) => b.value - a.value);
+  }, [filteredEvents]);
+  const incomeDistTotal = incomeDist.reduce((s, d) => s + d.value, 0) || 1;
+  const heaviestLabel = heaviest.date
+    ? (() => { const d = new Date(heaviest.date + "T00:00:00"); return `${d.getDate()}/${d.toLocaleString("pt-BR", { month: "short" }).replace(".", "")}`; })()
+    : "—";
+
+  // Weekday spending averages (for the "Média por dia da semana" card).
+  const weekdayData = useMemo(() => {
+    const items = (weekday.data?.items ?? [])
+      .slice()
+      .sort((a, b) => a.weekday - b.weekday)
+      .map((w) => ({ weekday: w.weekday, label: w.weekday_name.slice(0, 3), avg: Number(w.average_amount ?? 0) }));
+    const max = Math.max(1, ...items.map((w) => w.avg));
+    const withData = items.filter((w) => w.avg > 0);
+    const best = withData.length ? withData.reduce((a, b) => (b.avg < a.avg ? b : a)) : undefined;
+    const worst = items.length ? items.reduce((a, b) => (b.avg > a.avg ? b : a)) : undefined;
+    const avgAll = items.length ? items.reduce((s, w) => s + w.avg, 0) / items.length : 0;
+    return { items, max, best, worst, avgAll };
+  }, [weekday.data]);
 
   const instData = installments.data;
   const closingDate = instData?.closing_day ? nextDayOfMonth(instData.closing_day) : null;
   const dueDate = instData?.due_day ? nextDayOfMonth(instData.due_day) : null;
 
-  const sortedRecurring = useMemo(() =>
-    (recurring.data?.items ?? [])
+  const sortedRecurring = useMemo(() => {
+    // Detection runs over 12 months, but only "active" recurrences matter: those
+    // with an occurrence close to the period end. This drops installments that
+    // finished a while ago (their last charge is old) and other stale patterns.
+    const ref = period.dateTo ? new Date(period.dateTo + "T00:00:00") : new Date();
+    const cutoff = new Date(ref);
+    cutoff.setDate(cutoff.getDate() - 45);
+    const cutoffIso = cutoff.toISOString().slice(0, 10);
+    return (recurring.data?.items ?? [])
+      .filter((r) => (r.last_transaction_date ?? "") >= cutoffIso)
       .slice()
       .sort((a, b) => Math.abs(Number(b.last_amount)) - Math.abs(Number(a.last_amount)))
-      .slice(0, 8),
-    [recurring.data?.items]);
+      .slice(0, 50);
+  }, [recurring.data?.items, period.dateTo]);
 
   const isLoading = persistedEvents.isLoading || recurring.isLoading || installments.isLoading;
 
@@ -332,320 +507,598 @@ export function CalendarPage({
   ];
 
   const drilldown = (event: CalendarEvent) =>
-    onOpenTransactions({ dateFrom: period.dateFrom, dateTo: period.dateTo, direction: event.direction, label: event.label, periodPreset: period.periodPreset, search: event.search });
+    onOpenTransactions({
+      dateFrom: period.dateFrom,
+      dateTo: period.dateTo,
+      direction: event.direction,
+      label: event.label,
+      periodPreset: period.periodPreset,
+      search: event.search,
+    });
 
   return (
-    <section className="page-stack">
+    <div className="canvas stg">
 
       {/* ── Header ── */}
-      <div className="page-header-bar">
-        <span className="page-header-spacer" />
-        <button className="cal-new-event-btn" onClick={() => setShowEventDrawer(true)} type="button">
-          <Plus size={13} /> Novo compromisso
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+        <div style={{ flex: 1 }}>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>Planejamento</div>
+          <h1 style={{ margin: 0, fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 22, letterSpacing: "-.4px", lineHeight: 1.1 }}>
+            Calendário Financeiro
+          </h1>
+          <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--ink-3)" }}>
+            Compromissos, parcelas e recorrências do período
+          </p>
+        </div>
+        <button
+          className="btn btn-primary btn-sm"
+          onClick={() => setShowEventModal(true)}
+          type="button"
+        >
+          <CalIcon name="plus" size={14} /> Novo compromisso
         </button>
-        <PeriodFilter
-          dateFrom={period.dateFrom}
-          dateTo={period.dateTo}
-          periodPreset={period.periodPreset}
-          onPreset={period.setPeriodPreset}
-          onDateFrom={period.setDateFrom}
-          onDateTo={period.setDateTo}
-        />
       </div>
 
-      {/* ── Cards resumo ── */}
-      <div className="metric-grid executive">
-        <MetricCard icon={CalendarDays} label="Eventos mapeados" value={String(calendarEvents.length)} helper="Recorrências, parcelas e lançamentos" tone="info" />
-        <MetricCard icon={ArrowDownCircle} label="Saídas previstas" value={moneyAbs(totalPlannedOutflow)} helper="Estimativa do período" tone="negative" />
-        <MetricCard icon={CreditCard} label="Parcelas ativas" value={String(instData?.active_count ?? 0)} helper={moneyAbs(instData?.total_future_amount)} tone="warning" />
-        <MetricCard icon={ShieldCheck} label="Pontos de atenção" value={String(riskEvents)} helper="Itens que merecem revisão" tone={riskEvents ? "warning" : "positive"} />
-        <MetricCard icon={Gauge} label="Saldo do período" value={money(summary.data?.balance)} helper="Calculado pelo dashboard atual" tone={Number(summary.data?.balance ?? 0) >= 0 ? "positive" : "negative"} />
-      </div>
-
-      {/* ── Fluxo Projetado + Risco Financeiro ── */}
-      <div className="cal-flow-risk-row">
-
-        {/* Fluxo Projetado */}
-        <div className="cal-panel">
-          <div className="cal-panel-header">
-            <h3 className="cal-panel-title">Fluxo Projetado</h3>
-          </div>
-          <div className="cal-flow-metrics">
-            <div className="cal-flow-metric positive">
-              <small>Entradas previstas</small>
-              <strong>{money(projectedInflow)}</strong>
-            </div>
-            <div className="cal-flow-metric negative">
-              <small>Saídas previstas</small>
-              <strong>{moneyAbs(projectedOutflow)}</strong>
-            </div>
-            <div className="cal-flow-metric warning">
-              <small>Parcelas futuras</small>
-              <strong>{moneyAbs(instData?.total_future_amount)}</strong>
-            </div>
-            <div className={`cal-flow-metric ${projectedBalance >= 0 ? "positive" : "negative"}`}>
-              <small>Saldo projetado</small>
-              <strong>{money(projectedBalance)}</strong>
-            </div>
-          </div>
-          {totalFlow > 0 && (
-            <div className="cal-flow-bar-section">
-              <div className="cal-flow-bar-track">
-                <div
-                  className="cal-flow-bar-fill positive"
-                  style={{ width: `${inflowPct}%` }}
-                  title={`Entradas ${Math.round(inflowPct)}%`}
-                />
-                <div
-                  className="cal-flow-bar-fill negative"
-                  style={{ width: `${outflowPct}%` }}
-                  title={`Saídas ${Math.round(outflowPct)}%`}
-                />
-              </div>
-              <div className="cal-flow-bar-legend">
-                <span className="cal-legend-dot positive" />
-                <span>Entradas {Math.round(inflowPct)}%</span>
-                <span className="cal-legend-dot negative" />
-                <span>Saídas {Math.round(outflowPct)}%</span>
-              </div>
-            </div>
-          )}
+      {/* ── KPI strip ── */}
+      <div className="cal-strip" style={{ marginBottom: 16 }}>
+        <div className="cal-strip-cell">
+          <span className="cs-lab">A pagar</span>
+          <span className="cs-val neg">− {moneyAbs(projectedOutflow)}</span>
+          <span className="cs-sub">{outCount} lançamento{outCount !== 1 ? "s" : ""}</span>
         </div>
-
-        {/* Risco Financeiro */}
-        <div className={`cal-panel cal-risk-panel ${risk.tone}`}>
-          <div className="cal-panel-header">
-            <h3 className="cal-panel-title">Risco Financeiro</h3>
-          </div>
-          <div className="cal-risk-indicator">
-            {risk.level === "low"
-              ? <CheckCircle size={36} className="cal-risk-icon positive" />
-              : risk.level === "medium"
-                ? <TriangleAlert size={36} className="cal-risk-icon warning" />
-                : <TriangleAlert size={36} className="cal-risk-icon negative" />}
-            <strong className="cal-risk-label">{risk.label}</strong>
-          </div>
-          <div className="cal-risk-rows">
-            <div className="cal-risk-row">
-              <span className="cal-risk-key">Motivo</span>
-              <span className="cal-risk-value">{risk.reason}</span>
-            </div>
-            <div className="cal-risk-row">
-              <span className="cal-risk-key">Recomendação</span>
-              <span className="cal-risk-value">{risk.recommendation}</span>
-            </div>
-            <div className="cal-risk-row">
-              <span className="cal-risk-key">Saldo projetado</span>
-              <span className={`cal-risk-value font-bold ${projectedBalance >= 0 ? "text-green" : "text-red"}`}>
-                {money(projectedBalance)}
-              </span>
-            </div>
-          </div>
+        <div className="cal-strip-cell">
+          <span className="cs-lab">A receber</span>
+          <span className="cs-val pos">+ {moneyAbs(projectedInflow)}</span>
+          <span className="cs-sub">{inCount} entrada{inCount !== 1 ? "s" : ""}</span>
+        </div>
+        <div className="cal-strip-cell">
+          <span className="cs-lab">Dias com lançamento</span>
+          <span className="cs-val">{daysWith} / {daysInMonth}</span>
+          <span className="cs-sub">no mês</span>
+        </div>
+        <div className="cal-strip-cell warn">
+          <span className="cs-lab">Dia mais pesado</span>
+          <span className="cs-val">{heaviestLabel}</span>
+          <span className="cs-sub">− {moneyAbs(Math.abs(heaviest.net))}</span>
         </div>
       </div>
 
-      {/* ── Próximos compromissos + Calendário ── */}
-      <div className="cal-main-row">
+      {/* ── Filtros + legenda (acima do calendário) ── */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+        {calFilterTabs.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            className={`chip${calFilter === tab.key ? " on" : ""}`}
+            onClick={() => setCalFilter(tab.key)}
+          >
+            {tab.label}
+          </button>
+        ))}
+        <div style={{ marginLeft: "auto", display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+          <span className="legend-item"><span className="sdot paid" /> Entrada</span>
+          <span className="legend-item"><span className="sdot late" /> Saída</span>
+          <span className="legend-item"><span className="sdot est" /> Atenção</span>
+          <span className="legend-item"><span className="sdot pred" /> Previsto</span>
+        </div>
+      </div>
+
+      {/* ── Calendário + painéis ── */}
+      <div className="cal-layout" style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 16, marginBottom: 20, alignItems: "stretch" }}>
+
+        {/* Calendário */}
+        <div className="card card-pad">
+          <CalendarMonthGrid
+            events={filteredEvents}
+            allEvents={filteredEvents}
+            dateFrom={period.dateFrom}
+            dateTo={period.dateTo}
+            loading={isLoading}
+            onEventClick={drilldown}
+            onDayClick={(date) => onOpenTransactions({ dateFrom: date, dateTo: date, periodPreset: "custom", label: `Dia ${date.slice(8, 10)}/${date.slice(5, 7)}` })}
+          />
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, marginTop: 14, fontSize: 12.5, color: "var(--ink-3)" }}>
+            Total {calFilter !== "all" ? `· ${calFilterTabs.find((t) => t.key === calFilter)?.label}` : ""}
+            <span style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 14, color: calendarTotal >= 0 ? "var(--pos)" : "var(--neg)", fontVariantNumeric: "tabular-nums" }}>
+              {money(calendarTotal)}
+            </span>
+          </div>
+        </div>
+
+        {/* Painéis laterais */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 16, height: "100%" }}>
 
         {/* Próximos compromissos */}
-        <div className="cal-panel cal-upcoming-panel">
-          <div className="cal-panel-header">
-            <h3 className="cal-panel-title">Próximos compromissos</h3>
-            <span className="cal-upcoming-hint">próximos 30 dias</span>
+        <div className="card" style={{ flex: 1, minHeight: 0 }}>
+          <div className="card-head">
+            <div className="kpi-ic" style={{ background: "var(--acc-soft)", color: "var(--acc)" }}>
+              <CalIcon name="clock" size={15} />
+            </div>
+            <div>
+              <div className="ttl">Próximos</div>
+              <div className="sub">30 dias</div>
+            </div>
           </div>
-
-          {isLoading ? (
-            <div className="cal-empty-state">
-              <Loader2 size={24} className="spin" style={{ color: "#9ca3af" }} />
-              <p>Carregando compromissos...</p>
-            </div>
-          ) : upcomingEvents.length === 0 ? (
-            <div className="cal-empty-state">
-              <CalendarDays size={36} style={{ color: "#d1d5db" }} />
-              <p>Nenhum compromisso encontrado</p>
-              <button
-                className="primary-button"
-                onClick={() => setShowEventDrawer(true)}
-                type="button"
-                style={{ marginTop: 4 }}
-              >
-                <Plus size={14} /> Criar compromisso
-              </button>
-            </div>
-          ) : (
-            <>
-              <div className="cal-timeline">
-                {upcomingEvents.map((event) => {
+          <div className="card-body" style={{ padding: "10px 14px" }}>
+            {isLoading ? (
+              <div className="state" style={{ padding: "28px 16px" }}>
+                <div className="state-ic"><Spinner size={20} /></div>
+                <p>Carregando...</p>
+              </div>
+            ) : upcomingEvents.length === 0 ? (
+              <div className="state" style={{ padding: "28px 16px" }}>
+                <div className="state-ic"><CalIcon name="calendar" size={22} /></div>
+                <h4>Sem compromissos</h4>
+                <p>Nenhum compromisso nos próximos 30 dias.</p>
+                <button className="btn btn-primary btn-sm" onClick={() => setShowEventModal(true)} type="button">
+                  <CalIcon name="plus" size={13} /> Criar
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                {upcomingEvents.slice(0, 5).map((event) => {
                   const d = new Date(event.date + "T00:00:00");
                   const dayNum = d.getDate();
                   const monthStr = d.toLocaleString("pt-BR", { month: "short" }).replace(".", "");
                   return (
                     <button
-                      className={`cal-upcoming-item ${event.tone}`}
+                      className="row-item"
                       key={`${event.kind}-${event.label}-${event.date}`}
                       onClick={() => drilldown(event)}
                       type="button"
+                      style={{ padding: "7px 8px", borderRadius: 9, width: "100%", textAlign: "left" }}
                     >
-                      <div className="cal-upcoming-date">
-                        <span className="cal-upcoming-day">{dayNum}</span>
-                        <span className="cal-upcoming-month">{monthStr}</span>
+                      <div className="date-chip">
+                        <div className="d">{dayNum}</div>
+                        <div className="m">{monthStr}</div>
                       </div>
-                      <div className="cal-upcoming-body">
-                        <strong className="cal-upcoming-name">{event.label}</strong>
-                        <small className="cal-upcoming-kind">{event.kind}{event.detail ? ` · ${event.detail}` : ""}</small>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {event.label}
+                        </div>
+                        <div style={{ fontSize: 11, color: "var(--ink-3)" }}>
+                          {event.category ?? event.kind}{event.detail ? ` · ${event.detail}` : ""}
+                        </div>
                       </div>
-                      <span className="cal-upcoming-amount">{moneyAbs(event.amount)}</span>
+                      <span className={`badge ${toneToEvtClass(event.tone)}`}>
+                        {moneyAbs(event.amount)}
+                      </span>
                     </button>
                   );
                 })}
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => onOpenTransactions({ dateFrom: period.dateFrom, dateTo: period.dateTo, periodPreset: period.periodPreset })}
+                  type="button"
+                  style={{ marginTop: 8, width: "100%", justifyContent: "center" }}
+                >
+                  {upcomingEvents.length > 5 ? `Ver todos (+${upcomingEvents.length - 5})` : "Ver todos"} <CalIcon name="chevR" size={13} />
+                </button>
               </div>
-              <button
-                className="cal-see-all-btn"
-                onClick={() => onOpenTransactions({ dateFrom: period.dateFrom, dateTo: period.dateTo, periodPreset: period.periodPreset })}
-                type="button"
-              >
-                Ver todos os compromissos
-              </button>
-            </>
-          )}
+            )}
+          </div>
         </div>
 
-        {/* Calendário */}
-        <div className="cal-panel cal-calendar-panel">
-          <CalendarMonthGrid
-            events={filteredEvents}
-            allEvents={calendarEvents}
-            dateFrom={period.dateFrom}
-            dateTo={period.dateTo}
-            loading={isLoading}
-            onEventClick={drilldown}
-          />
-          <div className="cal-filter-tabs">
-            {calFilterTabs.map((tab) => (
-              <button
-                className={`cal-filter-tab${calFilter === tab.key ? " active" : ""}`}
-                key={tab.key}
-                onClick={() => setCalFilter(tab.key)}
-                type="button"
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-          <div className="cal-calendar-footer">
-            <span className="cal-footer-label">Total do período {calFilter !== "all" ? `· ${calFilterTabs.find(t => t.key === calFilter)?.label}` : ""}</span>
-            <span className={`cal-footer-value ${calendarTotal >= 0 ? "positive" : "negative"}`}>
-              {money(calendarTotal)}
-            </span>
+          {/* Dias críticos */}
+          <div className="card" style={{ flex: 1, minHeight: 0 }}>
+            <div className="card-head">
+              <div className="kpi-ic" style={{ background: "var(--warn-soft)", color: "var(--warn)" }}>
+                <CalIcon name="alert" size={15} />
+              </div>
+              <div>
+                <div className="ttl">Dias críticos</div>
+                <div className="sub">Risco de saldo apertado</div>
+              </div>
+            </div>
+            <div className="card-body" style={{ padding: "6px 8px" }}>
+              {criticalDays.length === 0 ? (
+                <div style={{ padding: "20px 16px", fontSize: 12.5, color: "var(--ink-3)", textAlign: "center" }}>
+                  Nenhum dia crítico no período.
+                </div>
+              ) : (
+                <>
+                  {criticalDays.slice(0, 5).map((cd) => {
+                    const d = new Date(cd.date + "T00:00:00");
+                    return (
+                      <div className="row-item" key={cd.date} style={{ padding: "7px 8px" }}>
+                        <div className="date-chip" style={{ background: "var(--warn-soft)" }}>
+                          <span className="d">{d.getDate()}</span>
+                          <span className="m">{d.toLocaleString("pt-BR", { month: "short" }).replace(".", "")}</span>
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--ink)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {cd.label}
+                          </div>
+                          <div style={{ fontSize: 11, color: "var(--ink-3)" }}>
+                            {cd.count} lançamento{cd.count !== 1 ? "s" : ""}
+                          </div>
+                        </div>
+                        <span style={{ fontWeight: 700, color: "var(--neg)", fontVariantNumeric: "tabular-nums", fontSize: 13 }}>
+                          {moneyAbs(cd.net)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  {criticalDays.length > 5 && (
+                    <div style={{ padding: "4px 8px", fontSize: 11.5, color: "var(--ink-3)" }}>+{criticalDays.length - 5} dia{criticalDays.length - 5 !== 1 ? "s" : ""}</div>
+                  )}
+                  <div style={{ padding: "10px 12px 4px", borderTop: "1px solid var(--line)", marginTop: 4, display: "flex", alignItems: "baseline", gap: 8 }}>
+                    <span className="eyebrow">Maior saída no período</span>
+                    <span style={{ marginLeft: "auto", fontFamily: "var(--font-display)", fontSize: 18, fontWeight: 700, color: "var(--warn)" }}>
+                      {moneyAbs(Math.abs(heaviest.net))}
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* ── Vencimentos de Cartão ── */}
-      {(instData?.active_count ?? 0) > 0 && closingDate && dueDate && (
-        <div className="cal-section">
-          <h2 className="cal-section-title">Vencimentos de Cartão</h2>
-          <div className="cal-cards-grid">
-            <div className="cal-closing-card">
-              <div className="cal-closing-card-header">
-                <CreditCard size={18} />
-                <span>Cartão de Crédito</span>
-                <span className="cal-closing-status-badge">{daysUntil(closingDate)}d para fechar</span>
+      {/* ── Trio: Média semanal · Recorrências · Faturas ── */}
+      <div className="cal-trio">
+
+        {/* Saídas por categoria */}
+        <div className="card card-pad cal-trio-card">
+          <div className="cal-trio-head">
+            <div>
+              <div className="eyebrow">Saídas</div>
+              <div className="cal-trio-title">Saídas por categoria</div>
+            </div>
+            <span className="badge b-neg">{outCount}</span>
+          </div>
+          <div className="cal-trio-hero">
+            <span className="cth-lab">Total de saídas</span>
+            <span className="cth-val" style={{ color: "var(--neg)" }}>{moneyAbs(projectedOutflow)}</span>
+            <span className="cth-sub">{outCount} lançamento{outCount !== 1 ? "s" : ""}</span>
+          </div>
+          {catDist.length === 0 ? (
+            <div style={{ padding: "12px 0", fontSize: 12.5, color: "var(--ink-3)" }}>Sem saídas no período.</div>
+          ) : (
+            <div style={{ display: "grid", gap: 9 }}>
+              {catDist.slice(0, 5).map((d) => {
+                const c = d.color ?? kindColor(d.name);
+                const pct = (d.value / catDistTotal) * 100;
+                return (
+                  <div key={d.name}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4, gap: 8 }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: c, flex: "none" }} />
+                        <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.name}</span>
+                      </span>
+                      <strong style={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{moneyAbs(d.value)}</strong>
+                    </div>
+                    <div className="track thin"><div className="fill" style={{ width: `${pct}%`, background: c }} /></div>
+                    <div className="t-sub mono" style={{ marginTop: 3, fontSize: 11, color: "var(--ink-3)" }}>
+                      {pct.toFixed(1).replace(".", ",")}% de saída
+                    </div>
+                  </div>
+                );
+              })}
+              {catDist.length > 5 && (
+                <div style={{ fontSize: 11.5, color: "var(--ink-3)" }}>+{catDist.length - 5} categoria{catDist.length - 5 !== 1 ? "s" : ""}</div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Recorrências */}
+        <div className="card card-pad cal-trio-card">
+          <div className="cal-trio-head">
+            <div>
+              <div className="eyebrow">Recorrentes</div>
+              <div className="cal-trio-title">Recorrências</div>
+            </div>
+            <span className="badge b-info">{sortedRecurring.length} ativas</span>
+          </div>
+          <div className="cal-trio-hero">
+            <span className="cth-lab">Total mensal</span>
+            <span className="cth-val">{moneyAbs(sortedRecurring.reduce((s, r) => s + Math.abs(Number(r.last_amount ?? 0)), 0))}</span>
+            <span className="cth-sub">
+              soma de {sortedRecurring.length} recorrência{sortedRecurring.length !== 1 ? "s" : ""}
+              {sortedRecurring.length > 5 ? " · 5 maiores abaixo" : ""}
+            </span>
+          </div>
+          <div className="sub-list">
+            {sortedRecurring.slice(0, 5).map((r) => {
+              const c = kindColor(r.description);
+              return (
+                <div
+                  className="sub-row"
+                  key={r.description}
+                  style={{ cursor: "pointer" }}
+                  title={`Ver lançamentos de "${r.description}"`}
+                  onClick={() => onOpenTransactions({ search: r.description, dateFrom: period.dateFrom, dateTo: period.dateTo, periodPreset: period.periodPreset, label: r.description })}
+                >
+                  <span className="sub-logo" style={{ background: c + "22", color: c, border: `1px solid ${c}55` }}>{r.description.charAt(0).toUpperCase()}</span>
+                  <div className="sub-meta">
+                    <span className="sub-name">{r.description}</span>
+                    <span className="sub-due">{r.category_name ?? (r.last_transaction_date ? nextOccurrenceLabel(r.last_transaction_date) : "recorrente")}</span>
+                  </div>
+                  <span className="sub-val mono">{moneyAbs(r.last_amount)}</span>
+                </div>
+              );
+            })}
+            {sortedRecurring.length > 5 && (
+              <div style={{ fontSize: 11.5, color: "var(--ink-3)", padding: "4px 2px" }}>+{sortedRecurring.length - 5} recorrência{sortedRecurring.length - 5 !== 1 ? "s" : ""}</div>
+            )}
+          </div>
+        </div>
+
+        {/* Faturas */}
+        <div className="card card-pad cal-trio-card">
+          <div className="cal-trio-head">
+            <div>
+              <div className="eyebrow">Cartões</div>
+              <div className="cal-trio-title">Faturas</div>
+            </div>
+            <span className="badge b-warn">{(creditCards.data?.items ?? []).length || (instData?.active_count ? 1 : 0)} cartões</span>
+          </div>
+          <div className="cal-trio-hero">
+            <span className="cth-lab">Total em faturas</span>
+            <span className="cth-val">{moneyAbs(instData?.total_future_amount)}</span>
+            <span className="cth-sub">{instData?.active_count ?? 0} parcela{(instData?.active_count ?? 0) !== 1 ? "s" : ""} ativa{(instData?.active_count ?? 0) !== 1 ? "s" : ""}</span>
+          </div>
+          <div className="sub-list">
+            {(creditCards.data?.items ?? []).length > 0 ? (
+              <>
+                {(creditCards.data?.items ?? []).slice(0, 4).map((card) => {
+                  const dleft = daysUntil(nextDayOfMonth(card.due_day));
+                  const c = kindColor(card.name);
+                  const dueClass = dleft <= 7 ? "b-neg" : dleft <= 15 ? "b-warn" : "b-info";
+                  return (
+                    <div className="sub-row" key={card.id}>
+                      <span className="sub-logo" style={{ background: c + "22", color: c, border: `1px solid ${c}55` }}>{card.name.charAt(0).toUpperCase()}</span>
+                      <div className="sub-meta">
+                        <span className="sub-name">{card.name}</span>
+                        <span className="sub-due">vence dia {card.due_day} · <span className={`badge ${dueClass}`} style={{ fontSize: 9.5, padding: "1px 6px" }}>{dleft} dias</span></span>
+                      </div>
+                      <span className="sub-val mono">{card.brand ?? card.last_four ?? ""}</span>
+                    </div>
+                  );
+                })}
+                {(creditCards.data?.items ?? []).length > 4 && (
+                  <div style={{ fontSize: 11.5, color: "var(--ink-3)", padding: "4px 2px" }}>+{(creditCards.data?.items ?? []).length - 4} cartão(ões)</div>
+                )}
+              </>
+            ) : closingDate && dueDate ? (
+              <div className="sub-row">
+                <span className="sub-logo" style={{ background: "var(--warn-soft)", color: "var(--warn)", border: "1px solid var(--warn)" }}>C</span>
+                <div className="sub-meta">
+                  <span className="sub-name">Cartão de Crédito</span>
+                  <span className="sub-due">vence em {daysUntil(dueDate)} dias · fecha em {daysUntil(closingDate)} dias</span>
+                </div>
+                <span className="sub-val mono">{moneyAbs(instData?.total_future_amount)}</span>
               </div>
-              <div className="cal-closing-card-body">
-                <div className="cal-closing-card-row">
-                  <span>Fecha em</span>
-                  <strong>{daysUntil(closingDate)} dias <small>({fmtShortDate(closingDate)})</small></strong>
-                </div>
-                <div className="cal-closing-card-row">
-                  <span>Vence em</span>
-                  <strong>{daysUntil(dueDate)} dias <small>({fmtShortDate(dueDate)})</small></strong>
-                </div>
-                <div className="cal-closing-card-divider" />
-                <div className="cal-closing-card-row highlight">
-                  <span>Fatura atual</span>
-                  <strong className="negative">{moneyAbs(instData?.total_future_amount)}</strong>
-                </div>
-                <div className="cal-closing-card-row">
-                  <span>Parcelas ativas</span>
-                  <strong>{instData?.active_count}</strong>
-                </div>
-              </div>
+            ) : (
+              <div style={{ padding: "12px 0", fontSize: 12.5, color: "var(--ink-3)" }}>Sem cartões cadastrados.</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Média por dia da semana + Entradas ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 18 }}>
+
+        {/* Média por dia da semana */}
+        <div className="card card-pad cal-trio-card">
+          <div className="cal-trio-head">
+            <div>
+              <div className="eyebrow">Visão temporal</div>
+              <div className="cal-trio-title">Média por dia da semana</div>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* ── Recorrências ── */}
-      {sortedRecurring.length > 0 && (
-        <div className="cal-section">
-          <h2 className="cal-section-title">Recorrências do mês</h2>
-          <div className="cal-rec-grid">
-            {sortedRecurring.map((r) => (
-              <div className="cal-rec-card" key={r.description}>
-                <div className="cal-rec-card-top">
-                  <span className="cal-rec-card-name">{r.description}</span>
-                  <span className="cal-rec-card-amount">{moneyAbs(r.last_amount)}</span>
+          {weekdayData.items.length === 0 ? (
+            <div style={{ padding: "24px 0", fontSize: 12.5, color: "var(--ink-3)" }}>Sem dados no período.</div>
+          ) : (
+            <>
+              <div className="wdbars" style={{ marginTop: 14, marginBottom: 14 }}>
+                {weekdayData.items.map((w) => (
+                  <div
+                    key={w.weekday}
+                    className={"wdbar" + (w.weekday === weekdayData.worst?.weekday ? " top" : "") + (w.weekday === weekdayData.best?.weekday ? " low" : "")}
+                  >
+                    <div className="wdbar-val mono">{moneyAbs(w.avg)}</div>
+                    <div className="wdbar-track"><div className="wdbar-fill" style={{ height: `${(w.avg / weekdayData.max) * 100}%` }} /></div>
+                    <div className="wdbar-lab">{w.label}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="cal-trio-stats">
+                <div className="cts-cell">
+                  <span className="cts-lab">Melhor dia</span>
+                  <span className="cts-val pos">{weekdayData.best?.label ?? "—"}</span>
+                  <span className="cts-sub">{moneyAbs(weekdayData.best?.avg ?? 0)}/dia</span>
                 </div>
-                <div className="cal-rec-card-bottom">
-                  {r.category_name && <small className="cal-rec-category">{r.category_name}</small>}
-                  {r.last_transaction_date && (
-                    <small className="cal-rec-next">{nextOccurrenceLabel(r.last_transaction_date)}</small>
-                  )}
-                  <span className={`cal-rec-badge ${r.status}`}>
-                    {r.status === "stable" ? "Estável" : r.status === "rising" ? "↑ Alta" : "↓ Queda"}
-                  </span>
+                <div className="cts-cell">
+                  <span className="cts-lab">Pior dia</span>
+                  <span className="cts-val neg">{weekdayData.worst?.label ?? "—"}</span>
+                  <span className="cts-sub">{moneyAbs(weekdayData.worst?.avg ?? 0)}/dia</span>
+                </div>
+                <div className="cts-cell">
+                  <span className="cts-lab">Média diária</span>
+                  <span className="cts-val">{moneyAbs(weekdayData.avgAll)}</span>
+                  <span className="cts-sub">no período</span>
                 </div>
               </div>
-            ))}
-          </div>
+            </>
+          )}
         </div>
-      )}
 
-      {/* ── Drawer: Novo compromisso ── */}
-      {showEventDrawer && (
-        <div className="cal-drawer-overlay" onClick={() => setShowEventDrawer(false)}>
-          <div className="cal-drawer" onClick={(e) => e.stopPropagation()}>
-            <div className="cal-drawer-header">
-              <h3 className="cal-drawer-title">Novo compromisso</h3>
-              <button className="cal-drawer-close" onClick={() => setShowEventDrawer(false)} type="button">
-                <X size={16} />
+        {/* Entradas por categoria */}
+        <div className="card card-pad cal-trio-card">
+          <div className="cal-trio-head">
+            <div>
+              <div className="eyebrow">Entradas</div>
+              <div className="cal-trio-title">Entradas por categoria</div>
+            </div>
+            <span className="badge b-real">{inCount}</span>
+          </div>
+          <div className="cal-trio-hero">
+            <span className="cth-lab">Total de entradas</span>
+            <span className="cth-val" style={{ color: "var(--pos)" }}>{moneyAbs(projectedInflow)}</span>
+            <span className="cth-sub">{inCount} entrada{inCount !== 1 ? "s" : ""} no período</span>
+          </div>
+          {incomeDist.length === 0 ? (
+            <div style={{ padding: "12px 0", fontSize: 12.5, color: "var(--ink-3)" }}>Sem entradas no período.</div>
+          ) : (
+            <div style={{ display: "grid", gap: 9 }}>
+              {incomeDist.slice(0, 3).map((d) => {
+                const c = d.color ?? "var(--pos)";
+                const pct = (d.value / incomeDistTotal) * 100;
+                return (
+                  <div key={d.name}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4, gap: 8 }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: c, flex: "none" }} />
+                        <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.name}</span>
+                      </span>
+                      <strong style={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", color: "var(--pos)" }}>{moneyAbs(d.value)}</strong>
+                    </div>
+                    <div className="track thin"><div className="fill" style={{ width: `${pct}%`, background: c }} /></div>
+                    <div className="t-sub mono" style={{ marginTop: 3, fontSize: 11, color: "var(--ink-3)" }}>
+                      {pct.toFixed(1).replace(".", ",")}% do total
+                    </div>
+                  </div>
+                );
+              })}
+              {incomeDist.length > 3 && (
+                <div style={{ fontSize: 11.5, color: "var(--ink-3)" }}>+{incomeDist.length - 3} entrada{incomeDist.length - 3 !== 1 ? "s" : ""}</div>
+              )}
+            </div>
+          )}
+          <button
+            className="cal-trio-cta"
+            type="button"
+            onClick={() => onOpenTransactions({ direction: "credit", dateFrom: period.dateFrom, dateTo: period.dateTo, periodPreset: period.periodPreset, label: "Entradas" })}
+          >
+            Ver entradas <CalIcon name="chevR" size={13} />
+          </button>
+        </div>
+      </div>
+
+      {/* ── Modal: Novo compromisso ── */}
+      {showEventModal && (
+        <div className="mdl-backdrop" onClick={() => setShowEventModal(false)}>
+          <div className="mdl" onClick={(e) => e.stopPropagation()}>
+            <div className="mdl-head">
+              <div className="mh-ic">
+                <CalIcon name="calendar" size={17} />
+              </div>
+              <div>
+                <div className="mh-ttl">Novo compromisso</div>
+                <div className="mh-sub">Cadastre compromissos que ainda não aparecem nos extratos importados.</div>
+              </div>
+              <button
+                className="btn btn-ghost btn-sm mh-close"
+                onClick={() => setShowEventModal(false)}
+                type="button"
+                style={{ padding: "6px 8px" }}
+              >
+                <CalIcon name="x" size={15} />
               </button>
             </div>
-            <p style={{ fontSize: 13, color: "#6b7280", margin: 0 }}>
-              Cadastre compromissos que ainda não aparecem nos extratos importados.
-            </p>
-            <form className="inline-form form-grid two-columns" onSubmit={(e) => { e.preventDefault(); createEvent.mutate(); }}>
-              <label>Título<input required value={eventForm.title} onChange={(e) => setEventForm((c) => ({ ...c, title: e.target.value }))} /></label>
-              <label>Data<input required type="date" value={eventForm.dueDate} onChange={(e) => setEventForm((c) => ({ ...c, dueDate: e.target.value }))} /></label>
-              <label>
-                Tipo
-                <select value={eventForm.eventType} onChange={(e) => setEventForm((c) => ({ ...c, eventType: e.target.value }))}>
-                  <option value="expense">Despesa</option>
-                  <option value="income">Receita</option>
-                  <option value="card_payment">Fatura</option>
-                  <option value="subscription">Assinatura</option>
-                  <option value="goal">Meta</option>
-                  <option value="other">Outro</option>
-                </select>
-              </label>
-              <label>Valor<input min="0" step="0.01" type="number" value={eventForm.amount} onChange={(e) => setEventForm((c) => ({ ...c, amount: e.target.value }))} /></label>
-              <label>
-                Recorrência
-                <select value={eventForm.recurrence} onChange={(e) => setEventForm((c) => ({ ...c, recurrence: e.target.value }))}>
-                  <option value="none">Sem recorrência</option>
-                  <option value="monthly">Mensal</option>
-                </select>
-              </label>
-              <button className="primary-button" disabled={createEvent.isPending} type="submit">
-                {createEvent.isPending ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
+
+            <div className="mdl-body">
+              <form
+                id="new-event-form"
+                onSubmit={(e) => { e.preventDefault(); createEvent.mutate(); }}
+              >
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
+                  <label className="fld" style={{ gridColumn: "1 / -1" }}>
+                    <span className="fld-label">Título</span>
+                    <input
+                      className="fld-input"
+                      required
+                      placeholder="Ex: Aluguel, Netflix..."
+                      value={eventForm.title}
+                      onChange={(e) => setEventForm((c) => ({ ...c, title: e.target.value }))}
+                    />
+                  </label>
+                  <label className="fld" style={{ marginRight: 7 }}>
+                    <span className="fld-label">Data</span>
+                    <input
+                      className="fld-input"
+                      required
+                      type="date"
+                      value={eventForm.dueDate}
+                      onChange={(e) => setEventForm((c) => ({ ...c, dueDate: e.target.value }))}
+                    />
+                  </label>
+                  <label className="fld" style={{ marginLeft: 7 }}>
+                    <span className="fld-label">Valor</span>
+                    <input
+                      className="fld-input"
+                      min="0"
+                      step="0.01"
+                      type="number"
+                      placeholder="0,00"
+                      value={eventForm.amount}
+                      onChange={(e) => setEventForm((c) => ({ ...c, amount: e.target.value }))}
+                    />
+                  </label>
+                  <label className="fld" style={{ marginRight: 7 }}>
+                    <span className="fld-label">Tipo</span>
+                    <select
+                      className="fld-select"
+                      value={eventForm.eventType}
+                      onChange={(e) => setEventForm((c) => ({ ...c, eventType: e.target.value }))}
+                    >
+                      <option value="expense">Despesa</option>
+                      <option value="income">Receita</option>
+                      <option value="card_payment">Fatura</option>
+                      <option value="subscription">Assinatura</option>
+                      <option value="goal">Meta</option>
+                      <option value="other">Outro</option>
+                    </select>
+                  </label>
+                  <label className="fld" style={{ marginLeft: 7 }}>
+                    <span className="fld-label">Recorrência</span>
+                    <select
+                      className="fld-select"
+                      value={eventForm.recurrence}
+                      onChange={(e) => setEventForm((c) => ({ ...c, recurrence: e.target.value }))}
+                    >
+                      <option value="none">Sem recorrência</option>
+                      <option value="monthly">Mensal</option>
+                    </select>
+                  </label>
+                </div>
+
+                {createEvent.isError && (
+                  <div className="alert neg" style={{ marginTop: 8, marginBottom: 4 }}>
+                    <div className="alert-ic"><CalIcon name="alert" size={17} /></div>
+                    <div>
+                      <div className="a-ttl">Erro ao criar evento</div>
+                      <div className="a-txt">{apiErrorMessage(createEvent.error, "Falha ao criar evento.")}</div>
+                    </div>
+                  </div>
+                )}
+              </form>
+            </div>
+
+            <div className="mdl-foot">
+              <span className="spacer" />
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => setShowEventModal(false)}
+                type="button"
+              >
+                Cancelar
+              </button>
+              <button
+                className="btn btn-primary btn-sm"
+                disabled={createEvent.isPending}
+                form="new-event-form"
+                type="submit"
+              >
+                {createEvent.isPending ? <Spinner size={14} /> : <CalIcon name="plus" size={14} />}
                 Adicionar
               </button>
-            </form>
-            {createEvent.isError ? <InlineError message={apiErrorMessage(createEvent.error, "Falha ao criar evento.")} /> : null}
+            </div>
           </div>
         </div>
       )}
-    </section>
+    </div>
   );
 }

@@ -1,80 +1,360 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, Gauge, Loader2, PiggyBank, Plus, Sparkles, Target } from "lucide-react";
 
-import { createGoal, getDashboardSummary, getGoals } from "../lib/api";
-import {
-  apiErrorMessage,
-  dateInputLabel,
-  formatPercentNumber,
-  moneyAbs,
-  periodRange,
-} from "../lib/utils";
+import { createGoal, deleteGoal, getAccounts, getDashboardSummary, getGoals, updateGoal } from "../lib/api";
+import { apiErrorMessage, dateInputLabel, moneyAbs } from "../lib/utils";
 import { usePeriod } from "../hooks";
-import {
-  DashboardSectionHeader,
-  InlineError,
-  MetricCard,
-  Panel,
-  PeriodFilter,
-  StatusBadge,
-} from "../components/ui";
-import type { ApiSession, DashboardSummary, GoalRead } from "../lib/api";
+import type { AccountItem, ApiSession, DashboardSummary, GoalRead } from "../lib/api";
 import type { PeriodState } from "../types";
+
+// ---------------------------------------------------------------------------
+// SVG Icons
+// ---------------------------------------------------------------------------
+
+const G_ICONS: Record<string, string> = {
+  target:  "M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0 M12 12m-5 0a5 5 0 1 0 10 0a5 5 0 1 0-10 0 M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0-2 0",
+  plus:    "M12 5v14 M5 12h14",
+  check:   "M5 12l5 5 9-10",
+  x:       "M18 6L6 18 M6 6l12 12",
+  flag:    "M5 3v18 M5 5l14 5-14 5",
+  info:    "M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0 M12 11v5 M12 8h.01",
+  edit:    "M11 4H4a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7 M18.5 2.5a2 2 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z",
+  trash:   "M4 7h16 M10 11v6 M14 11v6 M5 7l1 12a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1l1-12 M9 7V4h6v3",
+  link:    "M9 15l6-6 M10 7l1-1a3.5 3.5 0 0 1 5 5l-1 1 M14 17l-1 1a3.5 3.5 0 0 1-5-5l1-1",
+  wallet:  "M3 7h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a2 2 0 0 1 2-2h11 M16 12h.01",
+  star:    "M12 2l3.1 6.3L22 9.3l-5 4.9 1.2 6.8L12 17.7l-6.2 3.3L7 14.2 2 9.3l6.9-1L12 2z",
+  chevR:   "M9 18l6-6-6-6",
+};
+
+function GIcon({ name, size = 15 }: { name: string; size?: number }) {
+  const d = G_ICONS[name];
+  if (!d) return null;
+  const segs = d.split(" M");
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round"
+      style={{ flex: "none" }}>
+      {segs.map((seg, i) => <path key={i} d={i === 0 ? seg : "M" + seg} />)}
+    </svg>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function goalStatusLabel(goalStatus: string) {
-  const labels: Record<string, string> = {
-    active: "Ativa",
-    completed: "Concluída",
-    paused: "Pausada",
-  };
-  return labels[goalStatus] ?? goalStatus;
+const GOAL_COLORS = ["#2a9d8f", "#6a4ba8", "#c98a2b", "#2a4d8f", "#a35a7d", "#1f8a5b"];
+
+interface GoalRow {
+  goal: GoalRead | null;
+  name: string;
+  description: string;
+  current: number;
+  target: number;
+  ratio: number;
+  targetDate: string | null;
+  deadlineLabel: string;
+  monthsLeft: number;
 }
 
-function buildGoalRows(summary?: DashboardSummary, persistedGoals?: GoalRead[]) {
+function monthsUntil(iso: string | null): number {
+  if (!iso) return 12;
+  const now = new Date();
+  const d = new Date(iso + "T12:00:00");
+  const months = (d.getFullYear() - now.getFullYear()) * 12 + (d.getMonth() - now.getMonth());
+  return Math.max(1, months);
+}
+
+function buildGoalRows(summary?: DashboardSummary, persistedGoals?: GoalRead[]): GoalRow[] {
   if (persistedGoals?.length) {
     return persistedGoals.map((goal) => ({
-      current: Number(goal.current_amount),
-      deadline: goal.target_date ? `Meta para ${dateInputLabel(goal.target_date)}` : "Sem prazo definido",
-      description: goal.description ?? "Meta cadastrada no planejamento.",
+      goal,
       name: goal.name,
-      ratio: Number(goal.current_amount) / Math.max(Number(goal.target_amount), 1),
-      status: goalStatusLabel(goal.status),
+      description: goal.description ?? "Meta cadastrada no planejamento.",
+      current: Number(goal.current_amount),
       target: Number(goal.target_amount),
+      ratio: Number(goal.current_amount) / Math.max(Number(goal.target_amount), 1),
+      targetDate: goal.target_date,
+      deadlineLabel: goal.target_date ? dateInputLabel(goal.target_date) : "sem prazo",
+      monthsLeft: monthsUntil(goal.target_date),
     }));
   }
   const balance = Math.max(Number(summary?.balance ?? 0), 0);
-  const monthlyBoost = Math.min(balance, 1200);
-  const goals = [
-    { current: 16500 + monthlyBoost, deadline: "Meta para 90 dias", description: "Cobrir despesas essenciais com mais previsibilidade.", name: "Reserva de emergência", status: "Em avanço", target: 24000 },
-    { current: 4200 + monthlyBoost * 0.3, deadline: "Meta para 6 meses", description: "Separar recursos para uma viagem familiar planejada.", name: "Viagem em família", status: "No ritmo", target: 12000 },
-    { current: 2800 + monthlyBoost * 0.2, deadline: "Meta para 12 meses", description: "Construir uma base de investimento recorrente.", name: "Carteira de longo prazo", status: "Inicial", target: 18000 },
+  const boost = Math.min(balance, 1200);
+  const demo = [
+    { name: "Reserva de emergência", description: "Cobrir despesas essenciais com mais previsibilidade.", current: 16500 + boost, target: 24000, months: 3 },
+    { name: "Viagem em família", description: "Separar recursos para uma viagem planejada.", current: 4200 + boost * 0.3, target: 12000, months: 6 },
+    { name: "Carteira de longo prazo", description: "Construir uma base de investimento recorrente.", current: 2800 + boost * 0.2, target: 18000, months: 12 },
   ];
-  return goals.map((goal) => ({ ...goal, ratio: goal.current / Math.max(goal.target, 1) }));
+  return demo.map((g) => ({
+    goal: null,
+    name: g.name,
+    description: g.description,
+    current: g.current,
+    target: g.target,
+    ratio: g.current / Math.max(g.target, 1),
+    targetDate: null,
+    deadlineLabel: `${g.months} meses`,
+    monthsLeft: g.months,
+  }));
+}
+
+function goalBadge(ratio: number, targetDate: string | null): { cls: string; label: string } {
+  if (ratio >= 1) return { cls: "b-pos", label: "Concluída" };
+  if (targetDate && new Date(targetDate + "T12:00:00") < new Date()) return { cls: "b-neg", label: "Atrasada" };
+  if (ratio >= 0.5) return { cls: "b-pos", label: "No prazo" };
+  return { cls: "b-warn", label: "Atenção" };
+}
+
+// ---------------------------------------------------------------------------
+// Ring (circular progress)
+// ---------------------------------------------------------------------------
+
+function Ring({ value, size = 64, thickness = 7, color }: { value: number; size?: number; thickness?: number; color: string }) {
+  const r = (size - thickness) / 2;
+  const c = 2 * Math.PI * r;
+  const pct = Math.min(Math.max(value, 0), 100);
+  const dash = (pct / 100) * c;
+  return (
+    <div style={{ position: "relative", width: size, height: size, flex: "none" }}>
+      <svg width={size} height={size}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--line)" strokeWidth={thickness} />
+        <circle
+          cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={thickness}
+          strokeDasharray={`${dash} ${c}`} strokeLinecap="round"
+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+        />
+      </svg>
+      <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", fontWeight: 700, fontSize: 13, fontFamily: "var(--font-display)" }}>
+        {Math.round(pct)}%
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Goal Card
+// ---------------------------------------------------------------------------
+
+function GoalCard({ goal, color, monthlyIncome, onEdit, onDelete, onAporte }: {
+  goal: GoalRow;
+  color: string;
+  monthlyIncome: number;
+  onEdit: (g: GoalRead) => void;
+  onDelete: (g: GoalRead) => void;
+  onAporte: (g: GoalRead) => void;
+}) {
+  const pct = Math.min(goal.ratio * 100, 100);
+  const remaining = Math.max(goal.target - goal.current, 0);
+  const monthly = remaining > 0 ? remaining / goal.monthsLeft : 0;
+  const impact = monthlyIncome > 0 ? (monthly / monthlyIncome) * 100 : null;
+  const badge = goalBadge(goal.ratio, goal.targetDate);
+  const raw = goal.goal;
+  const isAccount = raw?.tracking_mode === "account";
+
+  return (
+    <div className="card card-pad">
+      {/* Head */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        <span style={{ width: 38, height: 38, borderRadius: 11, display: "grid", placeItems: "center", flex: "none", background: color + "1e", color }}>
+          <GIcon name="target" size={19} />
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 14 }}>{goal.name}</div>
+          <div className="t-sub" style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <span>até {goal.deadlineLabel}</span>
+            {isAccount && raw?.linked_account && (
+              <span className="badge b-info" style={{ fontSize: 9.5, padding: "1px 6px" }} title={`Segue o saldo de ${raw.linked_account}`}>
+                <GIcon name="link" size={10} /> {raw.linked_account}
+              </span>
+            )}
+          </div>
+        </div>
+        <span className={`badge ${badge.cls}`}>{badge.label}</span>
+      </div>
+
+      {/* Ring + value */}
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 10, marginBottom: 8 }}>
+        <Ring value={pct} size={64} thickness={7} color={color} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontFamily: "var(--font-display)", fontSize: 20, fontWeight: 700, fontVariantNumeric: "tabular-nums", letterSpacing: "-.4px" }}>{moneyAbs(goal.current)}</div>
+          <div className="t-sub">de {moneyAbs(goal.target)}</div>
+        </div>
+      </div>
+
+      <hr className="divider" style={{ margin: "12px 0" }} />
+
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5 }}>
+        <span style={{ color: "var(--ink-3)" }}>Contribuição sugerida</span>
+        <span className="mono" style={{ fontWeight: 700 }}>{moneyAbs(monthly)}/mês</span>
+      </div>
+      {impact != null && (
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginTop: 4 }}>
+          <span style={{ color: "var(--ink-3)" }}>Impacto no orçamento</span>
+          <span style={{ fontWeight: 600, color: impact > 30 ? "var(--warn)" : "var(--ink-2)" }}>{Math.round(impact)}% da renda</span>
+        </div>
+      )}
+
+      {raw && (
+        <div style={{ display: "flex", gap: 6, marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--line)" }}>
+          {!isAccount && (
+            <button className="btn btn-quiet btn-sm" type="button" onClick={() => onAporte(raw)} title="Registrar aporte">
+              <GIcon name="plus" size={13} /> Aporte
+            </button>
+          )}
+          <span style={{ flex: 1 }} />
+          <button className="btn btn-quiet btn-sm" type="button" onClick={() => onEdit(raw)} title="Editar"><GIcon name="edit" size={13} /></button>
+          <button className="btn btn-quiet btn-sm" type="button" style={{ color: "var(--neg)" }} onClick={() => onDelete(raw)} title="Excluir"><GIcon name="trash" size={13} /></button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Goal form modal
+// ---------------------------------------------------------------------------
+
+interface GoalFormState {
+  id: string | null;
+  currentAmount: string;
+  description: string;
+  name: string;
+  targetAmount: string;
+  targetDate: string;
+  trackingMode: string;
+  linkedAccount: string;
+}
+
+function emptyGoalForm(): GoalFormState {
+  return { id: null, currentAmount: "0", description: "", name: "", targetAmount: "", targetDate: "", trackingMode: "manual", linkedAccount: "" };
+}
+
+function GoalModal({
+  form,
+  setForm,
+  saving,
+  error,
+  accounts,
+  onClose,
+  onSubmit,
+}: {
+  form: GoalFormState;
+  setForm: (f: GoalFormState) => void;
+  saving: boolean;
+  error: string;
+  accounts: AccountItem[];
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  const editing = Boolean(form.id);
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
+  return (
+    <div className="mdl-backdrop" onClick={onClose}>
+      <div className="mdl" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <div className="mdl-head">
+          <span className="mh-ic"><GIcon name="target" size={17} /></span>
+          <div style={{ minWidth: 0 }}>
+            <div className="mh-ttl">{editing ? "Editar meta" : "Nova meta financeira"}</div>
+            <div className="mh-sub">Defina um objetivo e acompanhe o progresso real.</div>
+          </div>
+          <button className="mh-close" onClick={onClose} aria-label="Fechar">
+            <GIcon name="x" size={18} />
+          </button>
+        </div>
+
+        <div className="mdl-body">
+          <label className="fld">
+            <span className="fld-label">Nome</span>
+            <input className="fld-input" autoFocus required placeholder="Ex: Reserva de emergência, Viagem…" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          </label>
+
+          <div className="fld">
+            <span className="fld-label">Acompanhamento do valor atual</span>
+            <div className="seg" style={{ width: "100%" }}>
+              <button type="button" className={form.trackingMode === "manual" ? "on" : ""} style={{ flex: 1 }} onClick={() => setForm({ ...form, trackingMode: "manual" })}>Manual / Aportes</button>
+              <button type="button" className={form.trackingMode === "account" ? "on" : ""} style={{ flex: 1 }} onClick={() => setForm({ ...form, trackingMode: "account" })}>Vincular a conta</button>
+            </div>
+            <div className="fld-help">{form.trackingMode === "account" ? "O valor atual segue o saldo importado da conta escolhida." : "Você atualiza o valor manualmente (botão Aporte na meta)."}</div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <label className="fld">
+              <span className="fld-label">Valor alvo</span>
+              <input className="fld-input" min="0.01" required step="0.01" type="number" placeholder="0,00" value={form.targetAmount} onChange={(e) => setForm({ ...form, targetAmount: e.target.value })} />
+            </label>
+            {form.trackingMode === "account" ? (
+              <label className="fld">
+                <span className="fld-label">Conta vinculada</span>
+                <select className="fld-select" value={form.linkedAccount} onChange={(e) => setForm({ ...form, linkedAccount: e.target.value })}>
+                  <option value="">Selecione…</option>
+                  {accounts.map((a) => (
+                    <option key={a.account_name} value={a.account_name}>{a.account_name} · {moneyAbs(a.balance)}</option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <label className="fld">
+                <span className="fld-label">Valor atual</span>
+                <input className="fld-input" min="0" step="0.01" type="number" placeholder="0,00" value={form.currentAmount} onChange={(e) => setForm({ ...form, currentAmount: e.target.value })} />
+              </label>
+            )}
+          </div>
+
+          <label className="fld">
+            <span className="fld-label">Prazo (opcional)</span>
+            <input className="fld-input" type="date" value={form.targetDate} onChange={(e) => setForm({ ...form, targetDate: e.target.value })} />
+          </label>
+
+          <label className="fld">
+            <span className="fld-label">Descrição (opcional)</span>
+            <input className="fld-input" placeholder="Contexto sobre esta meta…" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+          </label>
+
+          {error && <div className="fld-error">{error}</div>}
+        </div>
+
+        <div className="mdl-foot">
+          <span style={{ flex: 1 }} />
+          <button className="btn btn-quiet" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" disabled={saving} onClick={onSubmit}>
+            <GIcon name="check" size={14} />
+            {saving ? "Salvando…" : editing ? "Salvar alterações" : "Criar meta"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
-export function GoalsPage({ session }: { session: ApiSession }) {
-  const [goalPeriod, setGoalPeriod] = useState<PeriodState>(() => {
-    const range = periodRange("current_month");
-    return { ...range, periodPreset: "current_month" };
-  });
-  const [goalForm, setGoalForm] = useState(() => ({
-    currentAmount: "0",
-    description: "",
-    name: "",
-    targetAmount: "",
-    targetDate: "",
-  }));
+export function GoalsPage({
+  session,
+  period: goalPeriod,
+  setPeriod,
+}: {
+  session: ApiSession;
+  period: PeriodState;
+  setPeriod: Dispatch<SetStateAction<PeriodState>>;
+}) {
+  const [showModal, setShowModal] = useState(false);
+  const [goalForm, setGoalForm] = useState<GoalFormState>(emptyGoalForm);
+  const [formError, setFormError] = useState("");
+  const [aporteGoal, setAporteGoal] = useState<GoalRead | null>(null);
+  const [aporteValue, setAporteValue] = useState("");
+
   const queryClient = useQueryClient();
-  const period = usePeriod(goalPeriod, setGoalPeriod);
+  const period = usePeriod(goalPeriod, setPeriod);
+
   const summary = useQuery({
     queryKey: ["goals-summary", session.token, period.query],
     queryFn: () => getDashboardSummary(session, period.query),
@@ -83,87 +363,233 @@ export function GoalsPage({ session }: { session: ApiSession }) {
     queryKey: ["goals", session.token],
     queryFn: () => getGoals(session),
   });
-  const createGoalMutation = useMutation({
-    mutationFn: () =>
-      createGoal(session, {
-        current_amount: goalForm.currentAmount || "0",
+  const accounts = useQuery({
+    queryKey: ["accounts", session.token],
+    queryFn: () => getAccounts(session),
+  });
+
+  function invalidateGoals() {
+    void queryClient.invalidateQueries({ queryKey: ["goals"] });
+  }
+
+  const saveGoalMutation = useMutation({
+    mutationFn: () => {
+      const payload = {
+        current_amount: goalForm.trackingMode === "account" ? "0" : (goalForm.currentAmount || "0"),
         description: goalForm.description || null,
         name: goalForm.name,
         target_amount: goalForm.targetAmount,
         target_date: goalForm.targetDate || null,
-      }),
-    onSuccess: () => {
-      setGoalForm((current) => ({ ...current, currentAmount: "0", description: "", name: "", targetAmount: "", targetDate: "" }));
-      void queryClient.invalidateQueries({ queryKey: ["goals"] });
+        tracking_mode: goalForm.trackingMode,
+        linked_account: goalForm.trackingMode === "account" ? (goalForm.linkedAccount || null) : null,
+      };
+      return goalForm.id ? updateGoal(session, goalForm.id, payload) : createGoal(session, payload);
     },
+    onSuccess: () => {
+      setGoalForm(emptyGoalForm());
+      setFormError("");
+      setShowModal(false);
+      invalidateGoals();
+    },
+    onError: (error) => setFormError(apiErrorMessage(error, "Falha ao salvar meta.")),
   });
+
+  const removeGoalMutation = useMutation({
+    mutationFn: (id: string) => deleteGoal(session, id),
+    onSuccess: invalidateGoals,
+  });
+
+  const aporteMutation = useMutation({
+    mutationFn: () => {
+      const next = (Number(aporteGoal?.current_amount ?? 0) + Number(aporteValue || 0)).toFixed(2);
+      return updateGoal(session, aporteGoal!.id, { current_amount: next });
+    },
+    onSuccess: () => { setAporteGoal(null); setAporteValue(""); invalidateGoals(); },
+  });
+
+  function openCreate() { setGoalForm(emptyGoalForm()); setFormError(""); setShowModal(true); }
+  function openEdit(g: GoalRead) {
+    setGoalForm({
+      id: g.id,
+      currentAmount: String(g.current_amount),
+      description: g.description ?? "",
+      name: g.name,
+      targetAmount: String(g.target_amount),
+      targetDate: g.target_date ?? "",
+      trackingMode: g.tracking_mode,
+      linkedAccount: g.linked_account ?? "",
+    });
+    setFormError("");
+    setShowModal(true);
+  }
+
+  const isDemo = !persistedGoals.data?.items.length;
   const goals = buildGoalRows(summary.data, persistedGoals.data?.items);
-  const monthlyCapacity = Math.max(Number(summary.data?.balance ?? 0), 0);
-  const averageProgress = goals.reduce((total, goal) => total + goal.ratio, 0) / Math.max(goals.length, 1);
+  const monthlyIncome = Number(summary.data?.income ?? 0);
+
+  // KPI metrics (real, derived from the goals + period summary)
+  const capacity = Math.max(Number(summary.data?.balance ?? 0), 0);
+  const completedCount = goals.filter((g) => g.ratio >= 1).length;
+  const averageProgress = goals.reduce((t, g) => t + g.ratio, 0) / Math.max(goals.length, 1);
+  const goalMonthly = (g: GoalRow) => { const rem = Math.max(g.target - g.current, 0); return rem > 0 ? rem / g.monthsLeft : 0; };
+  const totalMonthly = goals.reduce((t, g) => t + goalMonthly(g), 0);
+  const pending = goals.filter((g) => g.ratio < 1);
+  const nextMilestone = pending.length ? pending.reduce((a, b) => (a.monthsLeft <= b.monthsLeft ? a : b)) : null;
+  const withinCapacity = capacity > 0 && totalMonthly <= capacity;
+
+  function handleSubmit() {
+    if (!goalForm.name.trim()) { setFormError("Informe o nome da meta."); return; }
+    if (!goalForm.targetAmount) { setFormError("Informe o valor alvo."); return; }
+    if (goalForm.trackingMode === "account" && !goalForm.linkedAccount) { setFormError("Selecione a conta vinculada."); return; }
+    setFormError("");
+    saveGoalMutation.mutate();
+  }
 
   return (
-    <section className="page-stack">
-      <div className="page-header-bar">
-        <span className="page-header-spacer" />
-        <PeriodFilter
-          dateFrom={period.dateFrom}
-          dateTo={period.dateTo}
-          periodPreset={period.periodPreset}
-          onPreset={period.setPeriodPreset}
-          onDateFrom={period.setDateFrom}
-          onDateTo={period.setDateTo}
-        />
-      </div>
-      <div className="metric-grid executive">
-        <MetricCard icon={Target} label="Metas ativas" value={String(goals.length)} helper="Planejamento inicial" tone="info" />
-        <MetricCard icon={PiggyBank} label="Capacidade mensal" value={moneyAbs(monthlyCapacity)} helper="Fluxo líquido positivo do período" tone={monthlyCapacity > 0 ? "positive" : "warning"} />
-        <MetricCard icon={Gauge} label="Progresso médio" value={`${formatPercentNumber(averageProgress * 100)}%`} helper="Sobre metas simuladas" tone="positive" />
-        <MetricCard icon={CalendarDays} label="Próximo marco" value="90 dias" helper="Reserva de emergência" tone="warning" />
-        <MetricCard icon={Sparkles} label="Sugestão" value={monthlyCapacity > 0 ? "Aportar" : "Revisar"} helper="Derivada do saldo do mês" tone={monthlyCapacity > 0 ? "positive" : "warning"} />
-      </div>
-      <section className="dashboard-section">
-        <DashboardSectionHeader
-          eyebrow="Metas"
-          title="Objetivos financeiros da família"
-          description={persistedGoals.data?.items.length ? "Metas persistidas pelo backend de Planning." : "Primeira tela visual com metas simuladas enquanto nenhuma meta foi cadastrada."}
-        />
-        <div className="goal-grid">
-          {goals.map((goal) => (
-            <Panel key={goal.name} title={goal.name} description={goal.description}>
-              <div className="goal-card-body">
-                <div>
-                  <strong>{moneyAbs(goal.current)} de {moneyAbs(goal.target)}</strong>
-                  <small>{goal.deadline}</small>
-                </div>
-                <span className="progress-track large" aria-label={`${goal.name}: ${formatPercentNumber(goal.ratio * 100)}%`}>
-                  <i className={goal.ratio >= 0.7 ? "positive" : "info"} style={{ width: `${Math.min(goal.ratio * 100, 100)}%` }} />
-                </span>
-                <div className="goal-footer">
-                  <StatusBadge status={goal.ratio >= 0.7 ? "completed" : "pending"} label={goal.status} />
-                  <b>{formatPercentNumber(goal.ratio * 100)}%</b>
-                </div>
-              </div>
-            </Panel>
-          ))}
+    <div className="canvas stg">
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>Planejamento</div>
+          <h2 className="section-title"><GIcon name="flag" size={18} /> Metas</h2>
+          <p className="section-sub">Objetivos financeiros, com progresso e contribuição mensal sugerida.</p>
         </div>
-      </section>
-      <Panel title="Nova meta" description="Cadastre objetivos financeiros para acompanhar progresso real.">
-        <form
-          className="inline-form form-grid two-columns"
-          onSubmit={(event) => { event.preventDefault(); createGoalMutation.mutate(); }}
-        >
-          <label>Nome<input required value={goalForm.name} onChange={(e) => setGoalForm((c) => ({ ...c, name: e.target.value }))} /></label>
-          <label>Valor alvo<input min="0.01" required step="0.01" type="number" value={goalForm.targetAmount} onChange={(e) => setGoalForm((c) => ({ ...c, targetAmount: e.target.value }))} /></label>
-          <label>Valor atual<input min="0" required step="0.01" type="number" value={goalForm.currentAmount} onChange={(e) => setGoalForm((c) => ({ ...c, currentAmount: e.target.value }))} /></label>
-          <label>Prazo<input type="date" value={goalForm.targetDate} onChange={(e) => setGoalForm((c) => ({ ...c, targetDate: e.target.value }))} /></label>
-          <label className="wide-field">Descrição<input value={goalForm.description} onChange={(e) => setGoalForm((c) => ({ ...c, description: e.target.value }))} /></label>
-          <button className="primary-button" disabled={createGoalMutation.isPending} type="submit">
-            {createGoalMutation.isPending ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
-            Criar meta
+        <button className="btn btn-primary btn-sm" style={{ flex: "none" }} onClick={openCreate}>
+          <GIcon name="plus" size={15} /> Nova meta
+        </button>
+      </div>
+
+      {/* KPI deck */}
+      <div className="kpi-deck" style={{ marginBottom: 16 }}>
+        <div className="kpi">
+          <div className="kpi-top">
+            <span className="kpi-ic"><GIcon name="target" size={16} /></span>
+            <span className="kpi-label">Metas</span>
+          </div>
+          <div className="kpi-val">{goals.length}</div>
+          <div className="kpi-sub">{completedCount > 0 ? `${completedCount} concluída${completedCount !== 1 ? "s" : ""}` : "em andamento"}</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-top">
+            <span className="kpi-ic" style={{ background: capacity > 0 ? "var(--pos-soft)" : "var(--warn-soft)", color: capacity > 0 ? "var(--pos)" : "var(--warn)" }}><GIcon name="wallet" size={16} /></span>
+            <span className="kpi-label">Capacidade mensal</span>
+          </div>
+          <div className="kpi-val" style={{ fontSize: 18 }}>{moneyAbs(capacity)}</div>
+          <div className="kpi-sub">Fluxo líquido do período</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-top">
+            <span className="kpi-ic" style={{ background: "var(--acc-soft)", color: "var(--acc-ink)" }}><GIcon name="star" size={16} /></span>
+            <span className="kpi-label">Progresso médio</span>
+          </div>
+          <div className="kpi-val">{Math.round(averageProgress * 100)}%</div>
+          <div className="kpi-sub">Sobre todas as metas</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-top">
+            <span className="kpi-ic" style={{ background: "var(--warn-soft)", color: "var(--warn)" }}><GIcon name="flag" size={16} /></span>
+            <span className="kpi-label">Próximo marco</span>
+          </div>
+          <div className="kpi-val" style={{ fontSize: 16 }}>{nextMilestone ? `${nextMilestone.monthsLeft} ${nextMilestone.monthsLeft === 1 ? "mês" : "meses"}` : "—"}</div>
+          <div className="kpi-sub" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{nextMilestone ? nextMilestone.name : "Todas concluídas"}</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-top">
+            <span className="kpi-ic" style={{ background: withinCapacity ? "var(--pos-soft)" : "var(--warn-soft)", color: withinCapacity ? "var(--pos)" : "var(--warn)" }}><GIcon name="chevR" size={16} /></span>
+            <span className="kpi-label">Sugestão</span>
+          </div>
+          <div className="kpi-val" style={{ fontSize: 16 }}>{capacity <= 0 ? "Revisar" : withinCapacity ? "Aportar" : "Priorizar"}</div>
+          <div className="kpi-sub">{moneyAbs(totalMonthly)}/mês sugerido{capacity > 0 ? ` · ${moneyAbs(capacity)} disp.` : ""}</div>
+        </div>
+      </div>
+
+      {/* Demo notice */}
+      {isDemo && (
+        <div className="alert info" style={{ marginBottom: 16 }}>
+          <span className="alert-ic"><GIcon name="info" size={17} /></span>
+          <div>
+            <div className="a-ttl">Metas simuladas</div>
+            <div className="a-txt">Os cards abaixo são exemplos. Crie sua primeira meta em "Nova meta".</div>
+          </div>
+        </div>
+      )}
+
+      {/* Goals grid */}
+      {persistedGoals.isLoading ? (
+        <div className="state" style={{ padding: "48px 20px" }}>
+          <div className="state-ic"><GIcon name="target" size={24} /></div>
+          <h4>Carregando metas…</h4>
+        </div>
+      ) : (
+        <div className="grid cols-3">
+          {goals.map((goal, i) => (
+            <GoalCard
+              key={goal.goal?.id ?? goal.name}
+              goal={goal}
+              color={GOAL_COLORS[i % GOAL_COLORS.length]}
+              monthlyIncome={monthlyIncome}
+              onEdit={openEdit}
+              onDelete={(g) => { if (window.confirm(`Excluir a meta “${g.name}”?`)) removeGoalMutation.mutate(g.id); }}
+              onAporte={(g) => { setAporteValue(""); setAporteGoal(g); }}
+            />
+          ))}
+          {/* Add tile */}
+          <button
+            type="button"
+            className="card"
+            onClick={openCreate}
+            style={{ border: "2px dashed var(--line-strong, var(--line))", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, minHeight: 200, color: "var(--ink-3)", boxShadow: "none", background: "transparent" }}
+          >
+            <span style={{ width: 40, height: 40, borderRadius: 12, display: "grid", placeItems: "center", background: "var(--bg-sunken)" }}><GIcon name="plus" size={20} /></span>
+            <span style={{ fontWeight: 600, fontSize: 13.5 }}>Criar nova meta</span>
+            <span style={{ fontSize: 12 }}>Reserva, viagem, educação…</span>
           </button>
-        </form>
-        {createGoalMutation.isError ? <InlineError message={apiErrorMessage(createGoalMutation.error, "Falha ao criar meta.")} /> : null}
-      </Panel>
-    </section>
+        </div>
+      )}
+
+      {/* Goal modal (create/edit) */}
+      {showModal && (
+        <GoalModal
+          form={goalForm}
+          setForm={setGoalForm}
+          saving={saveGoalMutation.isPending}
+          error={formError}
+          accounts={accounts.data?.items ?? []}
+          onClose={() => { setShowModal(false); setFormError(""); }}
+          onSubmit={handleSubmit}
+        />
+      )}
+
+      {/* Aporte modal */}
+      {aporteGoal && (
+        <div className="mdl-backdrop" onClick={() => setAporteGoal(null)}>
+          <div className="mdl" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+            <div className="mdl-head">
+              <span className="mh-ic"><GIcon name="plus" size={17} /></span>
+              <div style={{ minWidth: 0 }}>
+                <div className="mh-ttl">Registrar aporte</div>
+                <div className="mh-sub">{aporteGoal.name} · atual {moneyAbs(Number(aporteGoal.current_amount))}</div>
+              </div>
+              <button className="mh-close" onClick={() => setAporteGoal(null)} aria-label="Fechar"><GIcon name="x" size={18} /></button>
+            </div>
+            <div className="mdl-body">
+              <label className="fld">
+                <span className="fld-label">Valor do aporte</span>
+                <input className="fld-input" autoFocus min="0.01" step="0.01" type="number" placeholder="0,00" value={aporteValue} onChange={(e) => setAporteValue(e.target.value)} />
+              </label>
+              <div className="fld-help">Novo valor atual: {moneyAbs(Number(aporteGoal.current_amount) + Number(aporteValue || 0))}</div>
+              {aporteMutation.isError && <div className="fld-error">{apiErrorMessage(aporteMutation.error, "Falha ao registrar aporte.")}</div>}
+            </div>
+            <div className="mdl-foot">
+              <span style={{ flex: 1 }} />
+              <button className="btn btn-quiet" onClick={() => setAporteGoal(null)}>Cancelar</button>
+              <button className="btn btn-primary" disabled={aporteMutation.isPending || !Number(aporteValue)} onClick={() => aporteMutation.mutate()}>
+                <GIcon name="check" size={14} /> {aporteMutation.isPending ? "Salvando…" : "Aportar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

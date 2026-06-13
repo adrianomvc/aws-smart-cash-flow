@@ -55,6 +55,8 @@ export type CategoryRead = {
   id: string;
   name: string;
   parent_category_id: string | null;
+  color: string | null;
+  icon: string | null;
   created_at: string;
 };
 
@@ -73,6 +75,7 @@ export type TransactionRead = {
   source_name: string | null;
   account_or_card: string | null;
   transaction_date: string;
+  payment_date: string | null;
   description: string;
   raw_description: string;
   amount: string;
@@ -220,15 +223,19 @@ export type WeekdaySpendingItem = {
 export type CategoryRankingItem = {
   category_id: string | null;
   category_name: string;
+  color: string | null;
+  icon: string | null;
   amount: string;
   count: number;
   share_ratio: string | null;
   average_amount: string;
+  last_transaction_date: string | null;
 };
 
 export type SubcategoryRankingItem = {
   category_id: string | null;
   subcategory_name: string;
+  color: string | null;
   amount: string;
   count: number;
   share_ratio: string | null;
@@ -316,6 +323,7 @@ export type CreditCardRead = {
   issuer: string | null;
   brand: string | null;
   last_four: string | null;
+  color: string | null;
   closing_day: number;
   due_day: number;
   limit_amount: string | null;
@@ -328,6 +336,7 @@ export type CreditCardStatementRead = {
   workspace_id: string;
   credit_card_id: string;
   source_file_id: string | null;
+  source_file_name: string | null;
   statement_month: string;
   closing_date: string | null;
   due_date: string;
@@ -405,7 +414,8 @@ export type BudgetRead = {
   name: string;
   category_id: string | null;
   period_start: string;
-  period_end: string;
+  period_end: string | null;
+  recurring: boolean;
   limit_amount: string;
   alert_threshold: string;
   active: boolean;
@@ -420,9 +430,17 @@ export type GoalRead = {
   target_amount: string;
   current_amount: string;
   target_date: string | null;
+  tracking_mode: string;
+  linked_account: string | null;
   status: string;
   priority: number;
   created_at: string;
+};
+
+export type AccountItem = {
+  account_name: string;
+  balance: string;
+  balance_date: string;
 };
 
 export type ProjectionHorizonRead = {
@@ -540,10 +558,18 @@ export type BudgetPayload = {
   name: string;
   category_id: string | null;
   period_start: string;
-  period_end: string;
+  period_end: string | null;
+  recurring?: boolean;
   limit_amount: string;
   alert_threshold?: string;
   active?: boolean;
+};
+
+export type BudgetRecommendation = {
+  category_id: string | null;
+  months: number;
+  total: string;
+  average: string;
 };
 
 export type CreditCardPayload = {
@@ -551,6 +577,7 @@ export type CreditCardPayload = {
   issuer?: string | null;
   brand?: string | null;
   last_four?: string | null;
+  color?: string | null;
   closing_day?: number | null;
   due_day?: number | null;
   limit_amount?: string | null;
@@ -573,6 +600,8 @@ export type GoalPayload = {
   target_amount: string;
   current_amount: string;
   target_date?: string | null;
+  tracking_mode?: string;
+  linked_account?: string | null;
   status?: string;
   priority?: number;
 };
@@ -690,6 +719,28 @@ export function getCreditCards(session: ApiSession) {
   return apiRequest<ListResponse<CreditCardRead>>("/credit-cards", session);
 }
 
+export function autoAssociateCreditCardFiles(session: ApiSession) {
+  return apiRequest<{ linked: number }>("/credit-cards/auto-associate", session, { method: "POST" });
+}
+
+export type StatementReportItem = {
+  statement_id: string;
+  credit_card_id: string;
+  card_name: string;
+  source_file_id: string | null;
+  source_file_name: string | null;
+  statement_month: string;
+  due_date: string;
+  status: string;
+  file_total: string | null;
+  paid_amount: string | null;
+  paid_date: string | null;
+};
+
+export function getCreditCardStatementReport(session: ApiSession) {
+  return apiRequest<{ workspace_id: string; items: StatementReportItem[] }>("/credit-card-statement-report", session);
+}
+
 export function createCreditCard(session: ApiSession, payload: CreditCardPayload) {
   return apiRequest<CreditCardRead>("/credit-cards", session, {
     method: "POST",
@@ -728,6 +779,30 @@ export function associateCreditCardSourceFile(session: ApiSession, cardId: strin
   });
 }
 
+export function unlinkCreditCardSourceFile(session: ApiSession, sourceFileId: string) {
+  return apiRequest<void>(`/credit-card-source-files/${sourceFileId}/link`, session, {
+    method: "DELETE",
+  });
+}
+
+export type CreditCardSourceFileItem = {
+  source_file_id: string;
+  original_filename: string;
+  received_at: string;
+  total: string | null;
+  reference_month: string | null;
+  linked_credit_card_id: string | null;
+  linked_card_name: string | null;
+  due_date: string | null;
+  status: string | null;
+  paid_amount: string | null;
+  paid_date: string | null;
+};
+
+export function getCreditCardSourceFiles(session: ApiSession) {
+  return apiRequest<{ workspace_id: string; items: CreditCardSourceFileItem[] }>("/credit-card-source-files", session);
+}
+
 export function getDataQuality(session: ApiSession, query: string) {
   return apiRequest<DataQuality>(`/dashboard/data-quality${query}`, session);
 }
@@ -754,6 +829,23 @@ export function createBudget(session: ApiSession, payload: BudgetPayload) {
   });
 }
 
+export function updateBudget(session: ApiSession, budgetId: string, payload: Partial<BudgetPayload>) {
+  return apiRequest<BudgetRead>(`/budgets/${budgetId}`, session, {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
+export function deleteBudget(session: ApiSession, budgetId: string) {
+  return apiRequest<void>(`/budgets/${budgetId}`, session, {
+    method: "DELETE",
+  });
+}
+
+export function getBudgetRecommendation(session: ApiSession, categoryId: string, months = 3) {
+  return apiRequest<BudgetRecommendation>(`/budgets/recommendation?category_id=${categoryId}&months=${months}`, session);
+}
+
 export function getGoals(session: ApiSession) {
   return apiRequest<ListResponse<GoalRead>>("/goals", session);
 }
@@ -771,6 +863,23 @@ export function createGoal(session: ApiSession, payload: GoalPayload) {
     method: "POST",
     body: payload,
   });
+}
+
+export function updateGoal(session: ApiSession, goalId: string, payload: Partial<GoalPayload>) {
+  return apiRequest<GoalRead>(`/goals/${goalId}`, session, {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
+export function deleteGoal(session: ApiSession, goalId: string) {
+  return apiRequest<void>(`/goals/${goalId}`, session, {
+    method: "DELETE",
+  });
+}
+
+export function getAccounts(session: ApiSession) {
+  return apiRequest<{ workspace_id: string; items: AccountItem[] }>("/accounts", session);
 }
 
 export function getImports(session: ApiSession, query = "?limit=20") {
@@ -855,17 +964,27 @@ export function getCategories(session: ApiSession) {
   return apiRequest<ListResponse<CategoryRead>>("/categories", session);
 }
 
-export function createCategory(session: ApiSession, name: string, parentCategoryId: string | null) {
+export function createCategory(
+  session: ApiSession,
+  name: string,
+  parentCategoryId: string | null,
+  options: { color?: string | null; icon?: string | null } = {},
+) {
   return apiRequest<CategoryRead>("/categories", session, {
     method: "POST",
-    body: { name, parent_category_id: parentCategoryId },
+    body: { name, parent_category_id: parentCategoryId, color: options.color, icon: options.icon },
   });
 }
 
 export function updateCategory(
   session: ApiSession,
   categoryId: string,
-  payload: { name: string; parent_category_id: string | null },
+  payload: {
+    name?: string;
+    parent_category_id?: string | null;
+    color?: string | null;
+    icon?: string | null;
+  },
 ) {
   return apiRequest<CategoryRead>(`/categories/${categoryId}`, session, {
     method: "PATCH",

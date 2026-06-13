@@ -75,10 +75,13 @@ class DailyCashflowResponse(BaseModel):
 class CategoryRankingItem(BaseModel):
     category_id: str | None
     category_name: str
+    color: str | None = None
+    icon: str | None = None
     amount: Decimal
     count: int
     share_ratio: Decimal | None
     average_amount: Decimal
+    last_transaction_date: date | None = None
 
 
 class CategoryRankingResponse(BaseModel):
@@ -89,6 +92,7 @@ class CategoryRankingResponse(BaseModel):
 class SubcategoryRankingItem(BaseModel):
     category_id: str | None
     subcategory_name: str
+    color: str | None = None
     amount: Decimal
     count: int
     share_ratio: Decimal | None
