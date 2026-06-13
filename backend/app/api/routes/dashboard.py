@@ -38,6 +38,12 @@ class DashboardSummaryResponse(BaseModel):
     current_balance: Decimal | None
     current_balance_date: date | None
     current_balance_account: str | None
+    commitment_limit: Decimal
+    commitment_over_limit: bool
+    savings_target: Decimal
+    savings_on_target: bool
+    protected_reserve: Decimal
+    burn_rate_window_months: int
 
 
 class MonthlyCashflowItem(BaseModel):

@@ -11,6 +11,7 @@ from app.api.routes import (
     health,
     imports,
     planning,
+    preferences,
     reports,
     transactions,
     workspaces,
@@ -39,6 +40,7 @@ def create_app() -> FastAPI:
     app.include_router(cards.router, prefix="/v1")
     app.include_router(dashboard.router, prefix="/v1")
     app.include_router(planning.router, prefix="/v1")
+    app.include_router(preferences.router, prefix="/v1")
     app.include_router(reports.router, prefix="/v1")
     app.include_router(workspaces.router, prefix="/v1")
 

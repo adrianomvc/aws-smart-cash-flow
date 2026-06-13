@@ -187,6 +187,31 @@ export type DashboardSummary = {
   current_balance: string | null;
   current_balance_date: string | null;
   current_balance_account: string | null;
+  commitment_limit: string;
+  commitment_over_limit: boolean;
+  savings_target: string;
+  savings_on_target: boolean;
+  protected_reserve: string;
+  burn_rate_window_months: number;
+};
+
+export type WorkspacePreferences = {
+  workspace_id: string;
+  currency: string;
+  savings_target_pct: string;
+  commitment_limit_pct: string;
+  risk_profile: string;
+  burn_rate_window_months: number;
+  protected_reserve: string;
+};
+
+export type PreferencesPayload = {
+  currency?: string;
+  savings_target_pct?: string;
+  commitment_limit_pct?: string;
+  risk_profile?: string;
+  burn_rate_window_months?: number;
+  protected_reserve?: string;
 };
 
 export type MonthlyCashflowItem = {
@@ -890,6 +915,14 @@ export function deleteGoal(session: ApiSession, goalId: string) {
 
 export function getAccounts(session: ApiSession) {
   return apiRequest<{ workspace_id: string; items: AccountItem[] }>("/accounts", session);
+}
+
+export function getPreferences(session: ApiSession) {
+  return apiRequest<WorkspacePreferences>("/preferences", session);
+}
+
+export function updatePreferences(session: ApiSession, payload: PreferencesPayload) {
+  return apiRequest<WorkspacePreferences>("/preferences", session, { method: "PATCH", body: payload });
 }
 
 export type ContributionItem = {

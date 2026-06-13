@@ -579,3 +579,32 @@ class Goal(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class WorkspacePreferences(Base):
+    __tablename__ = "workspace_preferences"
+
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), primary_key=True
+    )
+    currency: Mapped[str] = mapped_column(
+        String(8), nullable=False, default="BRL", server_default="BRL"
+    )
+    savings_target_pct: Mapped[Decimal] = mapped_column(
+        Numeric(5, 4), nullable=False, default=Decimal("0.2000"), server_default="0.2000"
+    )
+    commitment_limit_pct: Mapped[Decimal] = mapped_column(
+        Numeric(5, 4), nullable=False, default=Decimal("0.3500"), server_default="0.3500"
+    )
+    risk_profile: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="moderate", server_default="moderate"
+    )
+    burn_rate_window_months: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=12, server_default="12"
+    )
+    protected_reserve: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2), nullable=False, default=Decimal("0"), server_default="0"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

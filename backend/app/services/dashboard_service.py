@@ -17,6 +17,7 @@ from app.db.models import (
     SourceFile,
     Transaction,
     TransactionCategoryAssignment,
+    WorkspacePreferences,
 )
 from app.services.parsers import extract_installment, normalize_transaction_description
 
@@ -53,17 +54,29 @@ class DashboardService:
         balance = income - expenses
         savings_rate = (balance / income).quantize(Decimal("0.0001")) if income > ZERO else None
         commitment_rate = (expenses / income).quantize(Decimal("0.0001")) if income > ZERO else None
+        prefs = self._preferences(workspace_id)
+        window_months = prefs.burn_rate_window_months if prefs else 12
+        commitment_limit = prefs.commitment_limit_pct if prefs else Decimal("0.3500")
+        savings_target = prefs.savings_target_pct if prefs else Decimal("0.2000")
+        protected_reserve = prefs.protected_reserve if prefs else ZERO
+
         burn_rate, burn_rate_months = self._burn_rate(workspace_id=workspace_id, date_to=date_to)
         burn_rate_90_days, burn_rate_90_days_window = self._burn_rate_90_days(
             workspace_id=workspace_id,
             date_to=date_to,
         )
+        # Preference-driven burn rate (window) is the headline figure.
+        burn_rate_effective = self._burn_rate_window(
+            workspace_id=workspace_id, date_to=date_to, months=window_months
+        )
         current_balance = self._current_account_balance(workspace_id=workspace_id, date_to=date_to)
+        # The protected reserve (preference) overrides the default 90-day reserve.
+        reserve = protected_reserve if protected_reserve > ZERO else burn_rate_90_days
         safe_spend, safe_spend_reserve = self._safe_spend(
             workspace_id=workspace_id,
             date_to=date_to,
             current_balance=current_balance.balance_amount if current_balance else None,
-            reserve_minimum=burn_rate_90_days,
+            reserve_minimum=reserve,
         )
         financial_health_score = self._financial_health_score(
             commitment_rate=commitment_rate,
@@ -84,21 +97,35 @@ class DashboardService:
             "balance": balance,
             "savings_rate": savings_rate,
             "commitment_rate": commitment_rate,
-            "burn_rate": burn_rate,
-            "burn_rate_months": burn_rate_months,
-            "burn_rate_basis": "trailing_12_month_average",
+            "burn_rate": burn_rate_effective if burn_rate_effective > ZERO else burn_rate,
+            "burn_rate_months": window_months,
+            "burn_rate_basis": f"trailing_{window_months}_month_monthly_equivalent",
             "burn_rate_90_days": burn_rate_90_days,
             "burn_rate_90_days_window": burn_rate_90_days_window,
             "burn_rate_90_days_basis": "trailing_90_days_monthly_equivalent",
             "safe_spend": safe_spend,
             "safe_spend_reserve_minimum": safe_spend_reserve,
-            "safe_spend_basis": "next_30_days_with_90_day_burn_rate_reserve",
+            "safe_spend_basis": (
+                "next_30_days_with_protected_reserve"
+                if protected_reserve > ZERO
+                else "next_30_days_with_90_day_burn_rate_reserve"
+            ),
             "financial_health_score": financial_health_score,
             "financial_health_basis": "runway_saving_commitment_safe_spend_balance",
             "transaction_count": len(transactions),
             "current_balance": current_balance.balance_amount if current_balance else None,
             "current_balance_date": current_balance.balance_date if current_balance else None,
             "current_balance_account": current_balance.account_name if current_balance else None,
+            "commitment_limit": commitment_limit,
+            "commitment_over_limit": bool(
+                commitment_rate is not None and commitment_rate > commitment_limit
+            ),
+            "savings_target": savings_target,
+            "savings_on_target": bool(
+                savings_rate is not None and savings_rate >= savings_target
+            ),
+            "protected_reserve": protected_reserve,
+            "burn_rate_window_months": window_months,
         }
 
     def monthly_cashflow(
@@ -1488,6 +1515,28 @@ class DashboardService:
         months = min(12, _inclusive_months(first_month, anchor))
         burn_rate = (expenses / Decimal(months)).quantize(Decimal("0.01")) if months else ZERO
         return burn_rate, months
+
+    def _preferences(self, workspace_id: str) -> WorkspacePreferences | None:
+        return self.db.get(WorkspacePreferences, workspace_id)
+
+    def _burn_rate_window(
+        self, workspace_id: str, date_to: date | None, months: int
+    ) -> Decimal:
+        """Monthly-equivalent burn rate over the trailing `months` months."""
+        anchor = date_to or self._latest_transaction_date(workspace_id)
+        if anchor is None:
+            return ZERO
+        window_start = anchor - timedelta(days=months * 30 - 1)
+        debits = self._transactions(
+            workspace_id=workspace_id, date_from=window_start, date_to=anchor
+        )
+        debit_dates = [t.transaction_date for t in debits if t.direction == "debit"]
+        if not debit_dates:
+            return ZERO
+        first = max(min(debit_dates), window_start)
+        window_days = max((anchor - first).days + 1, 1)
+        expenses = self._sum(debits, "debit")
+        return (expenses / Decimal(window_days) * Decimal(30)).quantize(Decimal("0.01"))
 
     def _burn_rate_90_days(self, workspace_id: str, date_to: date | None) -> tuple[Decimal, int]:
         anchor = date_to or self._latest_transaction_date(workspace_id)

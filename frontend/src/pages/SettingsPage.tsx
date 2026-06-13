@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUpRight,
@@ -21,11 +21,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { associateCreditCardSourceFile, autoAssociateCreditCardFiles, deleteImport, getCreditCards, getCreditCardSourceFiles, getImports, normalizeTransactionDescriptions, unlinkCreditCardSourceFile, uploadImport } from "../lib/api";
+import { associateCreditCardSourceFile, autoAssociateCreditCardFiles, deleteImport, getCreditCards, getCreditCardSourceFiles, getImports, getPreferences, normalizeTransactionDescriptions, unlinkCreditCardSourceFile, updatePreferences, uploadImport } from "../lib/api";
 import { apiErrorMessage, dateLabel, moneyAbs } from "../lib/utils";
 import { InlineError, InlineSuccess } from "../components/ui";
 import { RulesPage } from "./CategoriesPage";
-import type { ApiSession, CreditCardRead, CreditCardSourceFileItem, ImportJobRead } from "../lib/api";
+import type { ApiSession, CreditCardRead, CreditCardSourceFileItem, ImportJobRead, PreferencesPayload } from "../lib/api";
 import type { Page, TransactionDrilldown } from "../types";
 
 type TabId = "prefs" | "cats" | "rules" | "accounts" | "import" | "notif" | "profile" | "security" | "backup" | "about";
@@ -98,7 +98,42 @@ function ComingSoon({ title }: { title: string }) {
 // Tab bodies
 // ---------------------------------------------------------------------------
 
-function FinPrefsBody() {
+const SELECT_STYLE: React.CSSProperties = { minWidth: 160, padding: "7px 10px", borderRadius: 9, border: "1px solid var(--line)", fontSize: 13, background: "var(--card-2)", color: "var(--ink)" };
+const pctToRatio = (pct: string) => (Number(pct) / 100).toFixed(4);
+const ratioToPct = (ratio?: string) => String(Math.round(Number(ratio ?? 0) * 100));
+
+function FinPrefsBody({ session }: { session: ApiSession }) {
+  const queryClient = useQueryClient();
+  const prefsQuery = useQuery({ queryKey: ["preferences", session.token], queryFn: () => getPreferences(session) });
+  const prefs = prefsQuery.data;
+  const [form, setForm] = useState<PreferencesPayload>({});
+
+  useEffect(() => {
+    if (prefs) setForm({
+      currency: prefs.currency,
+      savings_target_pct: prefs.savings_target_pct,
+      commitment_limit_pct: prefs.commitment_limit_pct,
+      risk_profile: prefs.risk_profile,
+      burn_rate_window_months: prefs.burn_rate_window_months,
+      protected_reserve: prefs.protected_reserve,
+    });
+  }, [prefs]);
+
+  const save = useMutation({
+    mutationFn: () => updatePreferences(session, form),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["preferences"] });
+      void queryClient.invalidateQueries({ queryKey: ["dash-summary"] });
+      void queryClient.invalidateQueries({ queryKey: ["budgets-summary"] });
+      void queryClient.invalidateQueries({ queryKey: ["goals-summary"] });
+      void queryClient.invalidateQueries({ queryKey: ["projection-feed"] });
+    },
+  });
+
+  function set<K extends keyof PreferencesPayload>(key: K, value: PreferencesPayload[K]) {
+    setForm((f) => ({ ...f, [key]: value }));
+  }
+
   return (
     <div className="card">
       <div className="card-head">
@@ -109,17 +144,49 @@ function FinPrefsBody() {
         </div>
       </div>
       <div style={{ padding: "4px 18px 16px" }}>
-        <PrefRow label="Moeda" hint="Exibição de valores"><PrefSelect opts={["Real (R$)", "Dólar (US$)", "Euro (€)"]} /></PrefRow>
-        <PrefRow label="Idioma e região"><PrefSelect opts={["Português (Brasil)", "English (US)"]} /></PrefRow>
-        <PrefRow label="Meta de poupança" hint="Percentual da renda que você quer guardar"><PrefSelect opts={["20%", "25%", "30%", "35%"]} /></PrefRow>
-        <PrefRow label="Limite de comprometimento" hint="Alerta quando dívidas + fixas ultrapassam"><PrefSelect opts={["30%", "35%", "40%", "50%"]} /></PrefRow>
-        <PrefRow label="Perfil de risco" hint="Influencia sugestões de investimento (futuro)"><PrefSelect opts={["Conservador", "Moderado", "Arrojado"]} /></PrefRow>
-        <PrefRow label="Janela de burn rate" hint="Período para média de saídas"><PrefSelect opts={["1 mês", "3 meses", "6 meses"]} /></PrefRow>
-        <PrefRow label="Reserva protegida" hint="Valor que o gasto seguro nunca consome"><PrefSelect opts={["R$ 5.000", "R$ 10.000", "R$ 15.000"]} /></PrefRow>
+        <PrefRow label="Moeda" hint="Código usado nas integrações">
+          <select style={SELECT_STYLE} value={form.currency ?? "BRL"} onChange={(e) => set("currency", e.target.value)}>
+            <option value="BRL">Real (R$)</option>
+            <option value="USD">Dólar (US$)</option>
+            <option value="EUR">Euro (€)</option>
+          </select>
+        </PrefRow>
+        <PrefRow label="Meta de poupança" hint="Percentual da renda que você quer guardar. Usada na taxa de poupança.">
+          <select style={SELECT_STYLE} value={ratioToPct(form.savings_target_pct)} onChange={(e) => set("savings_target_pct", pctToRatio(e.target.value))}>
+            {["10", "15", "20", "25", "30", "35"].map((p) => <option key={p} value={p}>{p}%</option>)}
+          </select>
+        </PrefRow>
+        <PrefRow label="Limite de comprometimento" hint="Acima disso o comprometimento é sinalizado como alto.">
+          <select style={SELECT_STYLE} value={ratioToPct(form.commitment_limit_pct)} onChange={(e) => set("commitment_limit_pct", pctToRatio(e.target.value))}>
+            {["30", "35", "40", "50"].map((p) => <option key={p} value={p}>{p}%</option>)}
+          </select>
+        </PrefRow>
+        <PrefRow label="Perfil de risco" hint="Influencia sugestões (em evolução)">
+          <select style={SELECT_STYLE} value={form.risk_profile ?? "moderate"} onChange={(e) => set("risk_profile", e.target.value)}>
+            <option value="conservative">Conservador</option>
+            <option value="moderate">Moderado</option>
+            <option value="aggressive">Arrojado</option>
+          </select>
+        </PrefRow>
+        <PrefRow label="Janela de burn rate" hint="Período da média de saídas usada no burn rate e no gasto seguro.">
+          <select style={SELECT_STYLE} value={String(form.burn_rate_window_months ?? 12)} onChange={(e) => set("burn_rate_window_months", Number(e.target.value))}>
+            <option value="1">1 mês</option>
+            <option value="3">3 meses</option>
+            <option value="6">6 meses</option>
+            <option value="12">12 meses</option>
+          </select>
+        </PrefRow>
+        <PrefRow label="Reserva protegida (R$)" hint="Valor que o gasto seguro nunca consome (0 = usa o burn rate de 90 dias).">
+          <input type="number" min="0" step="100" style={SELECT_STYLE} value={form.protected_reserve ?? "0"} onChange={(e) => set("protected_reserve", e.target.value)} placeholder="0,00" />
+        </PrefRow>
       </div>
-      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", padding: "14px 18px", borderTop: "1px solid var(--line)" }}>
-        <button className="btn btn-quiet btn-sm" type="button">Cancelar</button>
-        <button className="btn btn-primary btn-sm" type="button">Salvar preferências</button>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end", padding: "14px 18px", borderTop: "1px solid var(--line)" }}>
+        {save.isError && <span style={{ flex: 1 }}><InlineError message={apiErrorMessage(save.error, "Falha ao salvar.")} /></span>}
+        {save.isSuccess && <span style={{ flex: 1, fontSize: 12, color: "var(--pos)" }}>Preferências salvas ✓</span>}
+        <button className="btn btn-quiet btn-sm" type="button" onClick={() => prefs && setForm({ currency: prefs.currency, savings_target_pct: prefs.savings_target_pct, commitment_limit_pct: prefs.commitment_limit_pct, risk_profile: prefs.risk_profile, burn_rate_window_months: prefs.burn_rate_window_months, protected_reserve: prefs.protected_reserve })} disabled={save.isPending}>Cancelar</button>
+        <button className="btn btn-primary btn-sm" type="button" onClick={() => save.mutate()} disabled={save.isPending || prefsQuery.isLoading}>
+          {save.isPending ? "Salvando…" : "Salvar preferências"}
+        </button>
       </div>
     </div>
   );
@@ -828,7 +895,7 @@ export function SettingsPage({ onNavigate, onOpenTransactions, workspaceName, se
 
   function body() {
     switch (tab) {
-      case "prefs": return <FinPrefsBody />;
+      case "prefs": return <FinPrefsBody session={session} />;
       case "cats": return <LinkBody title="Categorias e Subcategorias" sub="O cadastro completo é feito na tela dedicada." icon={Tags} buttonLabel="Abrir tela completa" onClick={() => onNavigate("categories")} />;
       case "rules": return <RulesPage session={session} embedded />;
       case "import": return <ImportBody session={session} onOpenTransactions={onOpenTransactions} />;
