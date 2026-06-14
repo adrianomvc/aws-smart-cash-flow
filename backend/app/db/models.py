@@ -608,3 +608,105 @@ class WorkspacePreferences(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class InvestmentCustody(Base):
+    """A place where investments are held: brokerage, pension, exchange,
+    self-custody wallet or a reserve account. Position view, not trades."""
+
+    __tablename__ = "investment_custodies"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "name", name="uq_investment_custody_workspace_name"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str | None] = mapped_column(Text)
+    account_type: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="broker", server_default="broker"
+    )
+    brand: Mapped[str | None] = mapped_column(String(8))
+    color: Mapped[str | None] = mapped_column(Text)
+    sync_mode: Mapped[str | None] = mapped_column(Text)
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class InvestmentAsset(Base):
+    """A position held inside a custody (not an operation/trade)."""
+
+    __tablename__ = "investment_assets"
+    __table_args__ = (
+        CheckConstraint("current_value >= 0", name="ck_investment_asset_value_non_negative"),
+        CheckConstraint(
+            "contributed >= 0", name="ck_investment_asset_contributed_non_negative"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), nullable=False
+    )
+    custody_id: Mapped[str] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("investment_custodies.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    asset_class: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="other", server_default="other"
+    )
+    risk: Mapped[str | None] = mapped_column(Text)
+    detail: Mapped[str | None] = mapped_column(Text)
+    current_value: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2), nullable=False, default=Decimal("0"), server_default="0"
+    )
+    contributed: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2), nullable=False, default=Decimal("0"), server_default="0"
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class InvestmentSnapshot(Base):
+    """Historical value of a single position on a given date. Returns and the
+    12-month wealth evolution are derived from the variation between snapshots."""
+
+    __tablename__ = "investment_snapshots"
+    __table_args__ = (
+        UniqueConstraint("asset_id", "as_of", name="uq_investment_snapshot_asset_date"),
+        Index("ix_investment_snapshot_asset_date", "asset_id", "as_of"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), nullable=False
+    )
+    asset_id: Mapped[str] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("investment_assets.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    as_of: Mapped[date] = mapped_column(Date, nullable=False)
+    value: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    contributed: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

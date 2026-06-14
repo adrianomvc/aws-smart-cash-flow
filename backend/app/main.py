@@ -10,6 +10,7 @@ from app.api.routes import (
     dashboard,
     health,
     imports,
+    investments,
     planning,
     preferences,
     reports,
@@ -39,6 +40,7 @@ def create_app() -> FastAPI:
     app.include_router(categories.router, prefix="/v1")
     app.include_router(cards.router, prefix="/v1")
     app.include_router(dashboard.router, prefix="/v1")
+    app.include_router(investments.router, prefix="/v1")
     app.include_router(planning.router, prefix="/v1")
     app.include_router(preferences.router, prefix="/v1")
     app.include_router(reports.router, prefix="/v1")
