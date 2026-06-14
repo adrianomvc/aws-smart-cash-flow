@@ -155,7 +155,7 @@ function ActiveAccountsPanel({ accounts, loading }: { accounts: ActiveAccountIte
     <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
       {accounts.map((account, idx) => (
         <div key={idx} style={{ padding: "12px 0", borderBottom: "1px solid var(--line)" }}>
-          <div style={{ fontWeight: 700, fontSize: 13.5, color: "var(--ink)", marginBottom: 4 }}>{account.account_name}</div>
+          <div style={{ fontWeight: 700, fontSize: 13.5, color: "var(--ink)", marginBottom: 4 }}>{account.name}</div>
           {account.kind === "bank" ? (
             <>
               <div style={{ fontFamily: "var(--font-display)", fontSize: 18, fontWeight: 700 }}>{money(account.current_balance)}</div>
@@ -165,7 +165,7 @@ function ActiveAccountsPanel({ accounts, loading }: { accounts: ActiveAccountIte
             <>
               <div style={{ fontSize: 15, fontWeight: 700 }}>{money(account.used_amount)} <span style={{ color: "var(--ink-3)", fontWeight: 400, fontSize: 12 }}>/ {money(account.limit_amount)}</span></div>
               <div className="track" style={{ marginTop: 6 }}>
-                <div className="fill" style={{ width: `${account.limit_amount ? Math.min(100, ((account.used_amount ?? 0) / account.limit_amount) * 100) : 0}%`, background: "var(--acc)" }} />
+                <div className="fill" style={{ width: `${account.limit_amount ? Math.min(100, (Number(account.used_amount ?? 0) / Number(account.limit_amount)) * 100) : 0}%`, background: "var(--acc)" }} />
               </div>
               {account.available_amount != null ? <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 4 }}>Disponível: {money(account.available_amount)}</div> : null}
             </>

@@ -548,13 +548,20 @@ export type ProjectionFeed = {
 };
 
 export type ActiveAccountItem = {
+  id: string;
   kind: "bank" | "credit_card";
-  account_name: string;
-  current_balance?: number | null;
-  balance_date?: string | null;
-  limit_amount?: number | null;
-  used_amount?: number | null;
-  available_amount?: number | null;
+  name: string;
+  current_balance: string | null;
+  balance_date: string | null;
+  limit_amount: string | null;
+  used_amount: string | null;
+  available_amount: string | null;
+  issuer: string | null;
+  brand: string | null;
+  last_four: string | null;
+  closing_day: number | null;
+  due_day: number | null;
+  active: boolean;
 };
 
 export type ReportCardRead = {

@@ -277,8 +277,13 @@ function ProfileBody({ session }: { session: ApiSession }) {
 // Accounts & banks
 // --------------------------------------------------------------------------- //
 function accountBalance(a: ActiveAccountItem): number {
-  if (a.kind === "credit_card") return -(a.used_amount ?? 0);
-  return a.current_balance ?? 0;
+  if (a.kind === "credit_card") {
+    const used = a.used_amount != null
+      ? Number(a.used_amount)
+      : Number(a.limit_amount ?? 0) - Number(a.available_amount ?? 0);
+    return -used;
+  }
+  return Number(a.current_balance ?? 0);
 }
 function AccountsBody({ session }: { session: ApiSession }) {
   const accountsQ = useQuery({ queryKey: ["active-accounts", session.token], queryFn: () => getActiveAccounts(session) });
@@ -305,12 +310,13 @@ function AccountsBody({ session }: { session: ApiSession }) {
         <div>
           {accounts.map((a, i) => {
             const bal = accountBalance(a);
-            const mark = a.account_name.slice(0, 2).toUpperCase();
+            const name = a.name ?? "Conta";
+            const mark = name.slice(0, 2).toUpperCase();
             return (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 18px", borderTop: i ? "1px solid var(--line)" : "none" }}>
-                <span style={{ width: 38, height: 38, borderRadius: 10, display: "grid", placeItems: "center", color: "#fff", fontWeight: 800, fontSize: 13, background: avatarColor(a.account_name) }}>{mark}</span>
+              <div key={a.id ?? i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 18px", borderTop: i ? "1px solid var(--line)" : "none" }}>
+                <span style={{ width: 38, height: 38, borderRadius: 10, display: "grid", placeItems: "center", color: "#fff", fontWeight: 800, fontSize: 13, background: avatarColor(name) }}>{mark}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="t-desc" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.account_name}</div>
+                  <div className="t-desc" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
                   <div className="t-sub">{a.kind === "credit_card" ? "Cartão de crédito" : "Conta"}{a.balance_date ? ` · atualizado ${a.balance_date.split("-").reverse().join("/")}` : ""}</div>
                 </div>
                 {a.kind === "credit_card" && a.limit_amount != null && (
