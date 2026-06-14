@@ -824,7 +824,7 @@ function Topbar({
       </div>
       <div className="h-spacer" />
       <div className="h-tools">
-        {!(["settings", "rules", "review", "transactions"] as Page[]).includes(page) ? (
+        {!(["settings", "rules", "review", "transactions", "planning"] as Page[]).includes(page) ? (
           <DashboardPeriodPicker period={dashboardPeriod} onChange={setDashboardPeriod} />
         ) : null}
 
