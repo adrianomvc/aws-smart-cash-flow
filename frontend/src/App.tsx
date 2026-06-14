@@ -270,9 +270,12 @@ function App() {
 
   function navigate(nextPage: Page) {
     // "Revisão" is no longer a page of its own — it opens Transactions filtered
-    // to the pending (review) queue.
+    // to the pending (review) queue, carrying the selected period.
     if (nextPage === "review") {
-      openTransactions({ categoryId: "__pending__", label: "Revisão" });
+      const periodDrill = dashboardPeriod.periodPreset !== "all"
+        ? { dateFrom: dashboardPeriod.dateFrom, dateTo: dashboardPeriod.dateTo, periodPreset: dashboardPeriod.periodPreset }
+        : {};
+      openTransactions({ categoryId: "__pending__", label: "Revisão", ...periodDrill });
       return;
     }
     setImportDrilldown(null);
