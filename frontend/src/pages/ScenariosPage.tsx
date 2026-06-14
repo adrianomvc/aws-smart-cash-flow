@@ -105,12 +105,13 @@ export function ScenariosPage({ session, onNavigate }: { session: ApiSession; on
 
   // Goals impact: the monthly surplus funds active goals in priority order
   // (waterfall). Show the conclusion forecast before vs after the scenario.
-  const goals = (goalsQ.data?.items ?? [])
+  const activeGoals = (goalsQ.data?.items ?? [])
     .filter(g => g.status === "active")
     .map(g => ({ name: g.name, color: g.color, remaining: Math.max(0, Number(g.target_amount) - Number(g.current_amount)), priority: g.priority }))
     .filter(g => g.remaining > 0.01)
-    .sort((a, b) => a.priority - b.priority || a.remaining - b.remaining)
-    .slice(0, 3);
+    .sort((a, b) => a.priority - b.priority || a.remaining - b.remaining);
+  const goals = activeGoals.slice(0, 2);
+  const extraGoals = activeGoals.length - goals.length;
   const surplusBefore = Math.max(0, monthlyNet);
   const surplusAfter = Math.max(0, newMonthlyNet);
   let cumRemain = 0;
@@ -271,6 +272,11 @@ export function ScenariosPage({ session, onNavigate }: { session: ApiSession; on
                     </div>
                   );
                 })}
+                {extraGoals > 0 && (
+                  <div style={{ fontSize: 11.5, color: "var(--ink-3)", paddingLeft: 17 }}>
+                    +{extraGoals} {extraGoals === 1 ? "outra meta" : "outras metas"}
+                  </div>
+                )}
               </div>
             )}
 
