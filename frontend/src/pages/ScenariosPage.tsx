@@ -4,7 +4,7 @@ import { AlertTriangle, Check, CheckCircle2, ChevronRight, Edit3, Flag, Loader2,
 
 import { getDashboardSummary, getGoals, getPlanningProjection } from "../lib/api";
 import { money } from "../lib/utils";
-import { PageState } from "../components/ui";
+import { EmptyState, PageState } from "../components/ui";
 import type { ApiSession } from "../lib/api";
 import type { Page } from "../types";
 
@@ -80,6 +80,22 @@ export function ScenariosPage({ session, onNavigate }: { session: ApiSession; on
   const proj = projQ.data;
   if (!summary || !proj) {
     return <PageState icon={AlertTriangle} title="Simulador indisponível" description="Confira a API local e tente novamente." />;
+  }
+
+  const noData = Number(summary.income ?? 0) === 0 && Number(proj.start_balance) === 0
+    && Number(proj.recurring_expense) === 0;
+  if (noData) {
+    return (
+      <div className="canvas stg">
+        <div style={{ marginBottom: 18 }}>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>Planejamento</div>
+          <h2 className="section-title"><SlidersHorizontal size={18} /> Simulador de cenários</h2>
+        </div>
+        <EmptyState icon={SlidersHorizontal} title="Sem dados para simular ainda"
+          description="O simulador testa decisões sobre seus números reais (saldo, fluxo, metas). Importe seus extratos para começar a simular cenários."
+          actionLabel="Ir para o Dashboard" onAction={() => onNavigate("dashboard")} />
+      </div>
+    );
   }
 
   // Real base values

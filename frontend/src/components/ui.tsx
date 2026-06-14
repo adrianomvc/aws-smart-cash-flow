@@ -340,6 +340,31 @@ export function PageState({
   );
 }
 
+export function EmptyState({
+  icon: Icon,
+  title,
+  description,
+  actionLabel,
+  onAction,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <div className="card card-pad" style={{ textAlign: "center", padding: "44px 24px" }}>
+      <div className="state-ic" style={{ margin: "0 auto 14px", width: 52, height: 52 }}><Icon size={24} /></div>
+      <h4 style={{ margin: "0 0 6px", fontSize: 16 }}>{title}</h4>
+      <p className="t-sub" style={{ maxWidth: 440, margin: "0 auto 18px", lineHeight: 1.55 }}>{description}</p>
+      {actionLabel && onAction && (
+        <button className="btn btn-primary btn-sm" onClick={onAction}>{actionLabel}</button>
+      )}
+    </div>
+  );
+}
+
 export function InlineError({ message }: { message: string }) {
   return <div className="inline-error"><AlertCircle size={16} /> {message}</div>;
 }

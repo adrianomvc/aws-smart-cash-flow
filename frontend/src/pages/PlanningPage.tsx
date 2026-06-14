@@ -16,7 +16,7 @@ import { Area, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveCont
 
 import { getPlanningProjection } from "../lib/api";
 import { dateLabel, money, moneyAbs } from "../lib/utils";
-import { PageState } from "../components/ui";
+import { EmptyState, PageState } from "../components/ui";
 import type { ApiSession } from "../lib/api";
 import type { Page } from "../types";
 
@@ -100,6 +100,22 @@ export function PlanningPage({ session, onNavigate }: { session: ApiSession; onN
   const data = projection.data;
   if (projection.isError || !data) {
     return <PageState icon={AlertCircle} title="Projeção indisponível" description="Confira a API local e tente novamente." />;
+  }
+
+  const noData = Number(data.start_balance) === 0 && Number(data.recurring_income) === 0
+    && Number(data.recurring_expense) === 0 && data.commitments.length === 0;
+  if (noData) {
+    return (
+      <div className="canvas stg">
+        <div style={{ marginBottom: 18 }}>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>Planejamento</div>
+          <h2 className="section-title"><TrendingUp size={18} /> Projeção de saldo</h2>
+        </div>
+        <EmptyState icon={TrendingUp} title="Ainda não há dados para projetar"
+          description="A projeção usa seu saldo atual, recorrências, parcelas e eventos sazonais. Importe seus extratos para o SmartCashFlow montar os cenários futuros."
+          actionLabel="Ir para o Dashboard" onAction={() => onNavigate("dashboard")} />
+      </div>
+    );
   }
 
   const points: ChartPoint[] = data.points.map((p) => ({
