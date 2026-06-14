@@ -16,26 +16,46 @@ from app.domain.imports import (
 )
 
 DESCRIPTION_TOKEN_ALIASES = {
-    # marketplace / intermediador
+    # Marketplaces
     "MERCADOLI": ("MERCADO", "LIVRE"),
     "MERCADOLIV": ("MERCADO", "LIVRE"),
     "MERCADOLIVRE": ("MERCADO", "LIVRE"),
     "MERCADOPAGO": ("MERCADO", "PAGO"),
     "MERCADOPAG": ("MERCADO", "PAGO"),
     "AMAZONMKTPLC": ("AMAZON",),
+    "AMZN": ("AMAZON",),
+    "AMZNMKTPL": ("AMAZON",),
+    "AMZNMKTP": ("AMAZON",),
+    "SHOPEE": ("SHOPEE",),
+    # Food delivery
     "IFD": ("IFOOD",),
-    "EBN": ("EBANX",),
-    "NUV": ("NUVEMSHOP",),
+    "IFOODCOM": ("IFOOD",),
+    "IFOODPEDID": ("IFOOD",),
+    "RAPPI": ("RAPPI",),
+    # Streaming
+    "NETFLIXCOM": ("NETFLIX",),
+    "SPOTIFYAB": ("SPOTIFY",),
+    "DISNEYPLUS": ("DISNEY", "PLUS"),
+    # Mobilidade
     "UBERBR": ("UBER", "BR"),
     "UBERBRASIL": ("UBER", "BR"),
-    # canais de pagamento — removidos da descrição (ruído)
+    "UBEREST": ("UBER", "EATS"),
+    "UBEREAT": ("UBER", "EATS"),
+    # Fintech BR
+    "NUBANK": ("NUBANK",),
+    "NUFINANCE": ("NUBANK",),
+    "C6BANK": ("C6", "BANK"),
+    # Outros
+    "EBN": ("EBANX",),
+    "NUV": ("NUVEMSHOP",),
+    # Canais de pagamento — ruído, removidos
     "INT": (),
     "CEL": (),
     "OPF": (),
     "SISDEB": (),
     "SISPAG": (),
     "EST": (),
-    # códigos de banco — ruído puro
+    # Códigos de banco — ruído puro
     "001": (),
     "033": (),
     "077": (),
@@ -66,14 +86,34 @@ SEQUENCE_TOKEN_ALIASES = {
     ("GOOGLE", "YOUTUB"): ("GOOGLE", "YOUTUBE"),
     ("SHELL", "BOX"): ("SHELLBOX",),
     ("UBER", "DO", "BRASI"): ("UBER", "BR"),
-    # canais de pagamento compostos — colapsam para a ação real
+    # Canais de pagamento compostos — ruído
     ("INT", "PAG"): (),
     ("MOBILE", "PAG"): (),
     ("CEL", "PAG"): (),
     ("MOB", "PAG"): (),
+    # Boleto/título — normalizar prefixo de pagamento
     ("PAG", "TIT"): ("TIT",),
     ("TIT", "PAG"): ("TIT",),
 }
+
+# Prefixos de método de pagamento — removidos do início pois o tipo já está em direction/source_type
+# TRANSF/TRANSFERENCIA excluídos: são parte da descrição em P2P (PIX TRANSF FLAVIA)
+PAYMENT_METHOD_PREFIXES = {
+    "PIX", "TED", "DOC", "DEB",
+    "PAG", "PGTO", "PAGTO",
+}
+
+# Tokens de sufixo geográfico — removidos do final da descrição
+GEO_SUFFIX_TOKENS = {
+    "BR", "BRA", "BRASIL",
+    "SP", "RJ", "MG", "RS", "PR", "SC", "BA", "CE",
+    "GO", "PE", "AM", "PA", "MT", "MS", "ES", "RN",
+    "DF", "PB", "AL", "SE", "PI", "MA", "TO", "RO",
+    "AC", "RR", "AP",
+}
+
+# Tokens de título/boleto que requerem tratamento especial
+_TITULO_TOKENS = {"TITULO", "BOLETO", "TIT", "BOL"}
 
 
 def parse_brazilian_decimal(raw_value: str) -> Decimal:
@@ -97,11 +137,39 @@ def parse_decimal_cell(raw_value: object) -> Decimal:
 
 
 def normalize_transaction_description(raw_description: str) -> str:
-    return _normalize_transaction_description(raw_description, drop_installment=True)
+    base = _normalize_transaction_description(raw_description, drop_installment=True)
+    return _enrich_titulo_description(base, raw_description)
 
 
 def normalize_transaction_description_for_dedupe(raw_description: str) -> str:
     return _normalize_transaction_description(raw_description, drop_installment=False)
+
+
+def _enrich_titulo_description(normalized: str, raw_description: str) -> str:
+    """If the normalized description is a generic titulo/boleto, try to extract a beneficiary
+    identifier from the raw description to make it more specific."""
+    tokens = normalized.split()
+    if not any(t in _TITULO_TOKENS for t in tokens):
+        return normalized
+
+    raw_ascii = "".join(
+        char for char in normalize("NFKD", raw_description) if char.encode("ascii", "ignore") != b""
+    ).upper()
+    raw_tokens = re.sub(r"[*_/\\|,.;:]+", " ", raw_ascii).split()
+
+    # Collect candidate beneficiary tokens: alphabetic, not a noise prefix/suffix/titulo token
+    skip = PAYMENT_METHOD_PREFIXES | GEO_SUFFIX_TOKENS | _TITULO_TOKENS | {"TIT", "BOL"}
+    candidates = [
+        t for t in raw_tokens
+        if t.isalpha() and len(t) >= 3 and t not in skip and not t.isdigit()
+    ]
+    # Remove tokens already in the normalized description
+    existing = set(tokens)
+    extra = [t for t in candidates if t not in existing]
+    if extra:
+        # Take the first meaningful candidate as beneficiary identifier
+        return normalized + " " + extra[0]
+    return normalized
 
 
 def _normalize_transaction_description(raw_description: str, *, drop_installment: bool) -> str:
@@ -134,7 +202,75 @@ def _normalize_transaction_description(raw_description: str, *, drop_installment
     normalized_tokens = _apply_contextual_aliases(normalized_tokens)
     if drop_installment:
         normalized_tokens = _drop_trailing_installment_tokens(normalized_tokens)
+    normalized_tokens = _drop_payment_method_prefix(normalized_tokens)
+    normalized_tokens = _drop_geo_suffix(normalized_tokens)
+    normalized_tokens = _drop_com_suffix(normalized_tokens)
+    normalized_tokens = _drop_trailing_pos_code(normalized_tokens)
     return " ".join(_collapse_repeated_sequences(normalized_tokens))
+
+
+_P2P_GUARD = {"TRANSF", "TRANSFERENCIA"}
+_SCHEDULED_GUARD = {"AGENDADA", "AGENDADO"}
+
+
+def _drop_payment_method_prefix(tokens: list[str]) -> list[str]:
+    if not tokens:
+        return tokens
+    result = list(tokens)
+    while result and result[0] in PAYMENT_METHOD_PREFIXES:
+        rest = result[1:]
+        # Stop when what follows signals titulo, P2P transfer, or scheduled payment context
+        if rest and (
+            rest[0] in _TITULO_TOKENS or rest[0] in _P2P_GUARD or rest[0] in _SCHEDULED_GUARD
+        ):
+            break
+        result = rest
+    return result if result else tokens
+
+
+_GEO_BRAND_PROTECTORS = {"UBER"}  # brands that use country suffix as part of their service name
+
+
+def _drop_geo_suffix(tokens: list[str]) -> list[str]:
+    if not tokens:
+        return tokens
+    result = list(tokens)
+    # Remove up to 2 trailing geo tokens, guarded by two rules:
+    # 1. Only strip when at least 3 tokens exist (preserves "DAISO BRASIL")
+    # 2. Don't strip when the preceding token is a brand that uses BR as part of its name
+    for _ in range(2):
+        if (len(result) >= 3
+                and result[-1] in GEO_SUFFIX_TOKENS
+                and result[-2] not in _GEO_BRAND_PROTECTORS):
+            result = result[:-1]
+        else:
+            break
+    return result if result else tokens
+
+
+def _drop_com_suffix(tokens: list[str]) -> list[str]:
+    if not tokens:
+        return tokens
+    result = list(tokens)
+    # "COM BR" at end
+    if len(result) >= 2 and result[-1] == "BR" and result[-2] == "COM":
+        result = result[:-2]
+    # lone "COM" at end
+    elif result and result[-1] == "COM":
+        result = result[:-1]
+    return result if result else tokens
+
+
+def _drop_trailing_pos_code(tokens: list[str]) -> list[str]:
+    """Remove trailing 3-6 digit POS terminal codes that are not installments."""
+    if len(tokens) < 2:
+        return tokens
+    result = list(tokens)
+    last = result[-1]
+    if last.isdigit() and 3 <= len(last) <= 6:
+        # Only remove if not already handled as installment (which strips 1-2 digit pairs)
+        result = result[:-1]
+    return result if result else tokens
 
 
 def extract_installment(raw_description: str) -> tuple[int | None, int | None]:

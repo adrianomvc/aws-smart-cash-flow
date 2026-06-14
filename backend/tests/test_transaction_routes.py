@@ -190,7 +190,7 @@ def test_list_transactions_returns_current_workspace_transactions(
     assert payload["total"] == 2
     assert payload["limit"] == 50
     assert payload["offset"] == 0
-    assert [item["description"] for item in payload["items"]] == ["SALARIO", "PIX MERCADO"]
+    assert [item["description"] for item in payload["items"]] == ["SALARIO", "MERCADO"]
     assert payload["items"][0]["amount"] == "100.00"
     assert payload["items"][0]["direction"] == "credit"
 
@@ -316,7 +316,7 @@ def test_list_transactions_filters_by_category_and_paginates(
 
     response = client.get(
         "/v1/transactions",
-        params={"category_id": category.id, "limit": 1, "offset": 0},
+        params={"category_ids": category.id, "limit": 1, "offset": 0},
     )
 
     assert response.status_code == 200
@@ -394,8 +394,8 @@ def test_list_transactions_parent_category_filter_includes_direct_children(
     )
     db_session.commit()
 
-    parent_response = client.get("/v1/transactions", params={"category_id": parent.id})
-    child_response = client.get("/v1/transactions", params={"category_id": child.id})
+    parent_response = client.get("/v1/transactions", params={"category_ids": parent.id})
+    child_response = client.get("/v1/transactions", params={"category_ids": child.id})
 
     assert parent_response.status_code == 200
     assert child_response.status_code == 200
@@ -1034,6 +1034,32 @@ def test_list_duplicate_transaction_candidates_is_scoped_by_workspace(
         storage_bucket="financial-files",
         storage_path=f"{other_auth.workspace_id}/extrato-outro.txt",
         content=b"01/04/2026;PIX TRANSF FLAVIA 01/04;-225,00\n",
+    )
+
+    response = client.get("/v1/transactions/duplicates")
+
+    assert response.status_code == 200
+    assert response.json()["total_groups"] == 0
+
+
+def test_list_duplicate_transaction_candidates_excludes_same_file_occurrences(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    # Two identical transactions in the SAME file (e.g., two coffees on the same day)
+    # should NOT be flagged as duplicates — the occurrence suffix in natural_dedupe_key
+    # distinguishes them at import time, but the panel must not re-flag them.
+    ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="extrato.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato.txt",
+        content=(
+            b"01/04/2026;SUPERMERCADO EXTRA;-50,00\n"
+            b"01/04/2026;SUPERMERCADO EXTRA;-50,00\n"
+        ),
     )
 
     response = client.get("/v1/transactions/duplicates")

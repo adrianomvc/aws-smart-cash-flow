@@ -14,17 +14,16 @@ import {
   Loader2,
   RefreshCw,
   ShieldCheck,
+  PlusCircle,
+  PiggyBank,
   type LucideIcon,
 } from "lucide-react";
 import {
   Bar,
   CartesianGrid,
-  Cell,
   ComposedChart,
   Legend,
   Line,
-  Pie,
-  PieChart,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -50,9 +49,7 @@ import {
   getTransactions,
 } from "../lib/api";
 import {
-  buildBudgetRows,
   buildCalendarEvents,
-  compactMoneyAbs,
   compactMoneyAxis,
   dateInputLabel,
   dateLabel,
@@ -87,7 +84,7 @@ import {
   Panel,
   PanelLink,
 } from "../components/ui";
-import { CategoryBarList, PersonalizedTip, compactCategoryDistribution } from "./CashflowPage";
+import { CategoryBarList, PersonalizedTip } from "./CashflowPage";
 import type {
   ApiSession,
   BudgetRead,
@@ -112,7 +109,6 @@ import type { CashFlowProjectionChartPoint, CashFlowProjectionPoint } from "../l
 // Constants
 // ---------------------------------------------------------------------------
 
-const chartPalette = ["#8b5cf6", "#ef4444", "#f59e0b", "#22c55e", "#38bdf8", "#64748b", "#2563eb", "#14b8a6"];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -253,48 +249,56 @@ function DashboardFlowStory({ futureCommitments, onOpenAnalysis, periodLabel, pr
   );
 }
 
-function CategoryDonutTooltip({ active, payload, total }: { active?: boolean; payload?: Array<{ payload?: CategoryRankingItem & { amountValue?: number } }>; total: number }) {
-  const item = payload?.[0]?.payload;
-  if (!active || !item) return null;
-  const amount = Number((item as Record<string, unknown>).amountValue ?? item.amount ?? 0);
-  const ratio = total > 0 ? amount / total : Number(item.share_ratio ?? 0);
+function ChangeChip({ ratio }: { ratio: string | null }) {
+  if (ratio === null || ratio === undefined) return null;
+  const val = Number(ratio);
+  if (isNaN(val) || val === 0) return null;
+  const pct = Math.abs(val * 100).toFixed(0);
+  const up = val > 0;
   return (
-    <div className="chart-tooltip donut-tooltip">
-      <strong>{item.category_name}</strong>
-      <span>{moneyAbs(String(amount))}</span>
-      <small>{percent(String(ratio))} do total</small>
-    </div>
+    <em className={`recurring-change recurring-change--${up ? "up" : "down"}`}>
+      {up ? "▲" : "▼"} {pct}%
+    </em>
   );
 }
 
-function CategoryDonut({ items, loading, onOpenCategory }: { items: CategoryRankingItem[]; loading: boolean; onOpenCategory: (item: CategoryRankingItem) => void }) {
-  if (loading) return <PageState icon={Loader2} title="Carregando categorias" description="Aguarde um momento." spin compact />;
-  if (!items.length) return <EmptyInline message="Sem categorias para o período." />;
-  const chartItems = compactCategoryDistribution(items);
-  const total = chartItems.reduce((sum, item) => sum + Number(item.amountValue ?? 0), 0);
+function RecurringList({ items, loading, onOpenTransactions, period }: { items: RecurringExpenseItem[]; loading: boolean; onOpenTransactions: (drilldown?: TransactionDrilldown) => void; period: ReturnType<typeof usePeriod> }) {
+  if (loading) return <PageState icon={Loader2} title="Carregando recorrentes" description="Aguarde um momento." spin compact />;
+  if (!items.length) return <EmptyInline message="Nenhum pagamento recorrente identificado." />;
+  const LIMIT = 8;
+  const sorted = [...items].sort((a, b) => Number(b.average_amount) - Number(a.average_amount));
+  const visible = sorted.slice(0, LIMIT);
+  const hiddenCount = Math.max(sorted.length - LIMIT, 0);
+  const total = sorted.reduce((s, i) => s + Number(i.average_amount ?? 0), 0);
   return (
-    <div className="donut-summary">
-      <div className="donut-chart">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart margin={{ top: 4, right: 28, bottom: 4, left: 28 }}>
-            <Pie data={chartItems} dataKey="amountValue" nameKey="category_name" innerRadius="62%" outerRadius="86%" paddingAngle={2} stroke="none">
-              {chartItems.map((item, index: number) => (
-                <Cell key={item.category_id ?? item.category_name} fill={chartPalette[index % chartPalette.length]} />
-              ))}
-            </Pie>
-            <Tooltip allowEscapeViewBox={{ x: true, y: true }} content={<CategoryDonutTooltip total={total} />} wrapperStyle={{ pointerEvents: "none", zIndex: 30 }} />
-          </PieChart>
-        </ResponsiveContainer>
-        <div className="donut-center"><strong>{compactMoneyAbs(total)}</strong><span>Total</span></div>
-      </div>
-      <div className="donut-legend">
-        {chartItems.slice(0, 6).map((item, index: number) => (
-          <button className="donut-legend-row" key={item.category_id ?? item.category_name} onClick={() => onOpenCategory(item)} type="button">
-            <i style={{ background: chartPalette[index % chartPalette.length] }} />
-            <span>{item.category_name}</span>
-            <strong>{percent(item.share_ratio)}</strong>
-          </button>
-        ))}
+    <div className="recurring-list">
+      {visible.map((item) => (
+        <button
+          className="recurring-row"
+          key={item.description}
+          type="button"
+          onClick={() => onOpenTransactions({
+            dateFrom: period.dateFrom,
+            dateTo: period.dateTo,
+            direction: "debit",
+            label: item.description,
+            periodPreset: period.periodPreset,
+            search: item.description,
+          })}
+        >
+          <div className="recurring-info">
+            <strong>{item.description}</strong>
+            <small>{item.category_name ?? "Sem categoria"} · {item.month_count} {item.month_count === 1 ? "mês" : "meses"}</small>
+          </div>
+          <div className="recurring-value">
+            <b>{moneyAbs(item.average_amount)}</b>
+            <ChangeChip ratio={item.change_ratio} />
+          </div>
+        </button>
+      ))}
+      <div className="recurring-footer">
+        <span>Total recorrente / mês{hiddenCount > 0 ? <em className="category-more">(+{hiddenCount})</em> : null}</span>
+        <strong>{moneyAbs(String(total))}</strong>
       </div>
     </div>
   );
@@ -401,9 +405,18 @@ function CompactTimelineList({ items, loading, onOpenTransactions, onShowAll, to
   );
 }
 
-function BudgetSnapshot({ loading, onOpenCategory, rows }: { loading: boolean; onOpenCategory: (row: ReturnType<typeof buildBudgetRows>[number]) => void; rows: ReturnType<typeof buildBudgetRows> }) {
+function BudgetSnapshot({ loading, onNavigateBudgets, onOpenCategory, rows }: { loading: boolean; onNavigateBudgets: () => void; onOpenCategory: (row: ReturnType<typeof buildPersistedBudgetRows>[number]) => void; rows: ReturnType<typeof buildPersistedBudgetRows> }) {
   if (loading) return <PageState icon={Loader2} title="Carregando orçamento" description="Aguarde um momento." spin compact />;
-  if (!rows.length) return <EmptyInline message="Sem categorias para sugerir orçamento." />;
+  if (!rows.length) return (
+    <div className="budget-empty-cta">
+      <PiggyBank size={32} className="budget-empty-icon" />
+      <p>Nenhum orçamento cadastrado</p>
+      <button className="primary-button" onClick={onNavigateBudgets} type="button">
+        <PlusCircle size={16} />
+        Cadastrar orçamento
+      </button>
+    </div>
+  );
   const planned = rows.reduce((total, row) => total + row.limit, 0);
   const realized = rows.reduce((total, row) => total + row.spent, 0);
   const consumed = realized / Math.max(planned, 1);
@@ -536,8 +549,7 @@ export function DashboardPage({
   const statementTotal = (statements.data?.items ?? []).reduce((total, statement) => total + Number(statement.total_amount ?? 0), 0);
   const currentStatementTotal = statementTotal || Number(summary.data?.payments ?? 0);
   const cardCommitment = Number(summary.data?.income ?? 0) > 0 ? currentStatementTotal / Number(summary.data?.income ?? 0) : null;
-  const budgetRows = buildPersistedBudgetRows({ budgets: budgets.data?.items, categories: categories.data?.items ?? [], ranking: categoryItems });
-  const dashboardBudgetRows = budgetRows.length ? budgetRows : buildBudgetRows(categoryItems);
+  const dashboardBudgetRows = buildPersistedBudgetRows({ budgets: budgets.data?.items, categories: categories.data?.items ?? [], ranking: categoryItems });
   const dashboardGoalRows = buildGoalRows(summary.data, goals.data?.items);
   const projectionRisk = projection30Result.firstNegativeDay;
   const projection30Loading = summary.isLoading || projection30PersistedEvents.isLoading || projection30Installments.isLoading || recurring.isLoading || recurringIncome.isLoading || ranking.isLoading;
@@ -672,15 +684,15 @@ export function DashboardPage({
               </ChartBox>
             </Panel>
             <Panel title="Top categorias" description="Maiores gastos classificados no período." action={<PanelLink label="Ver todas" onClick={() => onNavigate("cashflow")} />}>
-              <CategoryBarList items={categoryItems} loading={ranking.isLoading} onOpenCategory={openCategoryTransactions} />
+              <CategoryBarList items={categoryItems} limit={5} loading={ranking.isLoading} onOpenCategory={openCategoryTransactions} />
             </Panel>
           </div>
           <div className="cockpit-right">
             <Panel title="Próximos compromissos" description="Eventos, recorrências e parcelas que aparecem no horizonte do filtro." action={<PanelLink label="Ver calendário" onClick={() => onNavigate("calendar")} />}>
               <CompactTimelineList items={calendarEvents.slice(0, 5)} total={calendarEvents.length} onShowAll={() => onNavigate("calendar")} loading={persistedEvents.isLoading || recurring.isLoading || installments.isLoading || recentTransactions.isLoading} onOpenTransactions={(event) => onOpenTransactions({ dateFrom: period.dateFrom, dateTo: period.dateTo, direction: event.direction, label: event.label, periodPreset: period.periodPreset, search: event.search })} />
             </Panel>
-            <Panel title="Distribuição das despesas" description="Participação das categorias no total de gastos do período.">
-              <CategoryDonut items={categoryItems} loading={ranking.isLoading} onOpenCategory={openCategoryTransactions} />
+            <Panel title="Pagamentos recorrentes" description="Despesas fixas e recorrentes identificadas no período.">
+              <RecurringList items={recurring.data?.items ?? []} loading={recurring.isLoading} onOpenTransactions={onOpenTransactions} period={period} />
             </Panel>
           </div>
         </div>
@@ -690,7 +702,7 @@ export function DashboardPage({
         <DashboardSectionHeader eyebrow="Planejamento" title="Orçamento, metas e alertas" description="Blocos compactos para acompanhar o mês sem quebrar a primeira visão." />
         <div className="dashboard-grid insight-grid">
           <Panel title="Orçamento do mês" description="Categorias monitoradas no período." action={<PanelLink label="Ver orçamento" onClick={() => onNavigate("budgets")} />}>
-            <BudgetSnapshot loading={ranking.isLoading || budgets.isLoading || categories.isLoading} rows={dashboardBudgetRows.slice(0, 4)} onOpenCategory={(row) => onOpenTransactions({ categoryId: row.categoryId ?? undefined, dateFrom: period.dateFrom, dateTo: period.dateTo, direction: "debit", label: row.categoryName, periodPreset: period.periodPreset })} />
+            <BudgetSnapshot loading={ranking.isLoading || budgets.isLoading || categories.isLoading} rows={dashboardBudgetRows.slice(0, 4)} onNavigateBudgets={() => onNavigate("budgets")} onOpenCategory={(row) => onOpenTransactions({ categoryId: row.categoryId ?? undefined, dateFrom: period.dateFrom, dateTo: period.dateTo, direction: "debit", label: row.categoryName, periodPreset: period.periodPreset })} />
           </Panel>
           <Panel title="Metas em andamento" description="Progresso das metas financeiras principais." action={<PanelLink label="Ver todas" onClick={() => onNavigate("goals")} />}>
             <GoalSnapshot loading={goals.isLoading || summary.isLoading} rows={(goals.data?.items ?? []).length ? dashboardGoalRows.slice(0, 3) : []} />

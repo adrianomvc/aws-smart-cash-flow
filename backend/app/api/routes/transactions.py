@@ -264,7 +264,7 @@ async def list_transactions(
     db: Session = DbDependency,
     date_from: date | None = None,
     date_to: date | None = None,
-    category_id: str | None = None,
+    category_ids: list[str] | None = Query(default=None),  # noqa: B008
     import_job_id: str | None = None,
     ids: str | None = None,
     source_type: str | None = None,
@@ -273,6 +273,9 @@ async def list_transactions(
     q: str | None = None,
     sort_by: str = Query(default="transaction_date"),
     sort_dir: str = Query(default="desc"),
+    amount_min: float | None = None,
+    amount_max: float | None = None,
+    tx_status: str | None = Query(default=None, alias="status"),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> TransactionListResponse:
@@ -330,20 +333,42 @@ async def list_transactions(
                 Transaction.raw_description.ilike(search),
             )
         )
-    if category_id is not None:
-        category_ids = [category_id]
-        child_category_ids = db.scalars(
-            select(Category.id).where(
-                Category.workspace_id == auth.workspace_id,
-                Category.parent_category_id == category_id,
-            )
-        ).all()
-        category_ids.extend(child_category_ids)
+    if category_ids:
+        all_ids: list[str] = []
+        for cid in category_ids:
+            all_ids.append(cid)
+            child_ids = db.scalars(
+                select(Category.id).where(
+                    Category.workspace_id == auth.workspace_id,
+                    Category.parent_category_id == cid,
+                )
+            ).all()
+            all_ids.extend(child_ids)
         filters.append(
             Transaction.id.in_(
                 select(TransactionCategoryAssignment.transaction_id).where(
                     TransactionCategoryAssignment.workspace_id == auth.workspace_id,
-                    TransactionCategoryAssignment.category_id.in_(category_ids),
+                    TransactionCategoryAssignment.category_id.in_(all_ids),
+                )
+            )
+        )
+    if amount_min is not None:
+        filters.append(func.abs(Transaction.amount) >= amount_min)
+    if amount_max is not None:
+        filters.append(func.abs(Transaction.amount) <= amount_max)
+    if tx_status == "pending":
+        filters.append(
+            Transaction.id.not_in(
+                select(TransactionCategoryAssignment.transaction_id).where(
+                    TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+                )
+            )
+        )
+    elif tx_status == "confirmed":
+        filters.append(
+            Transaction.id.in_(
+                select(TransactionCategoryAssignment.transaction_id).where(
+                    TransactionCategoryAssignment.workspace_id == auth.workspace_id,
                 )
             )
         )
@@ -419,6 +444,7 @@ async def list_duplicate_transaction_candidates(
         (current_key, items)
         for current_key, items in grouped.items()
         if len(items) > 1
+        and len({transaction.source_file_id for transaction, _, _ in items}) > 1
     ]
     duplicate_groups.sort(
         key=lambda group: (
