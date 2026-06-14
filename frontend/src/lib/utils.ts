@@ -38,6 +38,7 @@ export type Page =
   | "categories"
   | "rules"
   | "review"
+  | "family"
   | "settings";
 
 export type TransactionPeriodPreset =
@@ -576,6 +577,10 @@ export function pageMeta(page: Page) {
     insights: {
       description: "Recomendações acionáveis e explicáveis a partir dos seus dados.",
       title: "Insights IA",
+    },
+    family: {
+      description: "Membros do workspace, papéis e convites — uso compartilhado em família.",
+      title: "Família / Membros",
     },
     wealth: {
       description: "Patrimônio líquido: ativos, passivos e evolução da riqueza acumulada.",

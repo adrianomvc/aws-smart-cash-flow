@@ -1549,3 +1549,52 @@ export function createWealthSnapshot(
 export function deleteWealthSnapshot(session: ApiSession, snapshotId: string) {
   return apiRequest<void>(`/wealth-snapshots/${snapshotId}`, session, { method: "DELETE" });
 }
+
+// --------------------------------------------------------------------------- //
+// Family / members
+// --------------------------------------------------------------------------- //
+export type MemberRead = {
+  id: string;
+  user_id: string;
+  name: string;
+  email: string;
+  role: string;
+  is_self: boolean;
+  created_at: string;
+};
+
+export type InviteRead = {
+  id: string;
+  email: string;
+  role: string;
+  status: string;
+  created_at: string;
+};
+
+export function getMembers(session: ApiSession) {
+  return apiRequest<{ workspace_id: string; items: MemberRead[]; total: number }>("/workspaces/members", session);
+}
+
+export function getInvites(session: ApiSession) {
+  return apiRequest<{ workspace_id: string; items: InviteRead[]; total: number }>("/workspaces/invites", session);
+}
+
+export function inviteMember(session: ApiSession, payload: { email: string; role: string }) {
+  return apiRequest<InviteRead>("/workspaces/members/invite", session, { method: "POST", body: payload });
+}
+
+export function acceptInvite(session: ApiSession, inviteId: string) {
+  return apiRequest<MemberRead>(`/workspaces/invites/${inviteId}/accept`, session, { method: "POST" });
+}
+
+export function cancelInvite(session: ApiSession, inviteId: string) {
+  return apiRequest<void>(`/workspaces/invites/${inviteId}`, session, { method: "DELETE" });
+}
+
+export function updateMemberRole(session: ApiSession, memberId: string, role: string) {
+  return apiRequest<MemberRead>(`/workspaces/members/${memberId}`, session, { method: "PATCH", body: { role } });
+}
+
+export function removeMember(session: ApiSession, memberId: string) {
+  return apiRequest<void>(`/workspaces/members/${memberId}`, session, { method: "DELETE" });
+}

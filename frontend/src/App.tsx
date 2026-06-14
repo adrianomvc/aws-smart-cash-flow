@@ -44,6 +44,7 @@ import { ScenariosPage } from "./pages/ScenariosPage";
 import { InvestmentsPage } from "./pages/InvestmentsPage";
 import { InsightsPage } from "./pages/InsightsPage";
 import { WealthPage } from "./pages/WealthPage";
+import { FamilyPage } from "./pages/FamilyPage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { ImportsPage, TransactionsPage } from "./pages/ImportsPage";
 import { CategoriesPage, ReviewPage, RulesPage } from "./pages/CategoriesPage";
@@ -154,7 +155,7 @@ const navSections: Array<{ label: string; items: NavItem[] }> = [
   {
     label: "Conta",
     items: [
-      { label: "Família / Membros", iconName: "users", status: "em breve" },
+      { id: "family",   label: "Família / Membros", iconName: "users" },
       { id: "settings", label: "Configurações",   iconName: "cog" },
     ],
   },
@@ -602,6 +603,7 @@ function ProtectedApp({
       {page === "investments" ? <InvestmentsPage session={session} period={dashboardPeriod} /> : null}
       {page === "insights" ? <InsightsPage session={session} period={dashboardPeriod} onNavigate={onNavigate} onOpenTransactions={onOpenTransactions} /> : null}
       {page === "wealth" ? <WealthPage session={session} onNavigate={onNavigate} /> : null}
+      {page === "family" ? <FamilyPage session={session} /> : null}
       {page === "reports" ? <ReportsPage onNavigate={onNavigate} period={dashboardPeriod} session={session} /> : null}
       {page === "imports" ? <ImportsPage drilldown={importDrilldown} onOpenTransactions={onOpenTransactions} session={session} /> : null}
       {page === "transactions" ? <TransactionsPage drilldown={transactionDrilldown} session={session} /> : null}
@@ -840,7 +842,7 @@ function Topbar({
       </div>
       <div className="h-spacer" />
       <div className="h-tools">
-        {!(["settings", "rules", "review", "transactions", "planning", "scenarios", "wealth"] as Page[]).includes(page) ? (
+        {!(["settings", "rules", "review", "transactions", "planning", "scenarios", "wealth", "family"] as Page[]).includes(page) ? (
           <DashboardPeriodPicker period={dashboardPeriod} onChange={setDashboardPeriod} />
         ) : null}
 
