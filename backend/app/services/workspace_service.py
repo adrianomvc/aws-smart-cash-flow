@@ -1,9 +1,9 @@
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.core.auth import AuthContext
+from app.core.auth import LOCAL_USER_ID, AuthContext
 from app.db.models import User, Workspace, WorkspaceMember
 
 
@@ -16,6 +16,23 @@ class WorkspaceService:
         auth: AuthContext,
     ) -> tuple[User, Workspace, WorkspaceMember]:
         user = self.db.scalar(select(User).where(User.supabase_user_id == auth.user_id))
+        # One email = one user: if the sub is new but the email already exists
+        # (e.g. a different IdP session or a pending invite record), adopt that
+        # user instead of creating a duplicate. The fixed local-dev user is
+        # never adopted.
+        if user is None and auth.email:
+            existing = self.db.scalar(
+                select(User).where(
+                    func.lower(User.email) == auth.email.strip().lower(),
+                    User.id != LOCAL_USER_ID,
+                )
+            )
+            if existing is not None:
+                existing.supabase_user_id = auth.user_id
+                if not existing.display_name and auth.name:
+                    existing.display_name = auth.name
+                self.db.flush()
+                user = existing
         if user is None:
             user = User(
                 id=auth.user_id,
