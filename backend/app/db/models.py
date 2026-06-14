@@ -738,3 +738,29 @@ class WealthItem(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class WealthSnapshot(Base):
+    """Historical value of a net-worth item on a given date. Feeds the real
+    12-month evolution of net worth."""
+
+    __tablename__ = "wealth_snapshots"
+    __table_args__ = (
+        UniqueConstraint("item_id", "as_of", name="uq_wealth_snapshot_item_date"),
+        Index("ix_wealth_snapshot_item_date", "item_id", "as_of"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), nullable=False
+    )
+    item_id: Mapped[str] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("wealth_items.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    as_of: Mapped[date] = mapped_column(Date, nullable=False)
+    value: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

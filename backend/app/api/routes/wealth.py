@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.auth import AuthContext, AuthDependency
-from app.db.models import WealthItem
+from app.db.models import WealthItem, WealthSnapshot
 from app.db.session import get_db
 from app.services.wealth_service import wealth_summary
 
@@ -44,6 +44,25 @@ class WealthItemRead(BaseModel):
     note: str | None
     created_at: object
     updated_at: object
+
+
+class WealthSnapshotCreate(BaseModel):
+    value: Decimal
+    as_of: date | None = None
+
+
+class WealthSnapshotRead(BaseModel):
+    id: str
+    item_id: str
+    as_of: date
+    value: Decimal
+    created_at: object
+
+
+class WealthSnapshotListResponse(BaseModel):
+    item_id: str
+    items: list[WealthSnapshotRead]
+    total: int
 
 
 @router.get("/wealth")
@@ -110,6 +129,92 @@ def delete_wealth_item(
     db.delete(item)
     db.commit()
     return None
+
+
+@router.get("/wealth-items/{item_id}/snapshots")
+def list_wealth_snapshots(
+    item_id: str,
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> WealthSnapshotListResponse:
+    item = _get_item(db, auth.workspace_id, item_id)
+    rows = db.scalars(
+        select(WealthSnapshot)
+        .where(WealthSnapshot.item_id == item.id)
+        .order_by(WealthSnapshot.as_of.desc())
+    ).all()
+    return WealthSnapshotListResponse(
+        item_id=item.id,
+        items=[_snapshot_read(r) for r in rows],
+        total=len(rows),
+    )
+
+
+@router.post("/wealth-items/{item_id}/snapshots", status_code=status.HTTP_201_CREATED)
+def create_wealth_snapshot(
+    item_id: str,
+    payload: WealthSnapshotCreate,
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> WealthSnapshotRead:
+    """Record the value of an item on a date. A snapshot dated today (or later)
+    updates the item's live value; past snapshots feed the evolution."""
+    item = _get_item(db, auth.workspace_id, item_id)
+    as_of = payload.as_of or date.today()
+    value = _non_negative(payload.value)
+    existing = db.scalar(
+        select(WealthSnapshot).where(
+            WealthSnapshot.item_id == item.id, WealthSnapshot.as_of == as_of
+        )
+    )
+    if existing is not None:
+        existing.value = value
+        snapshot = existing
+    else:
+        snapshot = WealthSnapshot(
+            id=str(uuid4()),
+            workspace_id=auth.workspace_id,
+            item_id=item.id,
+            as_of=as_of,
+            value=value,
+        )
+        db.add(snapshot)
+    if as_of >= date.today():
+        item.value = value
+        item.updated_at = datetime.now(UTC)
+    db.commit()
+    db.refresh(snapshot)
+    return _snapshot_read(snapshot)
+
+
+@router.delete("/wealth-snapshots/{snapshot_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_wealth_snapshot(
+    snapshot_id: str,
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> None:
+    try:
+        UUID(snapshot_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid snapshot id"
+        ) from exc
+    snapshot = db.scalar(
+        select(WealthSnapshot).where(
+            WealthSnapshot.id == snapshot_id, WealthSnapshot.workspace_id == auth.workspace_id
+        )
+    )
+    if snapshot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Snapshot not found")
+    db.delete(snapshot)
+    db.commit()
+    return None
+
+
+def _snapshot_read(s: WealthSnapshot) -> WealthSnapshotRead:
+    return WealthSnapshotRead(
+        id=s.id, item_id=s.item_id, as_of=s.as_of, value=s.value, created_at=s.created_at
+    )
 
 
 def _read(i: WealthItem) -> WealthItemRead:

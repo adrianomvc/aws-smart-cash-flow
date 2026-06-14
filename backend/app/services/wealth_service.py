@@ -2,21 +2,55 @@
 
 Net worth = assets - liabilities. Assets and liabilities are maintained
 manually, except the investment portfolio, which is added automatically from
-the real position. The 12-month evolution reuses the investment history
-(manual items are assumed held flat over the window).
+the real position. The 12-month evolution is built from each item's value
+snapshots (manual items without history are assumed held flat) plus the real
+investment history.
 """
 
 from __future__ import annotations
 
+from calendar import monthrange
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import WealthItem
+from app.db.models import WealthItem, WealthSnapshot
 from app.services.investment_service import position_summary
 
 ZERO = Decimal("0")
+_MONTHS_PT = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
+
+
+def _end_of_month(year: int, month: int) -> date:
+    return date(year, month, monthrange(year, month)[1])
+
+
+def _shift_month(year: int, month: int, delta: int) -> tuple[int, int]:
+    idx = year * 12 + (month - 1) + delta
+    return idx // 12, (idx % 12) + 1
+
+
+class _Series:
+    """Sorted snapshot series for one item, with a live current value."""
+
+    def __init__(self, current: Decimal, points: list[tuple[date, Decimal]]):
+        self.current = current
+        self.points = sorted(points, key=lambda p: p[0])
+
+    def value_at(self, target: date) -> Decimal:
+        if not self.points:
+            return self.current
+        found: Decimal | None = None
+        for as_of, value in self.points:
+            if as_of <= target:
+                found = value
+            else:
+                break
+        # Before the first snapshot, back-fill with the earliest known value
+        # (the item existed; we just lack an older reading).
+        return found if found is not None else self.points[0][1]
 
 
 def wealth_summary(db: Session, workspace_id: str) -> dict:
@@ -28,9 +62,18 @@ def wealth_summary(db: Session, workspace_id: str) -> dict:
     manual_assets = [i for i in items if i.kind == "asset"]
     manual_liabilities = [i for i in items if i.kind == "liability"]
 
+    item_ids = [i.id for i in items]
+    snaps_by_item: dict[str, list[tuple[date, Decimal]]] = {}
+    if item_ids:
+        for s in db.scalars(
+            select(WealthSnapshot).where(WealthSnapshot.item_id.in_(item_ids))
+        ).all():
+            snaps_by_item.setdefault(s.item_id, []).append((s.as_of, s.value))
+    series = {i.id: _Series(i.value, snaps_by_item.get(i.id, [])) for i in items}
+
     inv = position_summary(db, workspace_id)
     inv_total = Decimal(inv["total"])  # type: ignore[arg-type]
-    inv_history = inv["history"]  # type: ignore[assignment]
+    inv_history = list(inv["history"])  # type: ignore[arg-type]
 
     asset_rows: list[dict] = []
     if inv_total > ZERO:
@@ -44,22 +87,13 @@ def wealth_summary(db: Session, workspace_id: str) -> dict:
         })
     for i in sorted(manual_assets, key=lambda x: x.value, reverse=True):
         asset_rows.append({
-            "id": i.id,
-            "label": i.label,
-            "value": i.value,
-            "category": i.category,
-            "note": i.note,
-            "source": "manual",
+            "id": i.id, "label": i.label, "value": i.value,
+            "category": i.category, "note": i.note, "source": "manual",
         })
-
     liability_rows: list[dict] = [
         {
-            "id": i.id,
-            "label": i.label,
-            "value": i.value,
-            "category": i.category,
-            "note": i.note,
-            "source": "manual",
+            "id": i.id, "label": i.label, "value": i.value,
+            "category": i.category, "note": i.note, "source": "manual",
         }
         for i in sorted(manual_liabilities, key=lambda x: x.value, reverse=True)
     ]
@@ -68,15 +102,22 @@ def wealth_summary(db: Session, workspace_id: str) -> dict:
     total_liabilities = sum((Decimal(r["value"]) for r in liability_rows), ZERO)
     net = total_assets - total_liabilities
 
-    manual_assets_total = sum((i.value for i in manual_assets), ZERO)
-    manual_liabilities_total = sum((i.value for i in manual_liabilities), ZERO)
-    manual_net = manual_assets_total - manual_liabilities_total
-
+    # ---- 12-month evolution from snapshots (aligned to the investment history) ----
+    today = date.today()
+    months = [_shift_month(today.year, today.month, -back) for back in range(11, -1, -1)]
     history: list[dict] = []
-    for h in inv_history:  # type: ignore[union-attr]
-        history.append({"label": h["label"], "value": manual_net + Decimal(h["value"])})
+    for i, (yy, mm) in enumerate(months):
+        anchor = _end_of_month(yy, mm)
+        a_sum = sum((series[it.id].value_at(anchor) for it in manual_assets), ZERO)
+        l_sum = sum((series[it.id].value_at(anchor) for it in manual_liabilities), ZERO)
+        if i < len(inv_history):
+            inv_v = Decimal(inv_history[i]["value"])
+            label = str(inv_history[i]["label"])
+        else:
+            inv_v = inv_total
+            label = f"{_MONTHS_PT[mm - 1]}/{yy % 100:02d}"
+        history.append({"label": label, "value": a_sum - l_sum + inv_v})
     if history:
-        # Keep the latest point exactly equal to the current net worth.
         history[-1]["value"] = net
 
     delta = ZERO
