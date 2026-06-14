@@ -42,6 +42,57 @@ async def get_current_workspace(
     )
 
 
+class ProfileRead(BaseModel):
+    user_id: str
+    name: str
+    email: str
+    role: str
+    workspace_name: str
+
+
+class ProfileUpdate(BaseModel):
+    display_name: str | None = Field(default=None, max_length=120)
+    email: str | None = Field(default=None, max_length=200)
+
+
+def _profile_read(user, workspace, membership) -> ProfileRead:
+    name = user.display_name or (user.email.split("@")[0] if user.email else "Você")
+    return ProfileRead(
+        user_id=user.id, name=name, email=user.email or "",
+        role=membership.role, workspace_name=workspace.name,
+    )
+
+
+@router.get("/profile")
+def get_profile(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> ProfileRead:
+    user, workspace, membership = _ctx(db, auth)
+    return _profile_read(user, workspace, membership)
+
+
+@router.patch("/profile")
+def update_profile(
+    payload: ProfileUpdate,
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> ProfileRead:
+    user, workspace, membership = _ctx(db, auth)
+    if payload.display_name is not None:
+        user.display_name = payload.display_name.strip() or None
+    if payload.email is not None:
+        email = payload.email.strip().lower()
+        if "@" not in email or "." not in email.split("@")[-1]:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid email"
+            )
+        user.email = email
+    db.commit()
+    db.refresh(user)
+    return _profile_read(user, workspace, membership)
+
+
 # --------------------------------------------------------------------------- #
 # Members & invites
 # --------------------------------------------------------------------------- #
