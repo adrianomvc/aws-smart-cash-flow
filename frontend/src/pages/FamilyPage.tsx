@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, Check, Loader2, Lock, Send, ShieldCheck, Star, Trash2, UserPlus, Users, X,
+  AlertTriangle, Check, Loader2, Lock, Pencil, Send, ShieldCheck, Star, Trash2, UserPlus, Users, X,
 } from "lucide-react";
 
 import {
-  acceptInvite, cancelInvite, getInvites, getMembers, inviteMember, removeMember, updateMemberRole,
+  acceptInvite, cancelInvite, getCurrentWorkspace, getInvites, getMembers, inviteMember,
+  removeMember, updateMemberRole, updateWorkspaceName,
 } from "../lib/api";
 import { apiErrorMessage } from "../lib/utils";
 import { PageState } from "../components/ui";
@@ -48,7 +49,15 @@ export function FamilyPage({ session }: { session: ApiSession }) {
   const queryClient = useQueryClient();
   const membersQ = useQuery({ queryKey: ["members", session.token], queryFn: () => getMembers(session) });
   const invitesQ = useQuery({ queryKey: ["invites", session.token], queryFn: () => getInvites(session) });
+  const wsQ = useQuery({ queryKey: ["workspace", session.token], queryFn: () => getCurrentWorkspace(session) });
   const [showInvite, setShowInvite] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [wsName, setWsName] = useState("");
+  const isOwnerAdmin = wsQ.data?.role === "owner" || wsQ.data?.role === "admin";
+  const renameWs = useMutation({
+    mutationFn: () => updateWorkspaceName(session, wsName.trim()),
+    onSuccess: () => { setEditingName(false); void queryClient.invalidateQueries({ queryKey: ["workspace"] }); },
+  });
 
   function invalidate() {
     void queryClient.invalidateQueries({ queryKey: ["members"] });
@@ -75,6 +84,32 @@ export function FamilyPage({ session }: { session: ApiSession }) {
           <p className="section-sub">Uso compartilhado por workspace. Cada membro tem um papel com permissões claras — os dados ficam isolados nesta família.</p>
         </div>
         <button className="btn btn-primary btn-sm" style={{ flex: "none" }} onClick={() => setShowInvite(true)}><UserPlus size={15} /> Convidar membro</button>
+      </div>
+
+      {/* Workspace name */}
+      <div className="card card-pad" style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+        <span className="kpi-ic" style={{ background: "var(--acc-soft)", color: "var(--acc)" }}><Users size={16} /></span>
+        {editingName ? (
+          <>
+            <input className="fld-input" autoFocus style={{ flex: 1, maxWidth: 360 }} value={wsName}
+              onChange={(e) => setWsName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && wsName.trim()) renameWs.mutate(); if (e.key === "Escape") setEditingName(false); }} />
+            <button className="btn btn-primary btn-sm" disabled={!wsName.trim() || renameWs.isPending} onClick={() => renameWs.mutate()}><Check size={14} /> Salvar</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setEditingName(false)}>Cancelar</button>
+          </>
+        ) : (
+          <>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="t-sub" style={{ fontSize: 11 }}>Nome da família / workspace</div>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>{wsQ.data?.workspace_name ?? "—"}</div>
+            </div>
+            {isOwnerAdmin && (
+              <button className="btn btn-ghost btn-sm" onClick={() => { setWsName(wsQ.data?.workspace_name ?? ""); setEditingName(true); }}>
+                <Pencil size={14} /> Renomear
+              </button>
+            )}
+          </>
+        )}
       </div>
 
       {/* KPIs */}

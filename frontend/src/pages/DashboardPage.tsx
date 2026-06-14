@@ -1266,6 +1266,7 @@ export function DashboardPage({
   onNavigate,
   onOpenImports,
   session,
+  userName,
   workspaceName,
 }: {
   dashboardPeriod: PeriodState;
@@ -1274,6 +1275,7 @@ export function DashboardPage({
   onOpenTransactions: (drilldown?: TransactionDrilldown) => void;
   session: ApiSession;
   setDashboardPeriod: Dispatch<SetStateAction<PeriodState>>;
+  userName?: string;
   workspaceName: string;
 }) {
   const q        = periodQuery(dashboardPeriod);
@@ -1319,7 +1321,10 @@ export function DashboardPage({
 
   const hour   = new Date().getHours();
   const greet  = hour < 5 ? "Boa madrugada" : hour < 12 ? "Bom dia" : hour < 18 ? "Boa tarde" : "Boa noite";
-  const name   = workspaceName ?? "você";
+  const firstName = (userName ?? "").trim().split(/\s+/)[0] || "você";
+  // The workspace name only adds value when it is a real shared/family name
+  // (not the personal default), so we avoid repeating it ambiguously.
+  const sharedWs = workspaceName && !/^(meu workspace|local workspace)$/i.test(workspaceName.trim());
   const MONTHS_PT_D = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
   const periodDate = dashboardPeriod.dateFrom ? new Date(dashboardPeriod.dateFrom + "T12:00:00") : new Date();
   const periodLabel = MONTHS_PT_D[periodDate.getMonth()] + " de " + periodDate.getFullYear();
@@ -1333,10 +1338,10 @@ export function DashboardPage({
       <div style={{ display: "flex", alignItems: "flex-end", gap: 12, marginBottom: 18 }}>
         <div>
           <h1 style={{ margin: 0, fontFamily: "var(--font-display)", fontSize: 24, fontWeight: 600, letterSpacing: "-.4px" }}>
-            {greet}, {name}
+            {greet}, {firstName}
           </h1>
           <p style={{ margin: "4px 0 0", color: "var(--ink-3)", fontSize: 13.5 }}>
-            Aqui está a situação de <b style={{ color: "var(--ink-2)" }}>{name}</b> em <b style={{ color: "var(--ink-2)" }}>{periodLabel}</b>.
+            Aqui está {sharedWs ? <>a situação de <b style={{ color: "var(--ink-2)" }}>{workspaceName}</b></> : "a sua situação financeira"} em <b style={{ color: "var(--ink-2)" }}>{periodLabel}</b>.
           </p>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>

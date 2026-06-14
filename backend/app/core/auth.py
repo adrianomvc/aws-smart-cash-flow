@@ -1,12 +1,14 @@
 import json
 import time
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from fastapi import Depends, Header, HTTPException, status
 from jose import JWTError, jwt
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.db.session import get_db
 
 LOCAL_USER_ID = "00000000-0000-0000-0000-000000000001"
 LOCAL_WORKSPACE_ID = "00000000-0000-0000-0000-000000000002"
@@ -21,6 +23,7 @@ class AuthContext:
     user_id: str
     workspace_id: str | None
     email: str | None = None
+    name: str | None = None
 
 
 def _cognito_jwks(*, force_refresh: bool = False) -> list[dict]:
@@ -73,14 +76,15 @@ def _verify_cognito_token(token: str) -> AuthContext:
 
     user_id = claims.get("sub")
     email = claims.get("email")
+    name = claims.get("name") or claims.get("given_name")
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token claims"
         )
-    return AuthContext(user_id=user_id, workspace_id=None, email=email)
+    return AuthContext(user_id=user_id, workspace_id=None, email=email, name=name)
 
 
-async def get_auth_context(authorization: str | None = Header(default=None)) -> AuthContext:
+async def _authenticate(authorization: str | None) -> AuthContext:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -172,5 +176,26 @@ async def get_auth_context(authorization: str | None = Header(default=None)) -> 
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid or expired token: {str(exc)}",
         ) from exc
+
+
+_DbDependency = Depends(get_db)
+
+
+async def get_auth_context(
+    authorization: str | None = Header(default=None),
+    db: Session = _DbDependency,
+) -> AuthContext:
+    ctx = await _authenticate(authorization)
+    # For identity-provider auth (Cognito/Supabase) the token has no workspace;
+    # resolve (and create on first sign-in) the user's workspace so every data
+    # route is scoped correctly.
+    if ctx.workspace_id is None:
+        from app.services.workspace_service import WorkspaceService
+
+        _, workspace, _ = WorkspaceService(db).get_or_create_current_workspace(ctx)
+        db.commit()
+        ctx = replace(ctx, workspace_id=workspace.id)
+    return ctx
+
 
 AuthDependency = Depends(get_auth_context)

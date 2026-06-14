@@ -9,6 +9,7 @@ export type ApiSession = {
 
 export type WorkspaceCurrent = {
   user_id: string;
+  user_name: string;
   workspace_id: string;
   workspace_name: string;
   role: string;
@@ -1604,6 +1605,10 @@ export function getProfile(session: ApiSession) {
 
 export function updateProfile(session: ApiSession, payload: { display_name?: string; email?: string }) {
   return apiRequest<ProfileRead>("/workspaces/profile", session, { method: "PATCH", body: payload });
+}
+
+export function updateWorkspaceName(session: ApiSession, name: string) {
+  return apiRequest<WorkspaceCurrent>("/workspaces/current", session, { method: "PATCH", body: { name } });
 }
 
 export function getMembers(session: ApiSession) {

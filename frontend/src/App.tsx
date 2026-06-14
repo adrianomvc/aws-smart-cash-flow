@@ -646,6 +646,7 @@ function ProtectedApp({
           onOpenTransactions={onOpenTransactions}
           session={session}
           setDashboardPeriod={setDashboardPeriod}
+          userName={workspace.user_name}
           workspaceName={workspace.workspace_name}
         />
       ) : null}

@@ -20,6 +20,7 @@ _INVITE_ROLES = {"admin", "member", "viewer"}
 
 class CurrentWorkspaceResponse(BaseModel):
     user_id: str
+    user_name: str
     workspace_id: str
     workspace_name: str
     role: str
@@ -35,6 +36,41 @@ async def get_current_workspace(
     db.commit()
     return CurrentWorkspaceResponse(
         user_id=user.id,
+        user_name=user.display_name or (user.email.split("@")[0] if user.email else "você"),
+        workspace_id=workspace.id,
+        workspace_name=workspace.name,
+        role=membership.role,
+        created_at=workspace.created_at,
+    )
+
+
+class WorkspaceRename(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+@router.patch("/current")
+def rename_workspace(
+    payload: WorkspaceRename,
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> CurrentWorkspaceResponse:
+    user, workspace, membership = _ctx(db, auth)
+    if membership.role not in ("owner", "admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only owners and admins can rename the workspace",
+        )
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Name is required"
+        )
+    workspace.name = name
+    db.commit()
+    db.refresh(workspace)
+    return CurrentWorkspaceResponse(
+        user_id=user.id,
+        user_name=user.display_name or (user.email.split("@")[0] if user.email else "você"),
         workspace_id=workspace.id,
         workspace_name=workspace.name,
         role=membership.role,

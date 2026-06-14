@@ -21,9 +21,13 @@ class WorkspaceService:
                 id=auth.user_id,
                 supabase_user_id=auth.user_id,
                 email=auth.email or f"{auth.user_id}@local.invalid",
-                display_name=None,
+                display_name=auth.name,
             )
             self.db.add(user)
+            self.db.flush()
+        elif not user.display_name and auth.name:
+            # Backfill the name once it is available from the identity provider.
+            user.display_name = auth.name
             self.db.flush()
 
         if auth.workspace_id is not None:
