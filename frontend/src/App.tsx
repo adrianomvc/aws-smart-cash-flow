@@ -154,7 +154,6 @@ const navSections: Array<{ label: string; items: NavItem[] }> = [
   {
     label: "Conta",
     items: [
-      { id: "review",   label: "Revisão",         iconName: "shield" },
       { label: "Família / Membros", iconName: "users", status: "em breve" },
       { id: "settings", label: "Configurações",   iconName: "cog" },
     ],
@@ -270,6 +269,12 @@ function App() {
   }
 
   function navigate(nextPage: Page) {
+    // "Revisão" is no longer a page of its own — it opens Transactions filtered
+    // to the pending (review) queue.
+    if (nextPage === "review") {
+      openTransactions({ categoryId: "__pending__", label: "Revisão" });
+      return;
+    }
     setImportDrilldown(null);
     if (nextPage !== "transactions") {
       setTransactionDrilldown(null);
