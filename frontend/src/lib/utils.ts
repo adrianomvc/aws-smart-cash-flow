@@ -29,6 +29,7 @@ export type Page =
   | "budgets"
   | "goals"
   | "planning"
+  | "scenarios"
   | "reports"
   | "imports"
   | "categories"
@@ -560,6 +561,10 @@ export function pageMeta(page: Page) {
     planning: {
       description: "Veja horizontes de caixa, riscos e premissas para os próximos passos.",
       title: "Planejamento",
+    },
+    scenarios: {
+      description: "Simule decisões e veja o impacto no saldo, runway e metas antes de agir.",
+      title: "Simulador de cenários",
     },
     reports: {
       description: "Consolide leituras financeiras e prepare exportações futuras.",

@@ -17,6 +17,7 @@ export type Page =
   | "budgets"
   | "goals"
   | "planning"
+  | "scenarios"
   | "reports"
   | "imports"
   | "categories"
