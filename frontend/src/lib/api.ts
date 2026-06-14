@@ -1571,6 +1571,22 @@ export type InviteRead = {
   created_at: string;
 };
 
+export type ProfileRead = {
+  user_id: string;
+  name: string;
+  email: string;
+  role: string;
+  workspace_name: string;
+};
+
+export function getProfile(session: ApiSession) {
+  return apiRequest<ProfileRead>("/workspaces/profile", session);
+}
+
+export function updateProfile(session: ApiSession, payload: { display_name?: string; email?: string }) {
+  return apiRequest<ProfileRead>("/workspaces/profile", session, { method: "PATCH", body: payload });
+}
+
 export function getMembers(session: ApiSession) {
   return apiRequest<{ workspace_id: string; items: MemberRead[]; total: number }>("/workspaces/members", session);
 }

@@ -1,15 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   ArrowUpRight,
   Bell,
   Building2,
+  Check,
   ChevronDown,
   CreditCard,
   Database,
+  Download,
   FileUp,
   Filter,
   Info,
+  Link2,
   Loader2,
   Lock,
   RefreshCw,
@@ -18,14 +22,15 @@ import {
   SlidersHorizontal,
   Tags,
   Users,
+  Wallet,
   type LucideIcon,
 } from "lucide-react";
 
-import { associateCreditCardSourceFile, autoAssociateCreditCardFiles, deleteImport, getCreditCards, getCreditCardSourceFiles, getImports, getPreferences, normalizeTransactionDescriptions, unlinkCreditCardSourceFile, updatePreferences, uploadImport } from "../lib/api";
-import { apiErrorMessage, dateLabel, moneyAbs } from "../lib/utils";
-import { InlineError, InlineSuccess } from "../components/ui";
+import { associateCreditCardSourceFile, autoAssociateCreditCardFiles, deleteImport, getActiveAccounts, getCreditCards, getCreditCardSourceFiles, getImports, getPreferences, getProfile, getTransactions, normalizeTransactionDescriptions, unlinkCreditCardSourceFile, updatePreferences, updateProfile, uploadImport } from "../lib/api";
+import { apiErrorMessage, dateLabel, money, moneyAbs } from "../lib/utils";
+import { InlineError, InlineSuccess, PageState } from "../components/ui";
 import { RulesPage } from "./CategoriesPage";
-import type { ApiSession, CreditCardRead, CreditCardSourceFileItem, ImportJobRead, PreferencesPayload } from "../lib/api";
+import type { ActiveAccountItem, ApiSession, CreditCardRead, CreditCardSourceFileItem, ImportJobRead, PreferencesPayload } from "../lib/api";
 import type { Page, TransactionDrilldown } from "../types";
 
 type TabId = "prefs" | "cats" | "rules" | "accounts" | "import" | "notif" | "profile" | "security" | "backup" | "about";
@@ -187,6 +192,244 @@ function FinPrefsBody({ session }: { session: ApiSession }) {
         <button className="btn btn-primary btn-sm" type="button" onClick={() => save.mutate()} disabled={save.isPending || prefsQuery.isLoading}>
           {save.isPending ? "Salvando…" : "Salvar preferências"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------- //
+// Profile
+// --------------------------------------------------------------------------- //
+const AVATAR_COLORS = ["#3d7d63", "#a35a7d", "#7d6a3d", "#5a6d7d", "#6a4ba8", "#2a4d8f"];
+function avatarColor(seed: string) {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+function avatarInitials(name: string, email: string) {
+  const base = name && !name.includes("-") ? name : email;
+  const parts = base.replace(/@.*/, "").split(/[.\s_]+/).filter(Boolean);
+  return ((parts[0]?.[0] ?? "?") + (parts[1]?.[0] ?? parts[0]?.[1] ?? "")).toUpperCase();
+}
+
+function ProfileBody({ session }: { session: ApiSession }) {
+  const queryClient = useQueryClient();
+  const profileQ = useQuery({ queryKey: ["profile", session.token], queryFn: () => getProfile(session) });
+  const profile = profileQ.data;
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  useEffect(() => {
+    if (profile) {
+      setName(profile.name && !profile.name.includes("-") ? profile.name : "");
+      setEmail(profile.email.includes("local.invalid") ? "" : profile.email);
+    }
+  }, [profile]);
+
+  const save = useMutation({
+    mutationFn: () => updateProfile(session, { display_name: name.trim(), ...(email.trim() ? { email: email.trim() } : {}) }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["profile"] });
+      void queryClient.invalidateQueries({ queryKey: ["workspace"] });
+      void queryClient.invalidateQueries({ queryKey: ["members"] });
+    },
+  });
+
+  if (profileQ.isLoading) return <PageState icon={Loader2} title="Carregando perfil" description="Buscando seus dados." spin />;
+  const displayName = name || (profile?.name && !profile.name.includes("-") ? profile.name : "Você");
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <div className="kpi-ic"><Users size={15} /></div>
+        <div><div className="ttl">Perfil</div><div className="sub">Suas informações pessoais e visuais.</div></div>
+      </div>
+      <div style={{ display: "flex", gap: 18, alignItems: "center", padding: "18px 20px 6px" }}>
+        <span style={{ width: 66, height: 66, borderRadius: 18, display: "grid", placeItems: "center", color: "#fff", fontWeight: 800, fontSize: 22, background: avatarColor(profile?.email ?? "x") }}>
+          {avatarInitials(displayName, profile?.email ?? "")}
+        </span>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 18 }}>{displayName}</div>
+          <div className="t-sub" style={{ marginTop: 2 }}>{profile?.email} · {profile?.role === "owner" ? "Proprietário" : profile?.role} de {profile?.workspace_name}</div>
+        </div>
+      </div>
+      <div style={{ padding: "14px 20px 4px" }}>
+        <label className="fld" style={{ marginBottom: 12 }}>
+          <span className="fld-label">Nome de exibição</span>
+          <input className="fld-input" placeholder="Ex: Marcos Andrade" value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label className="fld">
+          <span className="fld-label">E-mail</span>
+          <input className="fld-input" type="email" placeholder="nome@email.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+        </label>
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end", padding: "14px 18px", borderTop: "1px solid var(--line)" }}>
+        {save.isError && <span style={{ flex: 1 }}><InlineError message={apiErrorMessage(save.error, "Falha ao salvar.")} /></span>}
+        {save.isSuccess && <span style={{ flex: 1, fontSize: 12, color: "var(--pos)" }}>Perfil salvo ✓</span>}
+        <button className="btn btn-primary btn-sm" type="button" onClick={() => save.mutate()} disabled={save.isPending}>
+          <Check size={14} /> {save.isPending ? "Salvando…" : "Salvar alterações"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------- //
+// Accounts & banks
+// --------------------------------------------------------------------------- //
+function accountBalance(a: ActiveAccountItem): number {
+  if (a.kind === "credit_card") return -(a.used_amount ?? 0);
+  return a.current_balance ?? 0;
+}
+function AccountsBody({ session }: { session: ApiSession }) {
+  const accountsQ = useQuery({ queryKey: ["active-accounts", session.token], queryFn: () => getActiveAccounts(session) });
+  if (accountsQ.isLoading) return <PageState icon={Loader2} title="Carregando contas" description="Consolidando contas e cartões." spin />;
+  const accounts = accountsQ.data?.items ?? [];
+  const total = accounts.reduce((s, a) => s + accountBalance(a), 0);
+  const cards = accounts.filter(a => a.kind === "credit_card").length;
+  const banks = accounts.length - cards;
+
+  return (
+    <div className="vstack" style={{ gap: 16 }}>
+      <div className="grid cols-4">
+        <KpiMini icon={<Building2 size={15} />} label="Contas e cartões" value={String(accounts.length)} />
+        <KpiMini icon={<Wallet size={15} />} label="Saldo consolidado" value={money(total)} tone={total >= 0 ? "pos" : "neg"} />
+        <KpiMini icon={<CreditCard size={15} />} label="Cartões" value={String(cards)} sub={`${banks} contas`} />
+        <KpiMini icon={<Link2 size={15} />} label="Conexão automática" value="—" sub="Open Finance em breve" />
+      </div>
+
+      <div className="card">
+        <div className="card-head">
+          <div className="kpi-ic"><Building2 size={15} /></div>
+          <div><div className="ttl">Contas e bancos</div><div className="sub">Cada conta vira uma origem de transações. Cartões também entram aqui.</div></div>
+        </div>
+        <div>
+          {accounts.map((a, i) => {
+            const bal = accountBalance(a);
+            const mark = a.account_name.slice(0, 2).toUpperCase();
+            return (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 18px", borderTop: i ? "1px solid var(--line)" : "none" }}>
+                <span style={{ width: 38, height: 38, borderRadius: 10, display: "grid", placeItems: "center", color: "#fff", fontWeight: 800, fontSize: 13, background: avatarColor(a.account_name) }}>{mark}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="t-desc" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.account_name}</div>
+                  <div className="t-sub">{a.kind === "credit_card" ? "Cartão de crédito" : "Conta"}{a.balance_date ? ` · atualizado ${a.balance_date.split("-").reverse().join("/")}` : ""}</div>
+                </div>
+                {a.kind === "credit_card" && a.limit_amount != null && (
+                  <div className="t-sub mono" style={{ textAlign: "right", marginRight: 8 }}>limite {money(a.limit_amount)}</div>
+                )}
+                <div style={{ textAlign: "right", fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 15, color: bal < 0 ? "var(--neg)" : "var(--ink)" }}>{money(bal)}</div>
+              </div>
+            );
+          })}
+          {accounts.length === 0 && <div className="t-sub" style={{ padding: "16px 18px" }}>Nenhuma conta ainda. As contas aparecem aqui conforme você importa extratos.</div>}
+        </div>
+      </div>
+
+      <div className="card card-pad">
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          <span className="kpi-ic" style={{ background: "var(--acc-soft)", color: "var(--acc)" }}><ShieldCheck size={15} /></span>
+          <span style={{ fontWeight: 700, fontSize: 14 }}>Conexão automática (Open Finance)</span>
+        </div>
+        <p className="t-sub" style={{ margin: 0, lineHeight: 1.5 }}>
+          A sincronização automática via Open Finance é uma integração externa regulada que ainda não está disponível neste ambiente. Hoje as contas são criadas a partir dos <strong>extratos importados</strong> (OFX/CSV/Excel) — cada arquivo alimenta a conta correspondente.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function KpiMini({ icon, label, value, sub, tone }: { icon: React.ReactNode; label: string; value: string; sub?: string; tone?: string }) {
+  return (
+    <div className="kpi">
+      <div className="kpi-top"><span className="kpi-ic" style={tone ? { background: `var(--${tone}-soft)`, color: `var(--${tone})` } : undefined}>{icon}</span><span className="kpi-label">{label}</span></div>
+      <div className="kpi-val" style={{ fontSize: 18 }}>{value}</div>
+      {sub && <div className="kpi-sub">{sub}</div>}
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------- //
+// Security
+// --------------------------------------------------------------------------- //
+function SecurityBody({ session }: { session: ApiSession }) {
+  const [exporting, setExporting] = useState(false);
+
+  async function exportData() {
+    setExporting(true);
+    try {
+      const res = await getTransactions(session, "?limit=5000");
+      const rows = (res.items ?? []).map(t => [
+        t.transaction_date, t.description, t.amount, t.direction,
+        t.account_or_card ?? "", t.category?.category_id ?? "",
+      ]);
+      const headers = ["Data", "Descricao", "Valor", "Direcao", "Conta", "CategoriaId"];
+      const esc = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
+      const csv = [headers, ...rows].map(r => r.map(esc).join(";")).join("\n");
+      const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "smartcashflow-transacoes.csv";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return (
+    <div className="vstack" style={{ gap: 16 }}>
+      <div className="card card-pad">
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+          <span className="kpi-ic" style={{ background: "var(--acc-soft)", color: "var(--acc)" }}><Lock size={15} /></span>
+          <span style={{ fontWeight: 700, fontSize: 14 }}>Acesso & autenticação</span>
+        </div>
+        <PrefRow label="Senha e login" hint="Gerenciados pelo provedor de autenticação. Não disponível no acesso local.">
+          <span className="badge b-neutral">Externo</span>
+        </PrefRow>
+        <PrefRow label="Autenticação em 2 etapas (2FA)" hint="Disponível com login real (Supabase/OAuth).">
+          <span className="badge b-neutral">Indisponível no local</span>
+        </PrefRow>
+        <PrefRow label="Sessão atual" hint="Este dispositivo está conectado a este workspace.">
+          <span className="badge b-pos"><Check size={12} /> Ativa</span>
+        </PrefRow>
+      </div>
+
+      <div className="card card-pad">
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          <span className="kpi-ic" style={{ background: "var(--acc-soft)", color: "var(--acc)" }}><ShieldCheck size={15} /></span>
+          <span style={{ fontWeight: 700, fontSize: 14 }}>Privacidade dos dados</span>
+        </div>
+        <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 9 }}>
+          {["Dados isolados por workspace familiar", "Valores nunca expostos a terceiros", "Conexões e armazenamento criptografados", "Você controla quem acessa via papéis"].map((t, i) => (
+            <li key={i} style={{ display: "flex", gap: 8, fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.4 }}>
+              <Check size={15} style={{ color: "var(--acc)", flex: "none" }} />{t}
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="card" style={{ borderColor: "var(--neg-soft)" }}>
+        <div style={{ padding: "16px 18px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <span className="kpi-ic" style={{ background: "var(--neg-soft)", color: "var(--neg)" }}><AlertTriangle size={15} /></span>
+            <span style={{ fontWeight: 700, fontSize: 15 }}>Seus dados</span>
+          </div>
+          <div className="pref-row">
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 13.5 }}>Exportar minhas transações</div>
+              <div className="t-sub">Baixa um CSV com todas as transações do workspace.</div>
+            </div>
+            <button className="btn btn-quiet btn-sm" type="button" onClick={exportData} disabled={exporting}>
+              <Download size={13} /> {exporting ? "Gerando…" : "Exportar CSV"}
+            </button>
+          </div>
+          <div className="pref-row" style={{ borderBottom: "none" }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 13.5 }}>Excluir minha conta</div>
+              <div className="t-sub">Remoção permanente — disponível apenas com login real.</div>
+            </div>
+            <button className="btn btn-sm" style={{ background: "var(--neg-soft)", color: "var(--neg)", opacity: 0.6, cursor: "not-allowed" }} disabled>Excluir conta</button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -901,9 +1144,9 @@ export function SettingsPage({ onNavigate, onOpenTransactions, workspaceName, se
       case "import": return <ImportBody session={session} onOpenTransactions={onOpenTransactions} />;
       case "notif": return <NotifBody />;
       case "about": return <AboutBody workspaceName={workspaceName} session={session} />;
-      case "accounts": return <ComingSoon title="Contas e Bancos" />;
-      case "profile": return <ComingSoon title="Perfil" />;
-      case "security": return <ComingSoon title="Segurança" />;
+      case "accounts": return <AccountsBody session={session} />;
+      case "profile": return <ProfileBody session={session} />;
+      case "security": return <SecurityBody session={session} />;
       case "backup": return <ComingSoon title="Backup e Sincronização" />;
       default: return <ComingSoon title="Configurações" />;
     }
