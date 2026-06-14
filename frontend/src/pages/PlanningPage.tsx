@@ -110,6 +110,11 @@ export function PlanningPage({ session, onNavigate }: { session: ApiSession; onN
   const variation = Number(data.variation);
   const risk = riskInfo(data.risk_level);
 
+  const commitsIn = data.commitments.filter((c) => c.income).reduce((s, c) => s + Number(c.amount), 0);
+  const commitsOut = data.commitments.filter((c) => !c.income).reduce((s, c) => s + Number(c.amount), 0);
+  const shownCommits = data.commitments.slice(0, 10);
+  const moreCommits = data.commitments.length - shownCommits.length;
+
   return (
     <div className="canvas stg">
       {/* Header */}
@@ -221,8 +226,8 @@ export function PlanningPage({ session, onNavigate }: { session: ApiSession; onN
               <div className="sub">Parcelas, eventos, recorrências e itens anuais</div>
             </div>
           </div>
-          <div style={{ padding: "6px 8px 10px" }}>
-            {data.commitments.length ? data.commitments.map((ev, i) => (
+          <div style={{ padding: "6px 8px 0" }}>
+            {data.commitments.length ? shownCommits.map((ev, i) => (
               <div key={`${ev.title}-${i}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderBottom: "1px solid var(--line)" }}>
                 <span className="mono t-sub" style={{ width: 64, flex: "none" }}>{ev.monthly ? "mensal" : dateLabel(ev.date)}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -234,7 +239,18 @@ export function PlanningPage({ session, onNavigate }: { session: ApiSession; onN
             )) : (
               <p style={{ fontSize: 12.5, color: "var(--ink-3)", padding: 12 }}>Sem compromissos detectados no período.</p>
             )}
+            {moreCommits > 0 && (
+              <div style={{ padding: "9px 10px", fontSize: 12, color: "var(--ink-3)" }}>+ {moreCommits} mais</div>
+            )}
           </div>
+          {data.commitments.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "11px 16px", borderTop: "1px solid var(--line)", fontSize: 12.5 }}>
+              <span style={{ color: "var(--ink-3)" }}>Somatória</span>
+              <span style={{ flex: 1 }} />
+              <span style={{ color: "var(--pos)", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>entradas {moneyAbs(commitsIn)}</span>
+              <span style={{ color: "var(--neg)", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>saídas {moneyAbs(commitsOut)}</span>
+            </div>
+          )}
         </div>
 
         <div className="card card-pad" style={{ display: "flex", flexDirection: "column" }}>

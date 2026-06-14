@@ -1309,7 +1309,7 @@ class DashboardService:
             "variation_pct": variation_pct,
             "risk_level": risk_level,
             "risk_reason": risk_reason,
-            "commitments": commitments[:8],
+            "commitments": commitments[:50],
             "assumptions": assumptions,
         }
 
