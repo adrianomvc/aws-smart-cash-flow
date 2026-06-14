@@ -1215,6 +1215,7 @@ export type InsightItem = {
   type: "pos" | "neg" | "warn" | "info";
   title: string;
   impact: string;
+  impact_label?: string;
   saving: string;
   confidence: "Alta" | "Média" | "Baixa";
   reason: string;
@@ -1350,6 +1351,7 @@ export type InvestmentPositionAsset = {
   detail: string | null;
   month_return: number;
   ytd_return: number;
+  updated_at: string | null;
 };
 
 export type InvestmentPosition = {
@@ -1362,6 +1364,7 @@ export type InvestmentPosition = {
   ytd_return: number;
   custody_count: number;
   asset_count: number;
+  has_snapshots: boolean;
   classes: InvestmentPositionClass[];
   accounts: InvestmentPositionAccount[];
   assets: InvestmentPositionAsset[];

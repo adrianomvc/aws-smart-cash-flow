@@ -66,6 +66,7 @@ class InsightsService:
                     "type": "pos",
                     "title": "Saving rate acima da sua meta",
                     "impact": gap.quantize(Decimal("0.01")),
+                    "impact_label": "Acima da meta",
                     "saving": ZERO,
                     "confidence": "Alta",
                     "reason": f"Você economizou {sr_pct}% da renda no período, "
@@ -80,6 +81,7 @@ class InsightsService:
                     "type": "warn",
                     "title": "Saving rate abaixo da meta",
                     "impact": gap.quantize(Decimal("0.01")),
+                    "impact_label": "Faltam",
                     "saving": ZERO,
                     "confidence": "Alta",
                     "reason": f"Você economizou {sr_pct}% da renda, abaixo da meta de "
@@ -101,6 +103,7 @@ class InsightsService:
                     "type": "warn",
                     "title": "Comprometimento acima do limite",
                     "impact": (-over).quantize(Decimal("0.01")),
+                    "impact_label": "Excesso",
                     "saving": ZERO,
                     "confidence": "Alta",
                     "reason": f"Suas despesas consumiram {cr_pct}% da renda, acima do limite "
@@ -113,7 +116,9 @@ class InsightsService:
 
         # 3. Category overspend vs the previous comparable period
         alerts = self.dash.category_growth_alerts(workspace_id, date_from, date_to, limit=2)
+        overspend_cats: set = set()
         for al in alerts:
+            overspend_cats.add(al["category_id"])
             change = Decimal(al["change_amount"])  # type: ignore[arg-type]
             ratio_pct = (Decimal(al["change_ratio"]) * 100).quantize(Decimal("0.1"))  # type: ignore[arg-type]
             current = Decimal(al["current_amount"])  # type: ignore[arg-type]
@@ -123,6 +128,7 @@ class InsightsService:
                 "type": "warn",
                 "title": f"{al['category_name']} subiu {ratio_pct}%",
                 "impact": (-change).quantize(Decimal("0.01")),
+                "impact_label": "Aumento",
                 "saving": saving,
                 "confidence": "Média",
                 "reason": f"{al['category_name']} passou de {_brl(previous)} para "
@@ -159,6 +165,7 @@ class InsightsService:
                     "type": "neg" if negative else "warn",
                     "title": "Saldo baixo previsto" if not negative else "Risco de saldo negativo",
                     "impact": min_balance.quantize(Decimal("0.01")),
+                    "impact_label": "Menor saldo",
                     "saving": ZERO,
                     "confidence": "Média",
                     "reason": (
@@ -183,7 +190,13 @@ class InsightsService:
         if ranking:
             top = ranking[0]
             top_amount = Decimal(top["amount"])  # type: ignore[arg-type]
-            if top_amount >= Decimal("300.00") and top["category_id"] is not None:
+            # Skip if this category already has an overspend insight (block 3),
+            # so its savings are not double-counted in the KPI.
+            if (
+                top_amount >= Decimal("300.00")
+                and top["category_id"] is not None
+                and top["category_id"] not in overspend_cats
+            ):
                 saving = (top_amount * Decimal("0.10")).quantize(Decimal("0.01"))
                 items.append({
                     "type": "info",
@@ -235,6 +248,7 @@ class InsightsService:
                     "type": "neg" if runway < 1 else "warn",
                     "title": "Reserva de emergência baixa",
                     "impact": (cb - target).quantize(Decimal("0.01")),
+                    "impact_label": "Falta p/ reserva",
                     "saving": ZERO,
                     "confidence": "Média",
                     "reason": f"Seu saldo cobre cerca de {runway_txt} meses de despesas "
@@ -277,6 +291,7 @@ class InsightsService:
                     "type": "neg" if over else "warn",
                     "title": f"Orçamento de {bud.name} {'estourado' if over else 'no limite'}",
                     "impact": (bud.limit_amount - spent).quantize(Decimal("0.01")),
+                    "impact_label": "Excedido" if over else "Restante",
                     "saving": ZERO,
                     "confidence": "Alta",
                     "reason": f"Você usou {_brl(spent)} de {_brl(bud.limit_amount)} "
@@ -301,6 +316,7 @@ class InsightsService:
                         "type": "warn",
                         "title": "Renda abaixo da média",
                         "impact": (-drop).quantize(Decimal("0.01")),
+                        "impact_label": "Queda",
                         "saving": ZERO,
                         "confidence": "Média",
                         "reason": f"A renda do período ({_brl(income)}) está {_brl(drop)} "
@@ -365,6 +381,7 @@ class InsightsService:
                     "type": "pos",
                     "title": "Sobra mensal para alocar",
                     "impact": net.quantize(Decimal("0.01")),
+                    "impact_label": "Sobra/mês",
                     "saving": ZERO,
                     "confidence": "Média",
                     "reason": f"Seu fluxo deixa cerca de {_brl(net)}/mês de sobra. {tail}",

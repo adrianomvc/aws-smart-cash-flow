@@ -49,6 +49,8 @@ const ICONS: Record<string, string> = {
   x:        "M18 6L6 18 M6 6l12 12",
   chevR:    "M9 18l6-6-6-6",
   info:     "M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0 M12 11v5 M12 8h.01",
+  clock:    "M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0 M12 7v5l3 2",
+  alert:    "M10.3 4l-7.5 13A1.5 1.5 0 0 0 4.1 19.3h15.8A1.5 1.5 0 0 0 21.2 17l-7.5-13a1.5 1.5 0 0 0-2.6 0z M12 9v4 M12 16h.01",
 };
 
 function Icon({ name, size = 15 }: { name: string; size?: number }) {
@@ -89,6 +91,15 @@ function Delta({ v }: { v: number }) {
       {pos ? "+" : "−"}{num(Math.abs(v), 2)}%
     </span>
   );
+}
+
+function freshness(updatedAt: string | null): { label: string; stale: boolean } | null {
+  if (!updatedAt) return null;
+  const d = new Date(updatedAt);
+  if (Number.isNaN(d.getTime())) return null;
+  const months = (Date.now() - d.getTime()) / (1000 * 60 * 60 * 24 * 30);
+  const label = `atualizado em ${d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "2-digit" })}`;
+  return { label, stale: months >= 6 };
 }
 
 function relativeTime(iso: string): string {
@@ -155,6 +166,7 @@ export function InvestmentsPage({ session, period }: { session: ApiSession; peri
   const total = Number(pos?.total ?? 0);
   const totalGain = Number(pos?.total_gain ?? 0);
   const totalContrib = Number(pos?.total_contributed ?? 0);
+  const hasReturns = !!pos?.has_snapshots;
   const empty = (custodies.length === 0) && (assets.length === 0);
 
   // Filtered views
@@ -175,7 +187,8 @@ export function InvestmentsPage({ session, period }: { session: ApiSession; peri
         </div>
         <div style={{ display: "flex", gap: 8, flex: "none" }}>
           <button className="btn btn-ghost btn-sm" onClick={() => setCustodyModal("new")}><Icon name="building" size={15} /> Custódia</button>
-          <button className="btn btn-primary btn-sm" onClick={() => setAssetModal("new")} disabled={custodies.length === 0}><Icon name="plus" size={15} /> Ativo</button>
+          <button className="btn btn-primary btn-sm" onClick={() => setAssetModal("new")} disabled={custodies.length === 0}
+            title={custodies.length === 0 ? "Cadastre uma custódia primeiro" : "Adicionar ativo"}><Icon name="plus" size={15} /> Ativo</button>
         </div>
       </div>
 
@@ -201,6 +214,12 @@ export function InvestmentsPage({ session, period }: { session: ApiSession; peri
                   <span className="catdot" style={{ background: c.color, width: 8, height: 8 }} />{c.label}
                 </button>
               ))}
+              {classFilter !== "all" && (
+                <span className="t-sub" style={{ marginLeft: "auto" }}>
+                  {classOf(classFilter).label}: <strong style={{ color: "var(--ink-2)" }}>{money(filteredAssetsTotal)}</strong>
+                  {total > 0 ? ` · ${num((filteredAssetsTotal / total) * 100, 1)}% da carteira` : ""}
+                </span>
+              )}
             </div>
           )}
 
@@ -213,13 +232,15 @@ export function InvestmentsPage({ session, period }: { session: ApiSession; peri
             </div>
             <div className="kpi">
               <div className="kpi-top"><span className="kpi-ic" style={{ background: "var(--acc-soft)", color: "var(--acc-ink)" }}><Icon name="trend" size={16} /></span><span className="kpi-label">Rentabilidade no mês</span></div>
-              <div className="kpi-val" style={{ fontSize: 19 }}><Delta v={pos?.month_return ?? 0} /></div>
-              <div className="kpi-sub">Sobre o valor de ~30 dias atrás</div>
+              {hasReturns
+                ? <><div className="kpi-val" style={{ fontSize: 19 }}><Delta v={pos?.month_return ?? 0} /></div><div className="kpi-sub">Sobre o valor de ~30 dias atrás</div></>
+                : <><div className="kpi-val" style={{ fontSize: 19, color: "var(--ink-3)" }}>—</div><div className="kpi-sub">registre valores para ver a rentabilidade</div></>}
             </div>
             <div className="kpi">
               <div className="kpi-top"><span className="kpi-ic" style={{ background: "var(--acc-soft)", color: "var(--acc-ink)" }}><Icon name="bars" size={16} /></span><span className="kpi-label">Rentabilidade no ano</span></div>
-              <div className="kpi-val" style={{ fontSize: 19 }}><Delta v={pos?.year_return ?? 0} /></div>
-              <div className="kpi-sub">YTD: <Delta v={pos?.ytd_return ?? 0} /></div>
+              {hasReturns
+                ? <><div className="kpi-val" style={{ fontSize: 19 }}><Delta v={pos?.year_return ?? 0} /></div><div className="kpi-sub">YTD: <Delta v={pos?.ytd_return ?? 0} /></div></>
+                : <><div className="kpi-val" style={{ fontSize: 19, color: "var(--ink-3)" }}>—</div><div className="kpi-sub">sem histórico de valores ainda</div></>}
             </div>
             <div className="kpi">
               <div className="kpi-top"><span className="kpi-ic" style={{ background: totalGain >= 0 ? "var(--pos-soft)" : "var(--neg-soft)", color: totalGain >= 0 ? "var(--pos)" : "var(--neg)" }}><Icon name="plus" size={16} /></span><span className="kpi-label">Ganho acumulado</span></div>
@@ -228,8 +249,12 @@ export function InvestmentsPage({ session, period }: { session: ApiSession; peri
             </div>
           </div>
 
+          <div className="t-sub" style={{ marginBottom: 14, fontSize: 11.5, display: "flex", alignItems: "center", gap: 5 }}>
+            <Icon name="info" size={12} /> Rentabilidade calculada pela variação dos valores que você registra ao longo do tempo (snapshots).
+          </div>
+
           {/* Evolution + allocation */}
-          <div className="grid" style={{ gridTemplateColumns: "1.6fr 1fr", gap: 16, marginBottom: 8, alignItems: "stretch" }}>
+          <div className="dash-main" style={{ marginBottom: 8, alignItems: "stretch" }}>
             <div className="card">
               <div className="card-head">
                 <span className="kpi-ic"><Icon name="trend" size={15} /></span>
@@ -351,7 +376,14 @@ export function InvestmentsPage({ session, period }: { session: ApiSession; peri
                     const cls = classOf(a.asset_class);
                     return (
                       <tr key={a.id}>
-                        <td><span className="t-desc">{a.name}</span></td>
+                        <td>
+                          <span className="t-desc">{a.name}</span>
+                          {(() => { const f = freshness(a.updated_at); return f ? (
+                            <div className="t-sub" style={{ fontSize: 10.5, display: "flex", alignItems: "center", gap: 3, marginTop: 1, color: f.stale ? "var(--warn)" : undefined }}>
+                              <Icon name={f.stale ? "alert" : "clock"} size={9} />{f.label}
+                            </div>
+                          ) : null; })()}
+                        </td>
                         <td><span className="pill" style={{ background: cls.color + "1a", color: cls.color, border: "1px solid " + cls.color + "33", fontWeight: 700 }}>
                           <span className="catdot" style={{ background: cls.color, width: 7, height: 7 }} />{cls.label}</span></td>
                         <td className="t-sub">{a.account}</td>
@@ -680,6 +712,7 @@ function SnapshotModal({ session, asset, onClose, onSaved }: {
   const queryClient = useQueryClient();
   const today = new Date().toISOString().slice(0, 10);
   const [value, setValue] = useState(String(asset.current_value));
+  const [contributed, setContributed] = useState(String(asset.contributed));
   const [asOf, setAsOf] = useState(today);
   const [error, setError] = useState("");
   const snapsQ = useQuery({ queryKey: ["inv-snaps", asset.id], queryFn: () => getInvestmentSnapshots(session, asset.id) });
@@ -689,7 +722,9 @@ function SnapshotModal({ session, asset, onClose, onSaved }: {
     onSaved();
   }
   const save = useMutation({
-    mutationFn: () => createInvestmentSnapshot(session, asset.id, { value: value || "0", as_of: asOf }),
+    mutationFn: () => createInvestmentSnapshot(session, asset.id, {
+      value: value || "0", as_of: asOf, contributed: contributed === "" ? null : contributed,
+    }),
     onSuccess: () => { setError(""); refresh(); },
     onError: (e) => setError(apiErrorMessage(e, "Falha ao registrar valor.")),
   });
@@ -707,12 +742,15 @@ function SnapshotModal({ session, asset, onClose, onSaved }: {
         <button className="btn btn-primary btn-sm" onClick={() => save.mutate()} disabled={save.isPending}>Registrar</button>
       </>}>
       <p className="t-sub" style={{ marginTop: 0 }}>Registre o valor da posição numa data. Um registro com a data de hoje atualiza o valor atual; datas anteriores alimentam a rentabilidade e a evolução.</p>
-      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 10 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
         <label className="fld"><span className="fld-label">Valor (R$)</span>
           <input className="fld-input" autoFocus type="number" step="0.01" min="0" value={value} onChange={(e) => setValue(e.target.value)} /></label>
+        <label className="fld"><span className="fld-label">Aporte acum. (R$)</span>
+          <input className="fld-input" type="number" step="0.01" min="0" value={contributed} onChange={(e) => setContributed(e.target.value)} /></label>
         <label className="fld"><span className="fld-label">Data</span>
           <input className="fld-input" type="date" max={today} value={asOf} onChange={(e) => setAsOf(e.target.value)} /></label>
       </div>
+      <span className="t-sub" style={{ display: "block", marginTop: -4, marginBottom: 4, fontSize: 11 }}>O aporte acumulado é usado no cálculo do ganho. Deixe como está se não mudou.</span>
       {snaps.length > 0 && (
         <div className="fld">
           <span className="fld-label">Histórico ({snaps.length})</span>

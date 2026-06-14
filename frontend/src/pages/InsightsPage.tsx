@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import {
-  AlertTriangle, CheckCircle2, ChevronRight, Database, Info, Loader2, Lightbulb, Sparkles, TrendingUp,
+  AlertTriangle, CalendarDays, CheckCircle2, ChevronRight, Database, Info, Loader2, Lightbulb,
+  Sparkles, TrendingUp,
 } from "lucide-react";
 
 import { getInsights } from "../lib/api";
@@ -15,8 +16,26 @@ const TONE: Record<string, { Icon: typeof Info; color: string; soft: string }> =
   warn: { Icon: AlertTriangle, color: "var(--warn)", soft: "var(--warn-soft)" },
   info: { Icon: Lightbulb, color: "var(--info)", soft: "var(--info-soft)" },
 };
-const CONF_BADGE: Record<string, string> = { Alta: "b-pos", "Média": "b-warn", Baixa: "b-neutral" };
 const num1 = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const MONTHS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+
+function periodLabel(from: string | null, to: string | null): string {
+  if (!from || !to) return "todo o período";
+  const [fy, fm] = from.split("-");
+  const [ty, tm] = to.split("-");
+  if (fy === ty && fm === tm) return `${MONTHS[Number(fm) - 1]}/${fy}`;
+  return `${MONTHS[Number(fm) - 1]}/${fy.slice(2)} – ${MONTHS[Number(tm) - 1]}/${ty.slice(2)}`;
+}
+
+// Bold monetary values and percentages in the reason text.
+function renderReason(text: string) {
+  const parts = text.split(/(R\$\s?[\d.,]+|[\d.,]+%)/g);
+  return parts.map((p, i) =>
+    /^(R\$\s?[\d.,]+|[\d.,]+%)$/.test(p)
+      ? <strong key={i} style={{ color: "var(--ink-1)" }}>{p}</strong>
+      : <span key={i}>{p}</span>,
+  );
+}
 
 export function InsightsPage({ session, period, onNavigate, onOpenTransactions }: {
   session: ApiSession;
@@ -58,6 +77,52 @@ export function InsightsPage({ session, period, onNavigate, onOpenTransactions }
     }
   }
 
+  const alerts = items.filter(it => it.type === "neg" || it.type === "warn");
+  const improvements = items.filter(it => it.type === "pos" || it.type === "info");
+  const period_lbl = periodLabel(data.date_from, data.date_to);
+
+  function InsightCard({ it }: { it: InsightItem }) {
+    const tone = TONE[it.type] ?? TONE.info;
+    const imp = Number(it.impact);
+    const sav = Number(it.saving);
+    const showImpact = imp !== 0;
+    const showSaving = !showImpact && sav > 0;
+    return (
+      <div className="card card-pad" style={{ borderLeft: `3px solid ${tone.color}` }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+          <span style={{ width: 36, height: 36, flex: "none", borderRadius: 10, display: "grid", placeItems: "center", background: tone.soft, color: tone.color }}>
+            <tone.Icon size={18} />
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 14 }}>{it.title}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+              {showImpact && (
+                <span className="mono" style={{ fontWeight: 700, color: imp >= 0 ? "var(--acc)" : "var(--neg)" }}>
+                  {it.impact_label ?? "Impacto"}: {imp >= 0 ? "+" : "−"}{money(Math.abs(imp))}
+                </span>
+              )}
+              {showSaving && (
+                <span className="mono" style={{ fontWeight: 700, color: "var(--acc)" }}>
+                  Economia: +{money(sav)}
+                </span>
+              )}
+              <span className="badge b-neutral">Confiança: {it.confidence}</span>
+            </div>
+          </div>
+        </div>
+        <p style={{ fontSize: 13, color: "var(--ink-2)", lineHeight: 1.55, margin: "12px 0" }}>{renderReason(it.reason)}</p>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 12, borderTop: "1px solid var(--line)" }}>
+          <span className="mono t-sub" style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+            <Database size={13} /> Dados: {it.data}
+          </span>
+          <button className="btn btn-ghost btn-sm" style={{ marginLeft: "auto" }} onClick={() => act(it)}>
+            {it.action} <ChevronRight size={13} />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="canvas stg">
       {/* Header */}
@@ -65,6 +130,9 @@ export function InsightsPage({ session, period, onNavigate, onOpenTransactions }
         <div className="eyebrow" style={{ marginBottom: 4 }}>Crescimento</div>
         <h2 className="section-title"><Sparkles size={18} /> Insights IA</h2>
         <p className="section-sub">Recomendações acionáveis e explicáveis, a partir dos dados do seu workspace. Nada de mágica — sempre mostramos o porquê e os dados usados.</p>
+        <div className="t-sub" style={{ marginTop: 6, display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <CalendarDays size={13} /> Período analisado: <strong style={{ color: "var(--ink-2)" }}>{period_lbl}</strong>
+        </div>
       </div>
 
       {/* KPIs */}
@@ -77,7 +145,7 @@ export function InsightsPage({ session, period, onNavigate, onOpenTransactions }
         <div className="kpi">
           <div className="kpi-top"><span className="kpi-ic" style={{ background: "var(--pos-soft)", color: "var(--pos)" }}><TrendingUp size={16} /></span><span className="kpi-label">Economia potencial</span></div>
           <div className="kpi-val" style={{ fontSize: 18 }}>{money(kpis.potential_savings)}</div>
-          <div className="kpi-sub">identificada / mês</div>
+          <div className="kpi-sub">estimada / mês</div>
         </div>
         <div className="kpi">
           <div className="kpi-top"><span className="kpi-ic" style={{ background: kpis.risk_alerts > 0 ? "var(--neg-soft)" : "var(--pos-soft)", color: kpis.risk_alerts > 0 ? "var(--neg)" : "var(--pos)" }}><AlertTriangle size={16} /></span><span className="kpi-label">Alertas de risco</span></div>
@@ -101,49 +169,30 @@ export function InsightsPage({ session, period, onNavigate, onOpenTransactions }
           </p>
         </div>
       ) : (
-        <div className="grid cols-2">
-          {items.map((it, i) => {
-            const tone = TONE[it.type] ?? TONE.info;
-            const imp = Number(it.impact);
-            const sav = Number(it.saving);
-            const showImpact = imp !== 0;
-            const showSaving = !showImpact && sav > 0;
-            return (
-              <div key={i} className="card card-pad">
-                <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-                  <span style={{ width: 36, height: 36, flex: "none", borderRadius: 10, display: "grid", placeItems: "center", background: tone.soft, color: tone.color }}>
-                    <tone.Icon size={18} />
-                  </span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, fontSize: 14 }}>{it.title}</div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
-                      {showImpact && (
-                        <span className="mono" style={{ fontWeight: 700, color: imp >= 0 ? "var(--acc)" : "var(--neg)" }}>
-                          Impacto: {imp >= 0 ? "+" : "−"}{money(Math.abs(imp))}
-                        </span>
-                      )}
-                      {showSaving && (
-                        <span className="mono" style={{ fontWeight: 700, color: "var(--acc)" }}>
-                          Economia: +{money(sav)}
-                        </span>
-                      )}
-                      <span className={"badge " + (CONF_BADGE[it.confidence] ?? "b-neutral")}>Confiança: {it.confidence}</span>
-                    </div>
-                  </div>
-                </div>
-                <p style={{ fontSize: 13, color: "var(--ink-2)", lineHeight: 1.55, margin: "12px 0" }}>{it.reason}</p>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 12, borderTop: "1px solid var(--line)" }}>
-                  <span className="mono t-sub" style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                    <Database size={13} /> Dados: {it.data}
-                  </span>
-                  <button className="btn btn-ghost btn-sm" style={{ marginLeft: "auto" }} onClick={() => act(it)}>
-                    {it.action} <ChevronRight size={13} />
-                  </button>
-                </div>
+        <>
+          {alerts.length > 0 && (
+            <div style={{ marginBottom: improvements.length > 0 ? 20 : 0 }}>
+              <h3 className="section-title" style={{ fontSize: 15, marginBottom: 10 }}>
+                <AlertTriangle size={15} style={{ color: "var(--warn)" }} /> Alertas
+                <span className="t-sub" style={{ fontWeight: 400 }}>· {alerts.length}</span>
+              </h3>
+              <div className="grid cols-2">
+                {alerts.map((it, i) => <InsightCard key={i} it={it} />)}
               </div>
-            );
-          })}
-        </div>
+            </div>
+          )}
+          {improvements.length > 0 && (
+            <div>
+              <h3 className="section-title" style={{ fontSize: 15, marginBottom: 10 }}>
+                <TrendingUp size={15} style={{ color: "var(--acc)" }} /> Melhorias e oportunidades
+                <span className="t-sub" style={{ fontWeight: 400 }}>· {improvements.length}</span>
+              </h3>
+              <div className="grid cols-2">
+                {improvements.map((it, i) => <InsightCard key={i} it={it} />)}
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* How it works */}

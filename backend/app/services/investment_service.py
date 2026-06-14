@@ -104,6 +104,7 @@ def position_summary(
         ).all():
             snaps_by_asset.setdefault(snap.asset_id, []).append((snap.as_of, snap.value))
 
+    has_snapshots = any(snaps_by_asset.values())
     series: dict[str, _Series] = {
         a.id: _Series(a.current_value, snaps_by_asset.get(a.id, [])) for a in assets
     }
@@ -229,6 +230,7 @@ def position_summary(
                 "detail": a.detail,
                 "month_return": _pct(value, prev_m) if prev_m is not None else 0.0,
                 "ytd_return": _pct(value, prev_y) if prev_y is not None else 0.0,
+                "updated_at": a.updated_at,
             }
         )
     asset_rows.sort(key=lambda r: r["value"], reverse=True)
@@ -266,6 +268,7 @@ def position_summary(
         "ytd_return": ytd_return,
         "custody_count": len(custodies),
         "asset_count": len(assets),
+        "has_snapshots": has_snapshots,
         "classes": classes,
         "accounts": accounts,
         "assets": asset_rows,
