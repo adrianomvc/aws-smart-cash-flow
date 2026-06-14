@@ -30,7 +30,8 @@ import { pageMeta, periodRange } from "./lib/utils";
 import smartCashFlowLogo from "./assets/logo-smartcash-flow-main.png";
 import {
   cognitoConfigured, cognitoConfirmChallenge, cognitoConfirmReset, cognitoConfirmSignUp,
-  cognitoResetPassword, cognitoSignIn, cognitoSignOut, cognitoSignUp, getCognitoIdToken,
+  cognitoResendSignUp, cognitoResetPassword, cognitoSignIn, cognitoSignOut, cognitoSignUp,
+  getCognitoIdToken,
 } from "./lib/cognito";
 import type { ImportDrilldown, PeriodState, TransactionDrilldown, TransactionPeriodPreset } from "./types";
 import type { Page } from "./types";
@@ -432,7 +433,10 @@ function LoginScreen({ onLogin }: { onLogin: (session: ApiSession) => void }) {
     </>);
     if (step === "confirm_signup") return Shell(<>
       <form className="login-form" onSubmit={cognitoDoConfirmSignup}>{codeField}{submitBtn("Confirmar conta")}</form>
-      <div className="login-actions"><button className="ghost-button" type="button" onClick={() => reset("login")}>Voltar</button></div>
+      <div className="login-actions">
+        <button className="ghost-button" type="button" disabled={loading || !email} onClick={() => run(async () => { await cognitoResendSignUp(email); setSuccess("Código reenviado. Confira o e-mail (e o spam)."); })}>Reenviar código</button>
+        <button className="ghost-button" type="button" onClick={() => reset("login")}>Voltar</button>
+      </div>
     </>);
     if (step === "mfa" || step === "mfa_setup") return Shell(<>
       {step === "mfa_setup" && (

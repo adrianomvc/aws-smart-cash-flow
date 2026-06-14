@@ -18,8 +18,12 @@ login com Amplify (fase 2 — ver no fim).
 5. **Self-service sign-up:** habilite se quiser que membros se cadastrem sozinhos.
 6. **Email:** use o "Send email with Cognito" (free, baixo volume) por enquanto.
 7. **App client:**
-   - Tipo **Public client** (SPA) — **sem client secret**.
-   - Auth flows: habilite **ALLOW_USER_SRP_AUTH** e **ALLOW_REFRESH_TOKEN_AUTH**.
+   - No assistente novo, escolha **Single-page application (SPA)** — isso cria um
+     **client público, SEM client secret** (obrigatório para o Amplify no navegador;
+     um client COM secret causa o erro `SECRET_HASH was not received`).
+   - Depois de criar, em **Authentication flows** garanta **ALLOW_USER_SRP_AUTH**
+     e **ALLOW_REFRESH_TOKEN_AUTH** marcados (o Amplify faz login por SRP, não pela
+     hosted UI).
 8. Anote: **Region** (ex.: `us-east-1`), **User pool ID** (ex.: `us-east-1_AbC123`),
    **App client ID** (ex.: `1h2j3...`).
 

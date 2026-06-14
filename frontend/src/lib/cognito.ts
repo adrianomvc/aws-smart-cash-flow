@@ -1,7 +1,7 @@
 import { Amplify } from "aws-amplify";
 import {
   confirmResetPassword, confirmSignIn, confirmSignUp, fetchAuthSession,
-  resetPassword, signIn, signOut, signUp,
+  resendSignUpCode, resetPassword, signIn, signOut, signUp,
 } from "aws-amplify/auth";
 
 import { setCognitoTokenProvider } from "./api";
@@ -70,6 +70,10 @@ export async function cognitoSignUp(email: string, password: string, name?: stri
 
 export async function cognitoConfirmSignUp(email: string, code: string): Promise<void> {
   await confirmSignUp({ username: email, confirmationCode: code });
+}
+
+export async function cognitoResendSignUp(email: string): Promise<void> {
+  await resendSignUpCode({ username: email });
 }
 
 export async function cognitoResetPassword(email: string): Promise<void> {
