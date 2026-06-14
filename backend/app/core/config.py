@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     supabase_anon_key: str = ""
     supabase_service_role_key: str = ""
     supabase_storage_bucket: str = "financial-files"
+    # Amazon Cognito (preferred auth provider on AWS). When the user pool is
+    # configured, bearer tokens are validated as Cognito ID tokens (RS256/JWKS).
+    cognito_region: str = Field(default="", alias="COGNITO_REGION")
+    cognito_user_pool_id: str = Field(default="", alias="COGNITO_USER_POOL_ID")
+    cognito_app_client_id: str = Field(default="", alias="COGNITO_APP_CLIENT_ID")
     allow_local_auth: bool = Field(default=False, alias="ALLOW_LOCAL_AUTH")
     database_pool_size: int = 5
     database_max_overflow: int = 10

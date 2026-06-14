@@ -1,6 +1,6 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/v1";
 
-export type SessionMode = "local" | "supabase";
+export type SessionMode = "local" | "supabase" | "cognito";
 
 export type ApiSession = {
   token: string;
