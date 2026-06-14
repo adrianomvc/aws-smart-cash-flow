@@ -269,11 +269,11 @@ function layoutSankey(
 
 // ─── KPI Card ─────────────────────────────────────────────────────────────────
 function KpiCard({
-  label, value, cur, unit, iconName, delta, deltaInvert, hint, spark, sub,
+  label, value, cur, unit, iconName, delta, deltaInvert, hint, spark, sub, subColor,
 }: {
   label: string; value: string; cur?: string | null; unit?: string;
   iconName: string; delta?: number | null;
-  deltaInvert?: boolean; hint?: string; spark?: number[]; sub?: string;
+  deltaInvert?: boolean; hint?: string; spark?: number[]; sub?: string; subColor?: string;
 }) {
   return (
     <div className="kpi">
@@ -294,7 +294,7 @@ function KpiCard({
       {(delta != null || sub) && (
         <div className="kpi-sub">
           {delta != null && <Delta value={delta} invert={deltaInvert} />}
-          {sub && <span style={{ color: "var(--ink-faint)", fontSize: 11 }}>{sub}</span>}
+          {sub && <span style={{ color: subColor ?? "var(--ink-faint)", fontSize: 11, fontWeight: subColor ? 700 : 400 }}>{sub}</span>}
         </div>
       )}
       {spark && (
@@ -363,6 +363,8 @@ function KpiDeck({
 }) {
   const sr  = summary.savings_rate  ? parseFloat(summary.savings_rate)  * 100 : null;
   const cr  = summary.commitment_rate ? parseFloat(summary.commitment_rate) * 100 : null;
+  const savingsTargetPct = summary.savings_target ? parseFloat(summary.savings_target) * 100 : null;
+  const commitLimitPct = summary.commitment_limit ? parseFloat(summary.commitment_limit) * 100 : null;
 
   // build sparklines from last 6 months (values in thousands for proportionality)
   const sparkInc  = monthly.slice(-6).map(m => parseFloat(m.income   ?? "0") / 1000);
@@ -406,12 +408,16 @@ function KpiDeck({
       spark: sparkFlow.length >= 2 ? sparkFlow : undefined,
       delta: mdelta(currBal, pBal) },
     { label: "Saving rate",       value: sr != null ? num(sr, 1) : "—", unit: sr != null ? "%" : undefined, iconName: "pie",
-      sub: vsLabel,
+      sub: savingsTargetPct != null ? `meta ${num(savingsTargetPct, 0)}%${summary.savings_on_target ? " ✓" : ""}` : vsLabel,
+      subColor: summary.savings_on_target ? "var(--pos)" : undefined,
       delta: (sr != null && pSr != null) ? (sr - pSr) : null },
     { label: "Burn rate",         value: num(summary.burn_rate), cur: "R$", iconName: "zap",    hint: summary.burn_rate_basis || "Média de gastos dos últimos meses" },
     { label: "Runway",            value: num(summary.burn_rate_months, 0), unit: " meses", iconName: "shield", hint: "Reserva de emergência ÷ burn rate" },
     { label: "Gasto seguro hoje", value: summary.safe_spend ? num(summary.safe_spend) : "—", cur: summary.safe_spend ? "R$" : undefined, iconName: "check", hint: summary.safe_spend_basis || "Saldo disponível ÷ dias restantes do mês" },
-    { label: "Comprometimento",   value: cr != null ? num(cr, 0) : "—", unit: cr != null ? "%" : undefined, iconName: "lock", hint: "Despesas fixas + dívidas ÷ receita" },
+    { label: "Comprometimento",   value: cr != null ? num(cr, 0) : "—", unit: cr != null ? "%" : undefined, iconName: "lock",
+      hint: `Despesas ÷ receita${commitLimitPct != null ? ` · limite ${num(commitLimitPct, 0)}%` : ""}`,
+      sub: commitLimitPct != null ? (summary.commitment_over_limit ? `acima do limite (${num(commitLimitPct, 0)}%)` : `limite ${num(commitLimitPct, 0)}%`) : undefined,
+      subColor: summary.commitment_over_limit ? "var(--neg)" : undefined },
     { label: "Qualidade dos dados", value: qualityRatio != null ? num(qualityRatio, 0) : "—", unit: qualityRatio != null ? "%" : undefined, iconName: "db" },
   ];
   return (
@@ -997,6 +1003,7 @@ function GoalsMini({ goals, onNav }: { goals: GoalRead[]; onNav: (p: Page) => vo
 // ─── Tip Card ────────────────────────────────────────────────────────────────
 function TipCard({ summary, onNav }: { summary: DashboardSummary; onNav: (p: Page) => void }) {
   const sr = summary.savings_rate ? parseFloat(summary.savings_rate) * 100 : null;
+  const target = summary.savings_target ? Math.round(parseFloat(summary.savings_target) * 100) : 20;
   return (
     <div className="card card-pad" style={{ background: "linear-gradient(135deg, var(--acc-soft), var(--card))" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
@@ -1008,7 +1015,7 @@ function TipCard({ summary, onNav }: { summary: DashboardSummary; onNav: (p: Pag
       </div>
       <div style={{ fontSize: 14, lineHeight: 1.55, color: "var(--ink)", fontWeight: 500 }}>
         {sr != null && sr > 0
-          ? <>Você poupou <b>{pct(summary.savings_rate)}</b> da renda neste período — {sr >= 20 ? "acima da meta recomendada de 20%." : "continue avançando rumo aos 20%."}</>
+          ? <>Você poupou <b>{pct(summary.savings_rate)}</b> da renda neste período — {sr >= target ? `acima da sua meta de ${target}%.` : `continue avançando rumo aos ${target}%.`}</>
           : "Importe seus extratos para receber dicas personalizadas baseadas no seu fluxo real."}
       </div>
       <button className="btn btn-primary btn-sm" style={{ marginTop: 12 }} onClick={() => onNav("reports")}>
