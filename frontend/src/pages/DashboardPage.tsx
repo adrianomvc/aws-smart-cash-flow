@@ -453,8 +453,12 @@ function FlowCard({
       proj: d.date > today,
     }));
 
-    // Extend projection to end of filtered period if API returned fewer days
-    const endDate = periodDateTo ?? today;
+    // Extend projection to the end of the period's month so an open (unclosed)
+    // month still shows the daily balance projected up to its last day.
+    const ref = periodDateTo ?? today;
+    const refD = new Date(ref + "T12:00:00");
+    const monthEnd = new Date(refD.getFullYear(), refD.getMonth() + 1, 0);
+    const endDate = `${monthEnd.getFullYear()}-${String(monthEnd.getMonth() + 1).padStart(2, "0")}-${String(monthEnd.getDate()).padStart(2, "0")}`;
     const lastDate = items.length ? (daily[daily.length - 1]?.date ?? today) : today;
     if (lastDate < endDate) {
       const actual = items.filter(it => !it.proj);
