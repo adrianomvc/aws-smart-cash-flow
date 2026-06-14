@@ -4,8 +4,8 @@ import {
   Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import {
-  Building2, Car, Coins, CreditCard, Home, Landmark, Loader2, Minus, Pencil, Plus,
-  RefreshCw, TrendingDown, TrendingUp, Trash2, Wallet, X,
+  AlertTriangle, Building2, Car, ChevronRight, Clock, Coins, CreditCard, Home, Landmark,
+  Loader2, Minus, Pencil, Plus, RefreshCw, TrendingDown, TrendingUp, Trash2, Wallet, X,
 } from "lucide-react";
 
 import {
@@ -15,6 +15,22 @@ import {
 import { apiErrorMessage, money } from "../lib/utils";
 import { PageState } from "../components/ui";
 import type { ApiSession, WealthRow } from "../lib/api";
+import type { Page } from "../types";
+
+const WEALTH_COLOR: Record<string, string> = {
+  investments: "#1f8a5b", property: "#3567b8", vehicle: "#c98a2b",
+  account: "#16a085", loan: "#c0392b", card: "#a35a7d", other: "#8a8f99",
+};
+const colorOf = (cat: string | null) => WEALTH_COLOR[cat ?? "other"] ?? WEALTH_COLOR.other;
+
+function freshness(updatedAt: string | null): { label: string; stale: boolean } | null {
+  if (!updatedAt) return null;
+  const d = new Date(updatedAt);
+  if (Number.isNaN(d.getTime())) return null;
+  const months = (Date.now() - d.getTime()) / (1000 * 60 * 60 * 24 * 30);
+  const label = `atualizado em ${d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "2-digit" })}`;
+  return { label, stale: months >= 6 };
+}
 
 const num1 = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
@@ -38,7 +54,7 @@ const CAT_ICON: Record<string, typeof Home> = {
 
 type ModalState = { kind: "asset" | "liability"; row?: WealthRow } | null;
 
-export function WealthPage({ session }: { session: ApiSession }) {
+export function WealthPage({ session, onNavigate }: { session: ApiSession; onNavigate?: (page: Page) => void }) {
   const queryClient = useQueryClient();
   const wealthQ = useQuery({ queryKey: ["wealth", session.token], queryFn: () => getWealth(session) });
   const [modal, setModal] = useState<ModalState>(null);
@@ -58,9 +74,15 @@ export function WealthPage({ session }: { session: ApiSession }) {
   }
 
   const net = Number(w.net_worth);
+  const totalAssets = Number(w.total_assets);
+  const totalLiab = Number(w.total_liabilities);
+  const deltaAbs = Number(w.delta);
   const deltaUp = w.delta_pct >= 0;
+  const hasDelta = Math.abs(deltaAbs) >= 0.01;
+  const debtRatio = totalAssets > 0 ? (totalLiab / totalAssets) * 100 : 0;
   const history = w.history.map(h => ({ label: h.label, value: Number(h.value) }));
-  const empty = w.assets.length === 0 && w.liabilities.length === 0;
+  const manualCount = w.assets.filter(r => r.source === "manual").length + w.liabilities.length;
+  const empty = manualCount === 0 && totalAssets <= 0;
 
   return (
     <div className="canvas stg">
@@ -72,7 +94,7 @@ export function WealthPage({ session }: { session: ApiSession }) {
           <p className="section-sub">Patrimônio líquido = Ativos − Passivos. Diferente do fluxo de caixa: aqui medimos riqueza acumulada, não o movimento mensal.</p>
         </div>
         <div style={{ display: "flex", gap: 8, flex: "none" }}>
-          <button className="btn btn-ghost btn-sm" onClick={() => setModal({ kind: "asset" })}><Plus size={15} /> Ativo</button>
+          <button className="btn btn-primary btn-sm" onClick={() => setModal({ kind: "asset" })}><Plus size={15} /> Ativo</button>
           <button className="btn btn-ghost btn-sm" onClick={() => setModal({ kind: "liability" })}><Minus size={15} /> Passivo</button>
         </div>
       </div>
@@ -83,21 +105,28 @@ export function WealthPage({ session }: { session: ApiSession }) {
           <div className="kpi-top"><span className="kpi-ic" style={{ background: "var(--acc-soft)", color: "var(--acc)" }}><Building2 size={15} /></span><span className="kpi-label">Patrimônio líquido</span></div>
           <div className="kpi-val" style={{ fontSize: 28, color: "var(--acc-ink)" }}>{money(net)}</div>
           <div className="kpi-sub" style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <span style={{ color: deltaUp ? "var(--pos)" : "var(--neg)", display: "inline-flex", alignItems: "center", gap: 3, fontWeight: 700 }}>
-              {deltaUp ? <TrendingUp size={13} /> : <TrendingDown size={13} />}{num1(Math.abs(w.delta_pct))}%
-            </span>
-            no último mês
+            {hasDelta ? (
+              <>
+                <span style={{ color: deltaUp ? "var(--pos)" : "var(--neg)", display: "inline-flex", alignItems: "center", gap: 3, fontWeight: 700 }}>
+                  {deltaUp ? <TrendingUp size={13} /> : <TrendingDown size={13} />}{deltaUp ? "+" : "−"}{money(Math.abs(deltaAbs))} · {num1(Math.abs(w.delta_pct))}%
+                </span>
+                vs. mês anterior
+              </>
+            ) : <span className="t-sub">registre valores ao longo do tempo para ver a variação</span>}
           </div>
         </div>
         <div className="kpi">
           <div className="kpi-top"><span className="kpi-ic" style={{ background: "var(--pos-soft)", color: "var(--pos)" }}><Plus size={15} /></span><span className="kpi-label">Total de ativos</span></div>
-          <div className="kpi-val" style={{ fontSize: 20 }}>{money(w.total_assets)}</div>
+          <div className="kpi-val" style={{ fontSize: 20 }}>{money(totalAssets)}</div>
           <div className="kpi-sub">{w.assets.length} {w.assets.length === 1 ? "item" : "itens"}</div>
         </div>
         <div className="kpi">
           <div className="kpi-top"><span className="kpi-ic" style={{ background: "var(--neg-soft)", color: "var(--neg)" }}><Minus size={15} /></span><span className="kpi-label">Total de passivos</span></div>
-          <div className="kpi-val" style={{ fontSize: 20 }}>{money(w.total_liabilities)}</div>
-          <div className="kpi-sub">{w.liabilities.length} {w.liabilities.length === 1 ? "item" : "itens"}</div>
+          <div className="kpi-val" style={{ fontSize: 20 }}>{money(totalLiab)}</div>
+          <div className="kpi-sub" style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ fontWeight: 700, color: debtRatio >= 50 ? "var(--neg)" : debtRatio >= 30 ? "var(--warn)" : "var(--ink-2)" }}>{num1(debtRatio)}%</span>
+            dos ativos
+          </div>
         </div>
       </div>
 
@@ -114,7 +143,17 @@ export function WealthPage({ session }: { session: ApiSession }) {
           </div>
         </div>
       ) : (
-        <div className="grid" style={{ gridTemplateColumns: "1.6fr 1fr", gap: 16, alignItems: "stretch" }}>
+        <>
+        {manualCount === 0 && (
+          <div className="alert info" style={{ marginBottom: 16 }}>
+            <span className="alert-ic"><Building2 size={17} /></span>
+            <div>
+              <div className="a-ttl">Só a carteira de investimentos por enquanto</div>
+              <div className="a-txt">Adicione seus bens (imóvel, veículo, conta) e dívidas (financiamentos, faturas) para ver o patrimônio completo.</div>
+            </div>
+          </div>
+        )}
+        <div className="dash-main" style={{ gridTemplateColumns: "1fr 380px", alignItems: "stretch" }}>
           {/* Evolution */}
           <div className="card">
             <div className="card-head">
@@ -146,16 +185,18 @@ export function WealthPage({ session }: { session: ApiSession }) {
 
           {/* Assets + Liabilities */}
           <div className="vstack" style={{ gap: 16 }}>
-            <ListCard title="Ativos" color="var(--acc)" total={w.total_assets} rows={w.assets}
+            <ListCard title="Ativos" color="var(--acc)" total={totalAssets} rows={w.assets} showComposition
               onEdit={(r) => setModal({ kind: "asset", row: r })}
               onSnapshot={(r) => setSnapRow(r)}
-              onDelete={(id) => del.mutate(id)} />
-            <ListCard title="Passivos" color="var(--neg)" total={w.total_liabilities} rows={w.liabilities} neg
+              onDelete={(id) => del.mutate(id)}
+              onOpenInvestments={onNavigate ? () => onNavigate("investments") : undefined} />
+            <ListCard title="Passivos" color="var(--neg)" total={totalLiab} rows={w.liabilities} neg
               onEdit={(r) => setModal({ kind: "liability", row: r })}
               onSnapshot={(r) => setSnapRow(r)}
               onDelete={(id) => del.mutate(id)} />
           </div>
         </div>
+        </>
       )}
 
       {modal && (
@@ -170,9 +211,10 @@ export function WealthPage({ session }: { session: ApiSession }) {
   );
 }
 
-function ListCard({ title, color, total, rows, neg, onEdit, onSnapshot, onDelete }: {
-  title: string; color: string; total: string; rows: WealthRow[]; neg?: boolean;
+function ListCard({ title, color, total, rows, neg, showComposition, onEdit, onSnapshot, onDelete, onOpenInvestments }: {
+  title: string; color: string; total: number; rows: WealthRow[]; neg?: boolean; showComposition?: boolean;
   onEdit: (r: WealthRow) => void; onSnapshot: (r: WealthRow) => void; onDelete: (id: string) => void;
+  onOpenInvestments?: () => void;
 }) {
   return (
     <div className="card">
@@ -181,25 +223,52 @@ function ListCard({ title, color, total, rows, neg, onEdit, onSnapshot, onDelete
         <span className="spacer" />
         <span className="mono" style={{ fontWeight: 700, color }}>{money(total)}</span>
       </div>
+
+      {showComposition && total > 0 && rows.length > 1 && (
+        <div style={{ padding: "0 16px 10px" }}>
+          <div style={{ display: "flex", height: 8, borderRadius: 20, overflow: "hidden", background: "var(--bg-sunken)" }}>
+            {rows.map((r, i) => {
+              const pct = (Number(r.value) / total) * 100;
+              return pct > 0 ? <div key={r.id ?? i} title={`${r.label} · ${pct.toFixed(1)}%`} style={{ width: `${pct}%`, background: colorOf(r.category) }} /> : null;
+            })}
+          </div>
+        </div>
+      )}
+
       <div style={{ padding: "4px 8px 8px" }}>
         {rows.length === 0 && <div className="t-sub" style={{ padding: "10px 10px" }}>Nenhum item cadastrado.</div>}
         {rows.map((r, i) => {
           const Ic = CAT_ICON[r.category ?? "other"] ?? Building2;
+          const pct = total > 0 ? (Number(r.value) / total) * 100 : 0;
+          const fresh = freshness(r.updated_at);
+          const isAuto = r.source === "auto";
+          const clickable = isAuto && !!onOpenInvestments;
           return (
-            <div key={r.id ?? i} className="row-item" style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px" }}>
-              <span className="kpi-ic" style={{ width: 30, height: 30, background: "var(--bg-sunken)", color: "var(--ink-2)" }}><Ic size={14} /></span>
+            <div key={r.id ?? i} className="row-item"
+              style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", cursor: clickable ? "pointer" : "default", borderRadius: 8 }}
+              onClick={clickable ? onOpenInvestments : undefined}>
+              <span className="kpi-ic" style={{ width: 30, height: 30, background: colorOf(r.category) + "1e", color: colorOf(r.category) }}><Ic size={14} /></span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.label}</div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
                   {r.note && <span className="t-sub">{r.note}</span>}
-                  {r.source === "auto" && <span className="badge b-info" style={{ fontSize: 10 }}>automático</span>}
+                  {isAuto && <span className="badge b-info" style={{ fontSize: 10 }}>automático</span>}
+                  {fresh && (
+                    <span className="t-sub" style={{ display: "inline-flex", alignItems: "center", gap: 3, color: fresh.stale ? "var(--warn)" : undefined }}>
+                      {fresh.stale ? <AlertTriangle size={10} /> : <Clock size={10} />}{fresh.label}
+                    </span>
+                  )}
                 </div>
               </div>
-              <span className="mono" style={{ fontWeight: 700, color: neg ? "var(--neg)" : "var(--ink)" }}>{money(r.value)}</span>
+              <div style={{ textAlign: "right" }}>
+                <div className="mono" style={{ fontWeight: 700, color: neg ? "var(--neg)" : "var(--ink)" }}>{money(r.value)}</div>
+                {pct > 0 && <div className="t-sub" style={{ fontSize: 10.5 }}>{pct.toFixed(0)}%</div>}
+              </div>
+              {clickable && <ChevronRight size={15} style={{ color: "var(--ink-faint)", flex: "none" }} />}
               {r.source === "manual" && r.id && (
                 <span style={{ display: "inline-flex", gap: 2 }}>
-                  <button className="icon-btn" style={{ width: 28, height: 28 }} title="Atualizar valor" onClick={() => onSnapshot(r)}><RefreshCw size={13} /></button>
-                  <button className="icon-btn" style={{ width: 28, height: 28 }} title="Editar" onClick={() => onEdit(r)}><Pencil size={13} /></button>
+                  <button className="icon-btn" style={{ width: 28, height: 28 }} title="Atualizar valor (com data)" onClick={() => onSnapshot(r)}><RefreshCw size={13} /></button>
+                  <button className="icon-btn" style={{ width: 28, height: 28 }} title="Editar dados" onClick={() => onEdit(r)}><Pencil size={13} /></button>
                   <button className="icon-btn" style={{ width: 28, height: 28 }} title="Excluir" onClick={() => { if (window.confirm(`Excluir "${r.label}"?`)) onDelete(r.id!); }}><Trash2 size={13} /></button>
                 </span>
               )}
@@ -234,10 +303,17 @@ function WealthModal({ session, kind, row, onClose, onSaved }: {
 
   const save = useMutation({
     mutationFn: () => {
-      const base = { kind, label: form.label.trim(), value: form.value || "0", category: form.category, note: form.note.trim() || null };
-      return editing && row?.id
-        ? updateWealthItem(session, row.id, base)
-        : createWealthItem(session, { ...base, as_of: form.asOf });
+      // Editing corrects name/category/note; the value (with date) is changed
+      // only through "Atualizar valor" so the evolution stays consistent.
+      if (editing && row?.id) {
+        return updateWealthItem(session, row.id, {
+          kind, label: form.label.trim(), category: form.category, note: form.note.trim() || null,
+        });
+      }
+      return createWealthItem(session, {
+        kind, label: form.label.trim(), value: form.value || "0",
+        category: form.category, note: form.note.trim() || null, as_of: form.asOf,
+      });
     },
     onSuccess: onSaved,
     onError: (e) => setError(apiErrorMessage(e, "Falha ao salvar item.")),
@@ -259,20 +335,29 @@ function WealthModal({ session, kind, row, onClose, onSaved }: {
         <div className="mdl-body">
           <label className="fld"><span className="fld-label">Nome</span>
             <input className="fld-input" autoFocus placeholder={kind === "asset" ? "Ex: Apartamento, SUV 2023…" : "Ex: Financiamento imóvel…"} value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} /></label>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <label className="fld"><span className="fld-label">Valor (R$)</span>
-              <input className="fld-input" type="number" step="0.01" min="0" placeholder="0,00" value={form.value} onChange={(e) => setForm({ ...form, value: e.target.value })} /></label>
+          {editing ? (
             <label className="fld"><span className="fld-label">Categoria</span>
               <select className="fld-select" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
                 {cats.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-              </select></label>
-          </div>
-          {!editing && (
-            <label className="fld">
-              <span className="fld-label">Data de referência</span>
-              <input className="fld-input" type="date" max={today} value={form.asOf} onChange={(e) => setForm({ ...form, asOf: e.target.value })} />
-              <span className="t-sub" style={{ marginTop: 4 }}>Desde quando esse valor vale — ancora a evolução do patrimônio.</span>
+              </select>
+              <span className="t-sub" style={{ marginTop: 4 }}>O valor é alterado em "Atualizar valor" (↻), com a data.</span>
             </label>
+          ) : (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <label className="fld"><span className="fld-label">Valor (R$)</span>
+                  <input className="fld-input" type="number" step="0.01" min="0" placeholder="0,00" value={form.value} onChange={(e) => setForm({ ...form, value: e.target.value })} /></label>
+                <label className="fld"><span className="fld-label">Categoria</span>
+                  <select className="fld-select" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+                    {cats.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                  </select></label>
+              </div>
+              <label className="fld">
+                <span className="fld-label">Data de referência</span>
+                <input className="fld-input" type="date" max={today} value={form.asOf} onChange={(e) => setForm({ ...form, asOf: e.target.value })} />
+                <span className="t-sub" style={{ marginTop: 4 }}>Desde quando esse valor vale — ancora a evolução do patrimônio.</span>
+              </label>
+            </>
           )}
           <label className="fld"><span className="fld-label">Observação (opcional)</span>
             <input className="fld-input" placeholder="Ex: Avaliação manual, 142 parcelas…" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} /></label>

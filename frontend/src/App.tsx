@@ -593,7 +593,7 @@ function ProtectedApp({
       {page === "scenarios" ? <ScenariosPage session={session} onNavigate={onNavigate} /> : null}
       {page === "investments" ? <InvestmentsPage session={session} period={dashboardPeriod} /> : null}
       {page === "insights" ? <InsightsPage session={session} period={dashboardPeriod} onNavigate={onNavigate} onOpenTransactions={onOpenTransactions} /> : null}
-      {page === "wealth" ? <WealthPage session={session} /> : null}
+      {page === "wealth" ? <WealthPage session={session} onNavigate={onNavigate} /> : null}
       {page === "reports" ? <ReportsPage onNavigate={onNavigate} session={session} /> : null}
       {page === "imports" ? <ImportsPage drilldown={importDrilldown} onOpenTransactions={onOpenTransactions} session={session} /> : null}
       {page === "transactions" ? <TransactionsPage drilldown={transactionDrilldown} session={session} /> : null}

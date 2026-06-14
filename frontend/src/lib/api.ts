@@ -1483,6 +1483,7 @@ export type WealthRow = {
   category: string | null;
   note: string | null;
   source: "auto" | "manual";
+  updated_at: string | null;
 };
 
 export type WealthSummary = {

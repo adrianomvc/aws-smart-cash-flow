@@ -84,16 +84,19 @@ def wealth_summary(db: Session, workspace_id: str) -> dict:
             "category": "investments",
             "note": "Carteira consolidada",
             "source": "auto",
+            "updated_at": None,
         })
     for i in sorted(manual_assets, key=lambda x: x.value, reverse=True):
         asset_rows.append({
             "id": i.id, "label": i.label, "value": i.value,
             "category": i.category, "note": i.note, "source": "manual",
+            "updated_at": i.updated_at,
         })
     liability_rows: list[dict] = [
         {
             "id": i.id, "label": i.label, "value": i.value,
             "category": i.category, "note": i.note, "source": "manual",
+            "updated_at": i.updated_at,
         }
         for i in sorted(manual_liabilities, key=lambda x: x.value, reverse=True)
     ]
