@@ -18,8 +18,8 @@ from app.db.models import (
     TransactionCategoryAssignment,
 )
 from app.db.session import get_db
+from app.services.dashboard_service import DashboardService
 from app.services.goal_contribution_service import apply_goal_aporte_rule
-from app.services.projection_service import ProjectionService
 
 router = APIRouter(tags=["planning"])
 DbDependency = Depends(get_db)
@@ -163,63 +163,54 @@ class GoalListResponse(BaseModel):
     items: list[GoalRead]
 
 
-class ProjectionHorizonRead(BaseModel):
-    days: int
-    date_to: date
-    projected_income: Decimal
-    projected_expenses: Decimal
-    projected_balance: Decimal
-    event_count: int
-    risk_level: str
-    risk_reason: str
+class ProjectionPointRead(BaseModel):
+    month: str
+    probable: Decimal
+    best: Decimal
+    worst: Decimal
 
 
-class ProjectionEventRead(BaseModel):
+class ProjectionCommitmentRead(BaseModel):
+    date: str
     title: str
-    event_type: str
+    kind: str
     amount: Decimal
-    due_date: date
-    recurrence: str
-
-
-class ProjectionGoalRead(BaseModel):
-    name: str
-    target_amount: Decimal
-    current_amount: Decimal
-    remaining_amount: Decimal
-    target_date: date | None
+    income: bool
+    monthly: bool
 
 
 class ProjectionResponse(BaseModel):
     workspace_id: str
-    date_from: date
-    horizons: list[ProjectionHorizonRead]
-    upcoming_events: list[ProjectionEventRead]
-    goals_due: list[ProjectionGoalRead]
+    horizon_days: int
+    start_balance: Decimal
+    recurring_income: Decimal
+    recurring_expense: Decimal
+    variable_average: Decimal
+    monthly_net: Decimal
+    points: list[ProjectionPointRead]
+    end_best: Decimal
+    end_probable: Decimal
+    end_worst: Decimal
+    min_balance: Decimal
+    variation: Decimal
+    variation_pct: Decimal
+    risk_level: str
+    risk_reason: str
+    commitments: list[ProjectionCommitmentRead]
     assumptions: list[str]
 
 
 @router.get("/planning/projection")
 async def get_projection(
-    date_from: date | None = None,
-    horizons: str = Query(default="30,60,90", min_length=1, max_length=32),
+    horizon_days: int = Query(default=365, ge=30, le=366),
     auth: AuthContext = AuthDependency,
     db: Session = DbDependency,
 ) -> ProjectionResponse:
-    reference_date = date_from or date.today()
-    result = ProjectionService(db).projection(
+    result = DashboardService(db).projection(
         workspace_id=auth.workspace_id,
-        date_from=reference_date,
-        horizons=_parse_horizons(horizons),
+        horizon_days=horizon_days,
     )
-    return ProjectionResponse(
-        workspace_id=result.workspace_id,
-        date_from=result.date_from,
-        horizons=[ProjectionHorizonRead(**horizon.__dict__) for horizon in result.horizons],
-        upcoming_events=[ProjectionEventRead(**event.__dict__) for event in result.upcoming_events],
-        goals_due=[ProjectionGoalRead(**goal) for goal in result.goals_due],
-        assumptions=result.assumptions,
-    )
+    return ProjectionResponse(**result)
 
 
 @router.get("/calendar/events")

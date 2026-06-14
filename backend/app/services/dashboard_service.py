@@ -1,6 +1,6 @@
 import re
 from calendar import monthrange
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -22,6 +22,8 @@ from app.db.models import (
 from app.services.parsers import extract_installment, normalize_transaction_description
 
 ZERO = Decimal("0.00")
+ONE = Decimal("1")
+NEG_ONE = Decimal("-1")
 WEEKDAY_NAMES = [
     "Segunda",
     "Terca",
@@ -1115,6 +1117,261 @@ class DashboardService:
             "credit_card_installments": credit_card_installments,
             "variable_categories": variable_categories,
         }
+
+    def projection(self, workspace_id: str, horizon_days: int) -> dict[str, object]:
+        """Single source of truth for the balance projection.
+
+        Starts from the real account balance and rolls forward the recurring net
+        (income - expenses - variable), dated credit-card installments and
+        planned calendar events. Three scenarios differ by variable spend
+        volatility (from each category's history) and a small income haircut on
+        the worst case. Honours the protected-reserve preference for risk.
+        """
+        horizon_days = max(30, min(horizon_days, 366))
+        feed = self.projection_feed(workspace_id, horizon_days, lookback_months=6)
+        prefs = self._preferences(workspace_id)
+        protected_reserve = prefs.protected_reserve if prefs else ZERO
+
+        start = feed["current_balance"] or ZERO
+        if not isinstance(start, Decimal):
+            start = Decimal(str(start))
+
+        recurring = feed["recurring_items"]
+        rec_income = sum(
+            (Decimal(str(r["average_amount"])) for r in recurring if r["type"] == "income"),
+            ZERO,
+        )
+        rec_expense = sum(
+            (Decimal(str(r["average_amount"])) for r in recurring if r["type"] == "expense"),
+            ZERO,
+        )
+
+        # Variable spend: exclude the uncategorized bucket; derive best/worst from
+        # each category's historical volatility (1 std dev), fallback to +-30%.
+        var_avg = var_best = var_worst = ZERO
+        uncategorized = ZERO
+        for v in feed["variable_categories"]:
+            avg = Decimal(str(v["monthly_average"]))
+            if not v["category_id"]:
+                uncategorized += avg
+                continue
+            hist = [Decimal(str(x)) for x in v["historical_monthly_amounts"]]
+            if len(hist) >= 2:
+                mean = sum(hist, ZERO) / Decimal(len(hist))
+                variance = sum(((x - mean) ** 2 for x in hist), ZERO) / Decimal(len(hist))
+                std = variance.sqrt()
+                best_c = max(min(hist), (avg - std))
+                worst_c = avg + std
+            else:
+                best_c = (avg * Decimal("0.70")).quantize(Decimal("0.01"))
+                worst_c = (avg * Decimal("1.30")).quantize(Decimal("0.01"))
+            var_avg += avg
+            var_best += max(best_c, ZERO)
+            var_worst += worst_c
+
+        net_best = rec_income - rec_expense - var_best
+        net_prob = rec_income - rec_expense - var_avg
+        net_worst = (rec_income * Decimal("0.95")) - rec_expense - var_worst
+
+        today = date.today()
+        n_months = max(1, round(horizon_days / 30))
+        horizon_end = _add_months(today, n_months)
+
+        recurring_descriptions = {
+            normalize_transaction_description(str(r["description"])) for r in recurring
+        }
+        seasonal = self._seasonal_items(
+            workspace_id, today, horizon_end, recurring_descriptions
+        )
+
+        # Unified dated one-off events: card installments, planned calendar
+        # events and detected seasonal items (13o/ferias/PLR, IPVA/IPTU/...).
+        oneoffs: list[dict[str, object]] = []
+        for inst in feed["credit_card_installments"]:
+            oneoffs.append(
+                {
+                    "date": inst["due_date"], "title": "Parcela de cartão",
+                    "kind": "Parcela de cartão", "amount": Decimal(str(inst["amount"])),
+                    "income": False, "monthly": False,
+                }
+            )
+        for e in feed["known_events"]:
+            is_income = e["type"] == "income"
+            oneoffs.append(
+                {
+                    "date": e["date"], "title": e["description"],
+                    "kind": "Receita prevista" if is_income else "Despesa prevista",
+                    "amount": Decimal(str(e["amount"])), "income": is_income, "monthly": False,
+                }
+            )
+        for s in seasonal:
+            is_income = s["type"] == "income"
+            oneoffs.append(
+                {
+                    "date": s["date"], "title": s["description"],
+                    "kind": "Recebimento anual" if is_income else "Despesa anual",
+                    "amount": Decimal(str(s["amount"])), "income": is_income, "monthly": False,
+                }
+            )
+
+        def dated_delta(upto: date) -> Decimal:
+            total = ZERO
+            for o in oneoffs:
+                if o["date"] and date.fromisoformat(str(o["date"])) <= upto:
+                    total += o["amount"] if o["income"] else -o["amount"]
+            return total
+
+        points: list[dict[str, object]] = []
+        for i in range(n_months + 1):
+            point_date = _add_months(today, i)
+            delta = dated_delta(point_date)
+            months = Decimal(i)
+            points.append(
+                {
+                    "month": point_date.strftime("%Y-%m"),
+                    "probable": (start + net_prob * months + delta).quantize(Decimal("0.01")),
+                    "best": (start + net_best * months + delta).quantize(Decimal("0.01")),
+                    "worst": (start + net_worst * months + delta).quantize(Decimal("0.01")),
+                }
+            )
+
+        prob_values = [p["probable"] for p in points]
+        worst_values = [p["worst"] for p in points]
+        end_balance = prob_values[-1]
+        min_balance = min(prob_values)
+        worst_min = min(worst_values)
+        variation = end_balance - start
+        variation_pct = (
+            (variation / abs(start) * Decimal("100")).quantize(Decimal("0.1"))
+            if start != ZERO
+            else ZERO
+        )
+
+        if worst_min < ZERO:
+            risk_level = "risk"
+            risk_reason = f"No pior cenário o saldo fica negativo (mín. {worst_min})."
+        elif min_balance < protected_reserve or worst_min < protected_reserve:
+            risk_level = "attention"
+            risk_reason = "O saldo fica abaixo da reserva protegida em algum momento."
+        else:
+            risk_level = "healthy"
+            risk_reason = "O saldo se mantém confortável no período."
+
+        commitments = sorted(
+            (o for o in oneoffs if o["date"]), key=lambda c: str(c["date"])
+        )
+        for r in sorted(
+            recurring, key=lambda r: Decimal(str(r["average_amount"])), reverse=True
+        )[:5]:
+            is_income = r["type"] == "income"
+            commitments.append(
+                {
+                    "date": "", "title": r["description"],
+                    "kind": "Receita mensal" if is_income else "Despesa mensal",
+                    "amount": Decimal(str(r["average_amount"])), "income": is_income,
+                    "monthly": True,
+                }
+            )
+
+        var_note = "(cenários por volatilidade histórica)"
+        assumptions = [
+            f"Saldo inicial real: {start} ({feed.get('current_balance_account') or 'conta'}).",
+            f"Receitas recorrentes ≈ {rec_income.quantize(Decimal('0.01'))}/mês.",
+            f"Despesas recorrentes ≈ {rec_expense.quantize(Decimal('0.01'))}/mês.",
+            f"Despesas variáveis ≈ {var_avg.quantize(Decimal('0.01'))}/mês {var_note}.",
+            f"Fluxo recorrente líquido ≈ {net_prob.quantize(Decimal('0.01'))}/mês.",
+        ]
+        if seasonal:
+            assumptions.append(
+                f"{len(seasonal)} evento(s) anual(is) detectado(s) (13º/IPVA/etc.) "
+                "incluídos no período."
+            )
+        if uncategorized > ZERO:
+            assumptions.append(
+                f"Lançamentos sem categoria ({uncategorized.quantize(Decimal('0.01'))}/mês) "
+                "ficam fora — categorize-os para refinar."
+            )
+
+        return {
+            "workspace_id": workspace_id,
+            "horizon_days": horizon_days,
+            "start_balance": start.quantize(Decimal("0.01")),
+            "recurring_income": rec_income.quantize(Decimal("0.01")),
+            "recurring_expense": rec_expense.quantize(Decimal("0.01")),
+            "variable_average": var_avg.quantize(Decimal("0.01")),
+            "monthly_net": net_prob.quantize(Decimal("0.01")),
+            "points": points,
+            "end_best": points[-1]["best"],
+            "end_probable": end_balance,
+            "end_worst": points[-1]["worst"],
+            "min_balance": min_balance,
+            "variation": variation.quantize(Decimal("0.01")),
+            "variation_pct": variation_pct,
+            "risk_level": risk_level,
+            "risk_reason": risk_reason,
+            "commitments": commitments[:8],
+            "assumptions": assumptions,
+        }
+
+    def _seasonal_items(
+        self,
+        workspace_id: str,
+        today: date,
+        horizon_end: date,
+        exclude_descriptions: set[str],
+    ) -> list[dict[str, object]]:
+        """Detect annual/seasonal items from history (13o, ferias, PLR, IPVA,
+        IPTU, licenciamento, ...) and schedule their next occurrence within the
+        horizon. An item is considered annual when the same normalized
+        description recurs in the same calendar month across >= 2 different
+        years. Monthly-recurring descriptions are excluded to avoid double
+        counting."""
+        lookback = _add_months(today, -24)
+        txns = self._transactions(workspace_id, date_from=lookback, date_to=today)
+        groups: dict[tuple[str, str], list[Transaction]] = defaultdict(list)
+        for t in txns:
+            if t.source_type == "credit_card_statement" or t.direction not in ("debit", "credit"):
+                continue
+            key = normalize_transaction_description(t.description)
+            if key in exclude_descriptions:
+                continue
+            groups[(key, t.direction)].append(t)
+
+        items: list[dict[str, object]] = []
+        for (_key, direction), txs in groups.items():
+            by_month: dict[int, list[Transaction]] = defaultdict(list)
+            for t in txs:
+                by_month[t.transaction_date.month].append(t)
+            # Pick the month whose occurrences span the most distinct years (>= 2).
+            best_month: int | None = None
+            best_years = 1
+            best_list: list[Transaction] = []
+            for month, lst in by_month.items():
+                years = {t.transaction_date.year for t in lst}
+                if len(years) >= 2 and len(years) > best_years - 1 and len(lst) >= len(best_list):
+                    best_years = len(years)
+                    best_month = month
+                    best_list = lst
+            if best_month is None:
+                continue
+            amounts = sorted(abs(t.amount) for t in best_list)
+            amount = amounts[len(amounts) // 2]
+            if amount < Decimal("300"):
+                continue
+            day = Counter(t.transaction_date.day for t in best_list).most_common(1)[0][0]
+            for year in (today.year, today.year + 1):
+                occ = _day_in_month(year, best_month, day)
+                if today < occ <= horizon_end:
+                    items.append(
+                        {
+                            "date": occ.isoformat(),
+                            "description": best_list[-1].description,
+                            "amount": amount,
+                            "type": "income" if direction == "credit" else "expense",
+                        }
+                    )
+                    break
+        return items
 
     def _projection_known_events(
         self,

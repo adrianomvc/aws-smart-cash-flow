@@ -14,10 +14,10 @@ import {
 } from "lucide-react";
 import { Area, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
-import { getProjectionFeed } from "../lib/api";
+import { getPlanningProjection } from "../lib/api";
 import { dateLabel, money, moneyAbs } from "../lib/utils";
 import { PageState } from "../components/ui";
-import type { ApiSession, ProjectionFeed } from "../lib/api";
+import type { ApiSession } from "../lib/api";
 import type { Page } from "../types";
 
 const HORIZONS = [
@@ -27,15 +27,19 @@ const HORIZONS = [
   { days: 365, label: "1 ano" },
 ];
 const MONTH_ABBR = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+const monthLabel = (ym: string) => MONTH_ABBR[Number(ym.slice(5, 7)) - 1] ?? ym;
+
+function riskInfo(level: string): { cls: string; label: string } {
+  if (level === "risk") return { cls: "b-neg", label: "Risco alto" };
+  if (level === "attention") return { cls: "b-warn", label: "Atenção" };
+  return { cls: "b-pos", label: "Risco baixo" };
+}
 
 function axisFmt(v: number) {
   const abs = Math.abs(v);
   if (abs >= 1000) return `${v < 0 ? "-" : ""}${(abs / 1000).toFixed(abs >= 10000 ? 0 : 1)}k`;
   return String(Math.round(v));
 }
-
-const monthlyAmt = (r: ProjectionFeed["recurring_items"][number]) =>
-  Number(r.average_amount) * (r.frequency === "weekly" ? 4.33 : 1);
 
 type ChartPoint = { x: string; prov: number; best: number; worst: number };
 
@@ -84,85 +88,27 @@ function ScenarioCard({ tone, title, value, note, main }: { tone: "pos" | "acc" 
 
 export function PlanningPage({ session, onNavigate }: { session: ApiSession; onNavigate: (page: Page) => void }) {
   const [h, setH] = useState(90);
-  const feedQuery = useQuery({
-    queryKey: ["projection-feed", session.token],
-    queryFn: () => getProjectionFeed(session, 365, 3),
+  const projection = useQuery({
+    queryKey: ["planning-projection", session.token, h],
+    queryFn: () => getPlanningProjection(session, h),
   });
   const selLabel = HORIZONS.find((hz) => hz.days === h)?.label ?? `${h} dias`;
 
-  if (feedQuery.isLoading) {
-    return <PageState icon={Loader2} title="Calculando projeção" description="Lendo saldo, recorrências e parcelas." spin />;
+  if (projection.isLoading) {
+    return <PageState icon={Loader2} title="Calculando projeção" description="Saldo, recorrências, parcelas e eventos anuais." spin />;
   }
-  const feed = feedQuery.data;
-  if (feedQuery.isError || !feed) {
+  const data = projection.data;
+  if (projection.isError || !data) {
     return <PageState icon={AlertCircle} title="Projeção indisponível" description="Confira a API local e tente novamente." />;
   }
 
-  const start = Number(feed.current_balance ?? 0);
-  const recurring = feed.recurring_items;
-  const recIncome = recurring.filter((r) => r.type === "income").reduce((s, r) => s + monthlyAmt(r), 0);
-  const recExpense = recurring.filter((r) => r.type === "expense").reduce((s, r) => s + monthlyAmt(r), 0);
-  // Exclude the "Sem categoria" bucket: it lumps transfers/investments and
-  // would distort the projection. Categorized variable spend only.
-  const varCats = feed.variable_categories.filter((v) => v.category_id);
-  const uncategorizedVar = feed.variable_categories.filter((v) => !v.category_id).reduce((s, v) => s + Number(v.monthly_average), 0);
-  const varExpense = varCats.reduce((s, v) => s + Number(v.monthly_average), 0);
-  const monthlyNet = recIncome - recExpense - varExpense;
-
-  const endDate = (days: number) => { const d = new Date(); d.setDate(d.getDate() + days); return d; };
-  const sumInstallments = (days: number) => {
-    const end = endDate(days);
-    return feed.credit_card_installments.filter((i) => new Date(i.due_date) <= end).reduce((s, i) => s + Number(i.amount), 0);
-  };
-  const sumKnown = (days: number) => {
-    const end = endDate(days);
-    return feed.known_events.filter((e) => new Date(e.date) <= end).reduce((s, e) => s + (e.type === "income" ? 1 : -1) * Number(e.amount), 0);
-  };
-  const balanceAt = (days: number) => start + monthlyNet * (days / 30) - sumInstallments(days) + sumKnown(days);
-  const spreadAt = (days: number) => varExpense * 0.4 * (days / 30);
-
-  const stepDays: number[] = [];
-  for (let d = 0; d <= h; d += 30) stepDays.push(d);
-  if (stepDays[stepDays.length - 1] < h) stepDays.push(h);
-  const points: ChartPoint[] = stepDays.map((d) => {
-    const b = balanceAt(d);
-    const sp = spreadAt(d);
-    return { x: MONTH_ABBR[endDate(d).getMonth()], prov: Math.round(b), best: Math.round(b + sp), worst: Math.round(b - sp) };
-  });
-
-  const saldoFim = balanceAt(h);
-  const minProv = Math.min(...points.map((p) => p.prov));
-  const minWorst = Math.min(...points.map((p) => p.worst));
-  const variacao = saldoFim - start;
-  const variacaoPct = start !== 0 ? (variacao / Math.abs(start)) * 100 : 0;
-  const selSpread = spreadAt(h);
-  const reserve = recExpense + varExpense; // ~1 month of expenses
-
-  let risk: { cls: string; label: string; text: string };
-  if (minProv < 0) risk = { cls: "b-neg", label: "Risco alto", text: `Saldo pode ficar negativo (mín. ${money(minProv)}) no período. Ação recomendada.` };
-  else if (minWorst < 0 || minProv < reserve) risk = { cls: "b-warn", label: "Atenção", text: `Saldo fica apertado (mín. ${money(minProv)}), abaixo de ~1 mês de despesas.` };
-  else risk = { cls: "b-pos", label: "Risco baixo", text: "O saldo se mantém confortável no período projetado." };
-
-  // Future events list: dated (installments + known) first, then top monthly recurring.
-  const dated = [
-    ...feed.credit_card_installments.map((i) => ({ date: i.due_date, title: i.description, kind: "Parcela de cartão", amount: Number(i.amount), income: false, monthly: false })),
-    ...feed.known_events.map((e) => ({ date: e.date, title: e.description, kind: e.type === "income" ? "Receita prevista" : "Despesa prevista", amount: Number(e.amount), income: e.type === "income", monthly: false })),
-  ].filter((e) => new Date(e.date) <= endDate(h)).sort((a, b) => a.date.localeCompare(b.date));
-  const monthly = [...recurring].sort((a, b) => monthlyAmt(b) - monthlyAmt(a)).slice(0, 5).map((r) => ({
-    date: "", title: r.description, kind: r.type === "income" ? "Receita mensal" : "Despesa mensal", amount: monthlyAmt(r), income: r.type === "income", monthly: true,
+  const points: ChartPoint[] = data.points.map((p) => ({
+    x: monthLabel(p.month), prov: Number(p.probable), best: Number(p.best), worst: Number(p.worst),
   }));
-  const events = [...dated, ...monthly].slice(0, 7);
-
-  const assumptions = [
-    feed.current_balance != null
-      ? `Saldo inicial real: ${money(start)} (${feed.current_balance_account ?? "conta"}${feed.current_balance_date ? `, em ${dateLabel(feed.current_balance_date)}` : ""}).`
-      : "Sem saldo bancário importado — projeção parte de zero.",
-    `${recurring.filter((r) => r.type === "expense").length} despesas recorrentes ≈ ${money(recExpense)}/mês.`,
-    `${recurring.filter((r) => r.type === "income").length} receitas recorrentes ≈ ${money(recIncome)}/mês.`,
-    `${varCats.length} categorias variáveis ≈ ${money(varExpense)}/mês (média histórica).`,
-    `Fluxo recorrente líquido ≈ ${money(monthlyNet)}/mês.`,
-    ...(uncategorizedVar > 0 ? [`Lançamentos sem categoria (${money(uncategorizedVar)}/mês) ficam fora — categorize-os para refinar.`] : []),
-  ];
+  const minWorst = Math.min(...points.map((p) => p.worst));
+  const saldoFim = Number(data.end_probable);
+  const variation = Number(data.variation);
+  const risk = riskInfo(data.risk_level);
 
   return (
     <div className="canvas stg">
@@ -171,7 +117,7 @@ export function PlanningPage({ session, onNavigate }: { session: ApiSession; onN
         <div>
           <div className="eyebrow" style={{ marginBottom: 4 }}>Planejamento</div>
           <h2 className="section-title"><TrendingUp size={18} /> Projeção de saldo futuro</h2>
-          <p className="section-sub">Parte do saldo real da conta e projeta com suas recorrências e parcelas — cenário provável + estimativas otimista/pessimista.</p>
+          <p className="section-sub">Saldo real + recorrências + parcelas + eventos anuais (13º, férias, IPVA…). Cenário provável e estimativas otimista/pessimista.</p>
         </div>
         <div className="seg" style={{ flex: "none" }}>
           {HORIZONS.map((hz) => (
@@ -182,17 +128,17 @@ export function PlanningPage({ session, onNavigate }: { session: ApiSession; onN
 
       {/* KPIs */}
       <div className="grid cols-4" style={{ marginBottom: 16 }}>
-        <Kpi icon={<Wallet size={15} />} label="Saldo ao fim do período" value={money(saldoFim)} sub={`em ${dateLabel(endDate(h).toISOString().slice(0, 10))}`} />
-        <Kpi icon={<ArrowDownRight size={15} />} iconBg="var(--warn-soft)" iconColor="var(--warn)" label="Menor saldo previsto" value={money(minProv)} sub="no período projetado" />
-        <Kpi icon={<TrendingUp size={15} />} iconBg={variacao >= 0 ? "var(--pos-soft)" : "var(--neg-soft)"} iconColor={variacao >= 0 ? "var(--pos)" : "var(--neg)"} label="Variação no período"
-          value={money(variacao)} sub={`${variacao >= 0 ? "+" : ""}${variacaoPct.toFixed(1)}%`} subColor={variacao >= 0 ? "var(--pos)" : "var(--neg)"} />
+        <Kpi icon={<Wallet size={15} />} label="Saldo ao fim do período" value={money(saldoFim)} sub={`em ${selLabel}`} />
+        <Kpi icon={<ArrowDownRight size={15} />} iconBg="var(--warn-soft)" iconColor="var(--warn)" label="Menor saldo previsto" value={money(Number(data.min_balance))} sub="no período projetado" />
+        <Kpi icon={<TrendingUp size={15} />} iconBg={variation >= 0 ? "var(--pos-soft)" : "var(--neg-soft)"} iconColor={variation >= 0 ? "var(--pos)" : "var(--neg)"} label="Variação no período"
+          value={money(variation)} sub={`${variation >= 0 ? "+" : ""}${Number(data.variation_pct).toFixed(1)}%`} subColor={variation >= 0 ? "var(--pos)" : "var(--neg)"} />
         <div className="kpi" style={{ display: "flex", flexDirection: "column", justifyContent: "center" }}>
           <div className="kpi-top">
             <span className="kpi-ic" style={{ background: "var(--bg-sunken)" }}><ShieldCheck size={15} /></span>
             <span className="kpi-label">Risco de saldo negativo</span>
           </div>
           <div style={{ marginTop: 2 }}><span className={`badge ${risk.cls}`}>{risk.label}</span></div>
-          <div className="kpi-sub" style={{ marginTop: 8 }}>{risk.text}</div>
+          <div className="kpi-sub" style={{ marginTop: 8 }}>{data.risk_reason}</div>
         </div>
       </div>
 
@@ -243,7 +189,7 @@ export function PlanningPage({ session, onNavigate }: { session: ApiSession; onN
             </div>
           </div>
           <div style={{ padding: "6px 16px 8px" }}>
-            {assumptions.map((a) => (
+            {data.assumptions.map((a) => (
               <div key={a} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "8px 0", borderBottom: "1px solid var(--line)", fontSize: 12.5, color: "var(--ink-2)" }}>
                 <ShieldCheck size={14} style={{ flex: "none", marginTop: 1, color: "var(--ink-faint)" }} />
                 <span>{a}</span>
@@ -260,23 +206,23 @@ export function PlanningPage({ session, onNavigate }: { session: ApiSession; onN
 
       {/* Scenario trio */}
       <div className="grid cols-3" style={{ marginBottom: 16 }}>
-        <ScenarioCard tone="pos" title="Melhor cenário" value={saldoFim + selSpread} note="Gastos variáveis abaixo da média ou receita extra." />
+        <ScenarioCard tone="pos" title="Melhor cenário" value={Number(data.end_best)} note="Gastos variáveis abaixo da média (disciplina)." />
         <ScenarioCard tone="acc" title="Cenário provável" value={saldoFim} note="Mantendo o padrão atual de receitas e gastos." main />
-        <ScenarioCard tone="neg" title="Pior cenário" value={saldoFim - selSpread} note="Gastos variáveis acima da média no período." />
+        <ScenarioCard tone="neg" title="Pior cenário" value={Number(data.end_worst)} note="Variáveis acima da média e receita um pouco menor." />
       </div>
 
-      {/* Future events + what needs action */}
+      {/* Commitments + what needs action */}
       <div className="grid" style={{ gridTemplateColumns: "1.4fr 1fr", gap: 16 }}>
         <div className="card">
           <div className="card-head">
             <div className="kpi-ic"><Calendar size={15} /></div>
             <div>
               <span className="ttl">Compromissos do período</span>
-              <div className="sub">Parcelas, eventos e recorrências que movem o saldo</div>
+              <div className="sub">Parcelas, eventos, recorrências e itens anuais</div>
             </div>
           </div>
           <div style={{ padding: "6px 8px 10px" }}>
-            {events.length ? events.map((ev, i) => (
+            {data.commitments.length ? data.commitments.map((ev, i) => (
               <div key={`${ev.title}-${i}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderBottom: "1px solid var(--line)" }}>
                 <span className="mono t-sub" style={{ width: 64, flex: "none" }}>{ev.monthly ? "mensal" : dateLabel(ev.date)}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -296,19 +242,19 @@ export function PlanningPage({ session, onNavigate }: { session: ApiSession; onN
             <span className="kpi-ic" style={{ background: "var(--warn-soft)", color: "var(--warn)" }}><AlertCircle size={15} /></span>
             <span className="section-title" style={{ fontSize: 15 }}>O que exige ação</span>
           </div>
-          <div className={`alert ${risk.cls === "b-neg" ? "neg" : risk.cls === "b-warn" ? "warn" : "info"}`}>
+          <div className={`alert ${data.risk_level === "risk" ? "neg" : data.risk_level === "attention" ? "warn" : "info"}`}>
             <span className="alert-ic"><ShieldCheck size={16} /></span>
             <div>
               <div className="a-ttl">{risk.label} no horizonte de {selLabel}</div>
-              <div className="a-txt">{risk.text}</div>
+              <div className="a-txt">{data.risk_reason}</div>
             </div>
           </div>
-          {monthlyNet < 0 && (
+          {Number(data.monthly_net) < 0 && (
             <div className="alert warn" style={{ marginTop: 10 }}>
               <span className="alert-ic"><ArrowDownRight size={16} /></span>
               <div>
                 <div className="a-ttl">Fluxo recorrente negativo</div>
-                <div className="a-txt">Suas despesas recorrentes superam as receitas em {money(Math.abs(monthlyNet))}/mês — revise gastos fixos ou variáveis.</div>
+                <div className="a-txt">As despesas recorrentes superam as receitas em {money(Math.abs(Number(data.monthly_net)))}/mês.</div>
               </div>
             </div>
           )}

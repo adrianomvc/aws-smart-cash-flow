@@ -473,39 +473,40 @@ export type AccountItem = {
   balance_date: string;
 };
 
-export type ProjectionHorizonRead = {
-  days: number;
-  date_to: string;
-  projected_income: string;
-  projected_expenses: string;
-  projected_balance: string;
-  event_count: number;
-  risk_level: string;
-  risk_reason: string;
+export type ProjectionPoint = {
+  month: string;
+  probable: string;
+  best: string;
+  worst: string;
 };
 
-export type ProjectionEventRead = {
+export type ProjectionCommitment = {
+  date: string;
   title: string;
-  event_type: string;
+  kind: string;
   amount: string;
-  due_date: string;
-  recurrence: string;
-};
-
-export type ProjectionGoalRead = {
-  name: string;
-  target_amount: string;
-  current_amount: string;
-  remaining_amount: string;
-  target_date: string | null;
+  income: boolean;
+  monthly: boolean;
 };
 
 export type PlanningProjection = {
   workspace_id: string;
-  date_from: string;
-  horizons: ProjectionHorizonRead[];
-  upcoming_events: ProjectionEventRead[];
-  goals_due: ProjectionGoalRead[];
+  horizon_days: number;
+  start_balance: string;
+  recurring_income: string;
+  recurring_expense: string;
+  variable_average: string;
+  monthly_net: string;
+  points: ProjectionPoint[];
+  end_best: string;
+  end_probable: string;
+  end_worst: string;
+  min_balance: string;
+  variation: string;
+  variation_pct: string;
+  risk_level: string;
+  risk_reason: string;
+  commitments: ProjectionCommitment[];
   assumptions: string[];
 };
 
@@ -885,8 +886,8 @@ export function getGoals(session: ApiSession) {
   return apiRequest<ListResponse<GoalRead>>("/goals", session);
 }
 
-export function getPlanningProjection(session: ApiSession, query = "?horizons=30,60,90") {
-  return apiRequest<PlanningProjection>(`/planning/projection${query}`, session);
+export function getPlanningProjection(session: ApiSession, horizonDays = 365) {
+  return apiRequest<PlanningProjection>(`/planning/projection?horizon_days=${horizonDays}`, session);
 }
 
 export function getReports(session: ApiSession, query: string) {
