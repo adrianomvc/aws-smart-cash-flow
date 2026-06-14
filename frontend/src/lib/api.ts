@@ -1473,6 +1473,7 @@ export type WealthItemPayload = {
   value?: number | string;
   category?: string | null;
   note?: string | null;
+  as_of?: string | null;
 };
 
 export type WealthRow = {

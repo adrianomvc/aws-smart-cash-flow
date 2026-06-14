@@ -217,11 +217,13 @@ function WealthModal({ session, kind, row, onClose, onSaved }: {
 }) {
   const editing = Boolean(row?.id);
   const cats = CATEGORIES[kind];
+  const today = new Date().toISOString().slice(0, 10);
   const [form, setForm] = useState({
     label: row?.label ?? "",
     value: row ? String(row.value) : "",
     category: row?.category ?? cats[0].id,
     note: row?.note ?? "",
+    asOf: today,
   });
   const [error, setError] = useState("");
   useEffect(() => {
@@ -232,8 +234,10 @@ function WealthModal({ session, kind, row, onClose, onSaved }: {
 
   const save = useMutation({
     mutationFn: () => {
-      const payload = { kind, label: form.label.trim(), value: form.value || "0", category: form.category, note: form.note.trim() || null };
-      return editing && row?.id ? updateWealthItem(session, row.id, payload) : createWealthItem(session, payload);
+      const base = { kind, label: form.label.trim(), value: form.value || "0", category: form.category, note: form.note.trim() || null };
+      return editing && row?.id
+        ? updateWealthItem(session, row.id, base)
+        : createWealthItem(session, { ...base, as_of: form.asOf });
     },
     onSuccess: onSaved,
     onError: (e) => setError(apiErrorMessage(e, "Falha ao salvar item.")),
@@ -263,6 +267,13 @@ function WealthModal({ session, kind, row, onClose, onSaved }: {
                 {cats.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
               </select></label>
           </div>
+          {!editing && (
+            <label className="fld">
+              <span className="fld-label">Data de referência</span>
+              <input className="fld-input" type="date" max={today} value={form.asOf} onChange={(e) => setForm({ ...form, asOf: e.target.value })} />
+              <span className="t-sub" style={{ marginTop: 4 }}>Desde quando esse valor vale — ancora a evolução do patrimônio.</span>
+            </label>
+          )}
           <label className="fld"><span className="fld-label">Observação (opcional)</span>
             <input className="fld-input" placeholder="Ex: Avaliação manual, 142 parcelas…" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} /></label>
         </div>

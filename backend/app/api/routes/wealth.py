@@ -24,6 +24,7 @@ class WealthItemCreate(BaseModel):
     value: Decimal = Field(default=Decimal("0"))
     category: str | None = Field(default=None, max_length=24)
     note: str | None = Field(default=None, max_length=200)
+    as_of: date | None = None
 
 
 class WealthItemUpdate(BaseModel):
@@ -89,6 +90,17 @@ def create_wealth_item(
         note=_optional(payload.note),
     )
     db.add(item)
+    db.flush()
+    # Anchor the evolution with an initial snapshot at the reference date.
+    db.add(
+        WealthSnapshot(
+            id=str(uuid4()),
+            workspace_id=auth.workspace_id,
+            item_id=item.id,
+            as_of=payload.as_of or date.today(),
+            value=item.value,
+        )
+    )
     db.commit()
     db.refresh(item)
     return _read(item)
