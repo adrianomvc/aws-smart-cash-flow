@@ -7,11 +7,13 @@ reasoning and the data it used.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.db.models import Budget, Goal
 from app.services.dashboard_service import DashboardService
 
 ZERO = Decimal("0")
@@ -132,9 +134,14 @@ class InsightsService:
                 "action_param": str(al["category_id"]),
             })
 
-        # 4. Low projected balance risk
+        # Projection — shared by the balance-risk and surplus insights.
         try:
-            proj = self.dash.projection(workspace_id, 90)
+            proj: dict | None = self.dash.projection(workspace_id, 90)
+        except Exception:  # pragma: no cover - best-effort
+            proj = None
+
+        # 4. Low projected balance risk
+        if proj is not None:
             min_balance = Decimal(proj["min_balance"])  # type: ignore[arg-type]
             reserve: Decimal = summary["protected_reserve"]  # type: ignore[assignment]
             points = proj.get("points") or []
@@ -168,8 +175,6 @@ class InsightsService:
                     "action_target": "calendar",
                     "action_param": None,
                 })
-        except Exception:  # pragma: no cover - projection is best-effort here
-            pass
 
         # 5. Potential savings on the largest expense category
         ranking = self.dash.category_ranking(
@@ -212,6 +217,160 @@ class InsightsService:
                     "data": "Qualidade dos dados",
                     "action": "Revisar",
                     "action_target": "review",
+                    "action_param": None,
+                })
+
+        # 7. Emergency reserve / runway
+        current_balance = summary["current_balance"]
+        burn = Decimal(summary["burn_rate"]) if summary["burn_rate"] is not None else ZERO
+        reserve_pref: Decimal = summary["protected_reserve"]  # type: ignore[assignment]
+        if current_balance is not None and burn > ZERO:
+            cb = Decimal(current_balance)  # type: ignore[arg-type]
+            runway = cb / burn
+            target = reserve_pref if reserve_pref > ZERO else (burn * 3)
+            if cb < target:
+                runway_txt = runway.quantize(Decimal("0.1"))
+                ref = "sua reserva protegida" if reserve_pref > ZERO else "3 meses de despesas"
+                items.append({
+                    "type": "neg" if runway < 1 else "warn",
+                    "title": "Reserva de emergência baixa",
+                    "impact": (cb - target).quantize(Decimal("0.01")),
+                    "saving": ZERO,
+                    "confidence": "Média",
+                    "reason": f"Seu saldo cobre cerca de {runway_txt} meses de despesas "
+                              f"({_brl(burn)}/mês). O recomendado é manter ao menos "
+                              f"{_brl(target)} ({ref}).",
+                    "data": "Saldo atual · burn rate",
+                    "action": "Planejar reserva",
+                    "action_target": "planning",
+                    "action_param": None,
+                })
+
+        # 8. Budgets over or near the configured limit
+        budgets = list(
+            self.db.scalars(
+                select(Budget).where(
+                    Budget.workspace_id == workspace_id, Budget.active.is_(True)
+                )
+            ).all()
+        )
+        if budgets:
+            spent_by_cat = {
+                r["category_id"]: Decimal(r["amount"])
+                for r in self.dash.category_ranking(
+                    workspace_id=workspace_id, date_from=date_from, date_to=date_to, limit=1000
+                )
+            }
+            worst: tuple[Decimal, Budget, Decimal] | None = None
+            for b in budgets:
+                if b.category_id is None or b.limit_amount <= ZERO:
+                    continue
+                spent = spent_by_cat.get(b.category_id, ZERO)
+                ratio_b = spent / b.limit_amount
+                if ratio_b >= b.alert_threshold and (worst is None or ratio_b > worst[0]):
+                    worst = (ratio_b, b, spent)
+            if worst is not None:
+                ratio_b, bud, spent = worst
+                over = ratio_b >= 1
+                pct_b = (ratio_b * 100).quantize(Decimal("0.1"))
+                items.append({
+                    "type": "neg" if over else "warn",
+                    "title": f"Orçamento de {bud.name} {'estourado' if over else 'no limite'}",
+                    "impact": (bud.limit_amount - spent).quantize(Decimal("0.01")),
+                    "saving": ZERO,
+                    "confidence": "Alta",
+                    "reason": f"Você usou {_brl(spent)} de {_brl(bud.limit_amount)} "
+                              f"({pct_b}%) deste orçamento no período.",
+                    "data": "Orçamentos",
+                    "action": "Ver orçamento",
+                    "action_target": "budgets",
+                    "action_param": None,
+                })
+
+        # 9. Income below the recent average
+        if date_from is not None and date_to is not None and income > ZERO:
+            prev_to = date_from - timedelta(days=1)
+            prev_from = prev_to - timedelta(days=92)
+            months = self.dash.monthly_cashflow(workspace_id, prev_from, prev_to)
+            incomes = [Decimal(m["income"]) for m in months if Decimal(m["income"]) > ZERO]
+            if len(incomes) >= 2:
+                avg_income = sum(incomes, ZERO) / len(incomes)
+                if avg_income > ZERO and income < avg_income * Decimal("0.8"):
+                    drop = avg_income - income
+                    items.append({
+                        "type": "warn",
+                        "title": "Renda abaixo da média",
+                        "impact": (-drop).quantize(Decimal("0.01")),
+                        "saving": ZERO,
+                        "confidence": "Média",
+                        "reason": f"A renda do período ({_brl(income)}) está {_brl(drop)} "
+                                  f"abaixo da média dos últimos meses ({_brl(avg_income)}). "
+                                  f"Vale segurar os gastos variáveis.",
+                        "data": "Fluxo mensal",
+                        "action": "Ver fluxo",
+                        "action_target": "cashflow",
+                        "action_param": None,
+                    })
+
+        # 10. Possibly forgotten subscription
+        if date_to is not None:
+            window_from = date_to - timedelta(days=180)
+            recs = self.dash.recurring_expenses(
+                workspace_id, window_from, date_to, min_months=3, limit=20
+            )
+            small = [
+                r
+                for r in recs
+                if Decimal(r["average_amount"]) <= Decimal("150.00")
+                and int(r["month_count"]) >= 3
+            ]
+            if small:
+                sub = min(small, key=lambda r: Decimal(r["average_amount"]))
+                amt = Decimal(sub["average_amount"])
+                months_n = int(sub["month_count"])
+                items.append({
+                    "type": "info",
+                    "title": "Possível assinatura esquecida",
+                    "impact": ZERO,
+                    "saving": amt.quantize(Decimal("0.01")),
+                    "confidence": "Baixa",
+                    "reason": f"'{sub['description']}' ({_brl(amt)}) se repete há {months_n} "
+                              f"meses. Se não usa mais, cancelar economiza {_brl(amt)}/mês.",
+                    "data": "Despesas recorrentes",
+                    "action": "Ver recorrências",
+                    "action_target": "cashflow",
+                    "action_param": None,
+                })
+
+        # 11. Monthly surplus to allocate
+        if proj is not None:
+            net = Decimal(proj["monthly_net"])
+            if net > Decimal("100.00"):
+                incomplete = self.db.scalar(
+                    select(func.count())
+                    .select_from(Goal)
+                    .where(
+                        Goal.workspace_id == workspace_id,
+                        Goal.status == "active",
+                        Goal.current_amount < Goal.target_amount,
+                    )
+                )
+                to_goals = (incomplete or 0) > 0
+                tail = (
+                    "Direcione para suas metas."
+                    if to_goals
+                    else "Considere investir esse valor."
+                )
+                items.append({
+                    "type": "pos",
+                    "title": "Sobra mensal para alocar",
+                    "impact": net.quantize(Decimal("0.01")),
+                    "saving": ZERO,
+                    "confidence": "Média",
+                    "reason": f"Seu fluxo deixa cerca de {_brl(net)}/mês de sobra. {tail}",
+                    "data": "Projeção 90 dias",
+                    "action": "Direcionar" if to_goals else "Investir",
+                    "action_target": "goals" if to_goals else "investments",
                     "action_param": None,
                 })
 
