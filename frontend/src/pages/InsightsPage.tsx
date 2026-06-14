@@ -42,9 +42,17 @@ export function InsightsPage({ session, period, onNavigate, onOpenTransactions }
 
   const { kpis, items } = data;
 
+  // Carry the insight's period so the destination shows only the relevant rows.
+  const periodDrill = period && period.periodPreset !== "all"
+    ? { dateFrom: period.dateFrom, dateTo: period.dateTo, periodPreset: period.periodPreset }
+    : {};
+
   function act(it: InsightItem) {
-    if (it.action_target === "transactions" && it.action_param) {
-      onOpenTransactions({ categoryId: it.action_param });
+    if (it.action_target === "transactions") {
+      onOpenTransactions({ categoryId: it.action_param ?? undefined, label: it.title, ...periodDrill });
+    } else if (it.action_target === "review") {
+      // Data-quality insight: show exactly the uncategorized transactions.
+      onOpenTransactions({ fixedQuery: "category_id=__uncategorized__", label: it.title, ...periodDrill });
     } else {
       onNavigate(it.action_target as Page);
     }

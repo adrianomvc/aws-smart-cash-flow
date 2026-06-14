@@ -55,6 +55,7 @@ export type TransactionDrilldown = {
   dateFrom?: string;
   dateTo?: string;
   direction?: string;
+  fixedQuery?: string;
   importJobId?: string;
   sourceFileId?: string;
   label?: string;

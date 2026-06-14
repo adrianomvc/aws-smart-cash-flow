@@ -933,6 +933,7 @@ export function TransactionsPage({
     drilldown?.dateFrom ?? "",
     drilldown?.dateTo ?? "",
     drilldown?.direction ?? "",
+    drilldown?.fixedQuery ?? "",
     drilldown?.importJobId ?? "",
     drilldown?.sourceFileId ?? "",
     drilldown?.search ?? "",
@@ -946,6 +947,7 @@ export function TransactionsPage({
       initialDateFrom={drilldown?.dateFrom ?? ""}
       initialDateTo={drilldown?.dateTo ?? ""}
       initialDirection={drilldown?.direction ?? ""}
+      fixedQuery={drilldown?.fixedQuery}
       initialImportJobId={drilldown?.importJobId ?? ""}
       initialSourceFileId={drilldown?.sourceFileId ?? ""}
       initialMessage={drilldown?.label ? `Filtro aplicado pelo gráfico: ${drilldown.label}.` : ""}
