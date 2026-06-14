@@ -1514,3 +1514,33 @@ export function updateWealthItem(session: ApiSession, itemId: string, payload: W
 export function deleteWealthItem(session: ApiSession, itemId: string) {
   return apiRequest<void>(`/wealth-items/${itemId}`, session, { method: "DELETE" });
 }
+
+export type WealthSnapshotRead = {
+  id: string;
+  item_id: string;
+  as_of: string;
+  value: string;
+  created_at: string;
+};
+
+export function getWealthSnapshots(session: ApiSession, itemId: string) {
+  return apiRequest<{ item_id: string; items: WealthSnapshotRead[]; total: number }>(
+    `/wealth-items/${itemId}/snapshots`,
+    session,
+  );
+}
+
+export function createWealthSnapshot(
+  session: ApiSession,
+  itemId: string,
+  payload: { value: number | string; as_of?: string | null },
+) {
+  return apiRequest<WealthSnapshotRead>(`/wealth-items/${itemId}/snapshots`, session, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function deleteWealthSnapshot(session: ApiSession, snapshotId: string) {
+  return apiRequest<void>(`/wealth-snapshots/${snapshotId}`, session, { method: "DELETE" });
+}

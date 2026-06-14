@@ -5,11 +5,12 @@ import {
 } from "recharts";
 import {
   Building2, Car, Coins, CreditCard, Home, Landmark, Loader2, Minus, Pencil, Plus,
-  TrendingDown, TrendingUp, Trash2, Wallet, X,
+  RefreshCw, TrendingDown, TrendingUp, Trash2, Wallet, X,
 } from "lucide-react";
 
 import {
-  createWealthItem, deleteWealthItem, getWealth, updateWealthItem,
+  createWealthItem, createWealthSnapshot, deleteWealthItem, deleteWealthSnapshot,
+  getWealth, getWealthSnapshots, updateWealthItem,
 } from "../lib/api";
 import { apiErrorMessage, money } from "../lib/utils";
 import { PageState } from "../components/ui";
@@ -41,6 +42,7 @@ export function WealthPage({ session }: { session: ApiSession }) {
   const queryClient = useQueryClient();
   const wealthQ = useQuery({ queryKey: ["wealth", session.token], queryFn: () => getWealth(session) });
   const [modal, setModal] = useState<ModalState>(null);
+  const [snapRow, setSnapRow] = useState<WealthRow | null>(null);
 
   function invalidate() {
     void queryClient.invalidateQueries({ queryKey: ["wealth"] });
@@ -146,9 +148,11 @@ export function WealthPage({ session }: { session: ApiSession }) {
           <div className="vstack" style={{ gap: 16 }}>
             <ListCard title="Ativos" color="var(--acc)" total={w.total_assets} rows={w.assets}
               onEdit={(r) => setModal({ kind: "asset", row: r })}
+              onSnapshot={(r) => setSnapRow(r)}
               onDelete={(id) => del.mutate(id)} />
             <ListCard title="Passivos" color="var(--neg)" total={w.total_liabilities} rows={w.liabilities} neg
               onEdit={(r) => setModal({ kind: "liability", row: r })}
+              onSnapshot={(r) => setSnapRow(r)}
               onDelete={(id) => del.mutate(id)} />
           </div>
         </div>
@@ -158,13 +162,17 @@ export function WealthPage({ session }: { session: ApiSession }) {
         <WealthModal session={session} kind={modal.kind} row={modal.row}
           onClose={() => setModal(null)} onSaved={() => { setModal(null); invalidate(); }} />
       )}
+      {snapRow && snapRow.id && (
+        <WealthSnapshotModal session={session} row={snapRow}
+          onClose={() => setSnapRow(null)} onSaved={invalidate} />
+      )}
     </div>
   );
 }
 
-function ListCard({ title, color, total, rows, neg, onEdit, onDelete }: {
+function ListCard({ title, color, total, rows, neg, onEdit, onSnapshot, onDelete }: {
   title: string; color: string; total: string; rows: WealthRow[]; neg?: boolean;
-  onEdit: (r: WealthRow) => void; onDelete: (id: string) => void;
+  onEdit: (r: WealthRow) => void; onSnapshot: (r: WealthRow) => void; onDelete: (id: string) => void;
 }) {
   return (
     <div className="card">
@@ -190,6 +198,7 @@ function ListCard({ title, color, total, rows, neg, onEdit, onDelete }: {
               <span className="mono" style={{ fontWeight: 700, color: neg ? "var(--neg)" : "var(--ink)" }}>{money(r.value)}</span>
               {r.source === "manual" && r.id && (
                 <span style={{ display: "inline-flex", gap: 2 }}>
+                  <button className="icon-btn" style={{ width: 28, height: 28 }} title="Atualizar valor" onClick={() => onSnapshot(r)}><RefreshCw size={13} /></button>
                   <button className="icon-btn" style={{ width: 28, height: 28 }} title="Editar" onClick={() => onEdit(r)}><Pencil size={13} /></button>
                   <button className="icon-btn" style={{ width: 28, height: 28 }} title="Excluir" onClick={() => { if (window.confirm(`Excluir "${r.label}"?`)) onDelete(r.id!); }}><Trash2 size={13} /></button>
                 </span>
@@ -261,6 +270,76 @@ function WealthModal({ session, kind, row, onClose, onSaved }: {
           <span className="spacer" style={{ color: "var(--neg)", fontSize: 12 }}>{error}</span>
           <button className="btn btn-ghost btn-sm" onClick={onClose}>Cancelar</button>
           <button className="btn btn-primary btn-sm" onClick={submit} disabled={save.isPending}>{editing ? "Salvar" : "Criar"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WealthSnapshotModal({ session, row, onClose, onSaved }: {
+  session: ApiSession; row: WealthRow; onClose: () => void; onSaved: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const today = new Date().toISOString().slice(0, 10);
+  const [value, setValue] = useState(String(row.value));
+  const [asOf, setAsOf] = useState(today);
+  const [error, setError] = useState("");
+  const itemId = row.id as string;
+  const snapsQ = useQuery({ queryKey: ["wealth-snaps", itemId], queryFn: () => getWealthSnapshots(session, itemId) });
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
+  function refresh() {
+    void queryClient.invalidateQueries({ queryKey: ["wealth-snaps", itemId] });
+    onSaved();
+  }
+  const save = useMutation({
+    mutationFn: () => createWealthSnapshot(session, itemId, { value: value || "0", as_of: asOf }),
+    onSuccess: () => { setError(""); refresh(); },
+    onError: (e) => setError(apiErrorMessage(e, "Falha ao registrar valor.")),
+  });
+  const del = useMutation({ mutationFn: (id: string) => deleteWealthSnapshot(session, id), onSuccess: refresh });
+  const snaps = snapsQ.data?.items ?? [];
+
+  return (
+    <div className="mdl-backdrop" onClick={onClose}>
+      <div className="mdl" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <div className="mdl-head">
+          <span className="mh-ic"><RefreshCw size={17} /></span>
+          <div style={{ minWidth: 0 }}><div className="mh-ttl">Atualizar valor</div><div className="mh-sub">{row.label}</div></div>
+          <button className="mh-close" onClick={onClose} aria-label="Fechar"><X size={18} /></button>
+        </div>
+        <div className="mdl-body">
+          <p className="t-sub" style={{ marginTop: 0 }}>Registre o valor numa data. Um registro com a data de hoje atualiza o valor atual; datas anteriores alimentam a evolução do patrimônio.</p>
+          <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 10 }}>
+            <label className="fld"><span className="fld-label">Valor (R$)</span>
+              <input className="fld-input" autoFocus type="number" step="0.01" min="0" value={value} onChange={(e) => setValue(e.target.value)} /></label>
+            <label className="fld"><span className="fld-label">Data</span>
+              <input className="fld-input" type="date" max={today} value={asOf} onChange={(e) => setAsOf(e.target.value)} /></label>
+          </div>
+          {snaps.length > 0 && (
+            <div className="fld">
+              <span className="fld-label">Histórico ({snaps.length})</span>
+              <div style={{ display: "grid", gap: 4, maxHeight: 180, overflowY: "auto" }}>
+                {snaps.map(s => (
+                  <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, padding: "5px 8px", borderRadius: 7, background: "var(--card-2)" }}>
+                    <span className="mono t-sub">{s.as_of.split("-").reverse().join("/")}</span>
+                    <span className="mono" style={{ marginLeft: "auto", fontWeight: 600 }}>{money(s.value)}</span>
+                    <button className="icon-btn" style={{ width: 26, height: 26 }} title="Remover" onClick={() => del.mutate(s.id)}><Trash2 size={12} /></button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="mdl-foot">
+          <span className="spacer" style={{ color: "var(--neg)", fontSize: 12 }}>{error}</span>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>Fechar</button>
+          <button className="btn btn-primary btn-sm" onClick={() => save.mutate()} disabled={save.isPending}>Registrar</button>
         </div>
       </div>
     </div>
