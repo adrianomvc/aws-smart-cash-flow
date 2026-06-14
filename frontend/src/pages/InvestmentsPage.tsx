@@ -152,15 +152,17 @@ export function InvestmentsPage({ session, period }: { session: ApiSession; peri
     );
   }
 
-  const total = pos?.total ?? 0;
+  const total = Number(pos?.total ?? 0);
+  const totalGain = Number(pos?.total_gain ?? 0);
+  const totalContrib = Number(pos?.total_contributed ?? 0);
   const empty = (custodies.length === 0) && (assets.length === 0);
 
   // Filtered views
   const filteredAssets = (pos?.assets ?? []).filter(a => classFilter === "all" || a.asset_class === classFilter);
   const filteredAccounts = (pos?.accounts ?? []).filter(acc =>
     classFilter === "all" || acc.classes.some(c => c.id === classFilter));
-  const gainPct = pos && pos.total_contributed > 0 ? (pos.total_gain / pos.total_contributed) * 100 : 0;
-  const filteredAssetsTotal = filteredAssets.reduce((s, a) => s + a.value, 0);
+  const gainPct = totalContrib > 0 ? (totalGain / totalContrib) * 100 : 0;
+  const filteredAssetsTotal = filteredAssets.reduce((s, a) => s + Number(a.value), 0);
 
   return (
     <div className="canvas stg">
@@ -220,9 +222,9 @@ export function InvestmentsPage({ session, period }: { session: ApiSession; peri
               <div className="kpi-sub">YTD: <Delta v={pos?.ytd_return ?? 0} /></div>
             </div>
             <div className="kpi">
-              <div className="kpi-top"><span className="kpi-ic" style={{ background: (pos?.total_gain ?? 0) >= 0 ? "var(--pos-soft)" : "var(--neg-soft)", color: (pos?.total_gain ?? 0) >= 0 ? "var(--pos)" : "var(--neg)" }}><Icon name="plus" size={16} /></span><span className="kpi-label">Ganho acumulado</span></div>
-              <div className="kpi-val" style={{ fontSize: 19, color: (pos?.total_gain ?? 0) >= 0 ? "var(--pos)" : "var(--neg)" }}>{money(pos?.total_gain ?? 0)}</div>
-              <div className="kpi-sub">{gainPct >= 0 ? "+" : ""}{num(gainPct, 1)}% sobre {money(pos?.total_contributed ?? 0)} aportados</div>
+              <div className="kpi-top"><span className="kpi-ic" style={{ background: totalGain >= 0 ? "var(--pos-soft)" : "var(--neg-soft)", color: totalGain >= 0 ? "var(--pos)" : "var(--neg)" }}><Icon name="plus" size={16} /></span><span className="kpi-label">Ganho acumulado</span></div>
+              <div className="kpi-val" style={{ fontSize: 19, color: totalGain >= 0 ? "var(--pos)" : "var(--neg)" }}>{money(totalGain)}</div>
+              <div className="kpi-sub">{gainPct >= 0 ? "+" : ""}{num(gainPct, 1)}% sobre {money(totalContrib)} aportados</div>
             </div>
           </div>
 
@@ -235,7 +237,7 @@ export function InvestmentsPage({ session, period }: { session: ApiSession; peri
               </div>
               <div className="card-body">
                 <ResponsiveContainer width="100%" height={260}>
-                  <AreaChart data={pos?.history ?? []} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
+                  <AreaChart data={(pos?.history ?? []).map(h => ({ label: h.label, value: Number(h.value) }))} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
                     <defs>
                       <linearGradient id="inv-grad" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="var(--acc)" stopOpacity={0.26} />
@@ -260,7 +262,7 @@ export function InvestmentsPage({ session, period }: { session: ApiSession; peri
               <div className="eyebrow" style={{ marginBottom: 4 }}>Alocação por classe</div>
               <div style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 16, marginBottom: 14 }}>Como está dividido</div>
               <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
-                <Donut data={(pos?.classes ?? []).map(c => ({ value: c.value, color: c.color }))} size={176} thickness={26}
+                <Donut data={(pos?.classes ?? []).map(c => ({ value: Number(c.value), color: c.color }))} size={176} thickness={26}
                   center={<div style={{ textAlign: "center" }}>
                     <div className="mono" style={{ fontFamily: "var(--font-display)", fontSize: 15, fontWeight: 700, letterSpacing: "-.3px" }}>{money(total)}</div>
                     <div className="t-sub" style={{ fontSize: 10.5 }}>patrimônio</div>
@@ -440,10 +442,13 @@ function AccountCard({ account, classOf, onEdit, onDelete }: {
   account: InvestmentPositionAccount; classOf: (id: string) => InvestmentClassRef; onEdit: () => void; onDelete: () => void;
 }) {
   const a = account;
-  const deltaPct = a.prev > 0 ? ((a.value - a.prev) / a.prev) * 100 : 0;
-  const gain = a.value - a.contrib;
-  const gainPct = a.contrib > 0 ? (gain / a.contrib) * 100 : 0;
-  const totalForBars = a.classes.reduce((s, c) => s + c.value, 0) || 1;
+  const value = Number(a.value);
+  const prev = Number(a.prev);
+  const contrib = Number(a.contrib);
+  const deltaPct = prev > 0 ? ((value - prev) / prev) * 100 : 0;
+  const gain = value - contrib;
+  const gainPct = contrib > 0 ? (gain / contrib) * 100 : 0;
+  const totalForBars = a.classes.reduce((s, c) => s + Number(c.value), 0) || 1;
   const color = a.color || "#3d7d63";
   const brand = a.brand || a.name.slice(0, 2).toUpperCase();
 
@@ -475,7 +480,7 @@ function AccountCard({ account, classOf, onEdit, onDelete }: {
       <div style={{ display: "grid", gap: 7 }}>
         {a.classes.map((c, i) => {
           const cls = classOf(c.id);
-          const pct = (c.value / totalForBars) * 100;
+          const pct = (Number(c.value) / totalForBars) * 100;
           return (
             <div key={i}>
               <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, marginBottom: 3 }}>

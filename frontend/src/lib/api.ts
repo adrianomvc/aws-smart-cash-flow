@@ -1278,13 +1278,14 @@ export type InvestmentSnapshotPayload = {
   as_of?: string | null;
 };
 
+// Money fields are serialized as strings (Decimal); returns/pct are numbers (float).
 export type InvestmentPositionClass = {
   id: string;
   label: string;
   color: string;
-  value: number;
+  value: string;
   pct: number;
-  contributed: number;
+  contributed: string;
   month_return: number;
   year_return: number;
 };
@@ -1296,10 +1297,10 @@ export type InvestmentPositionAccount = {
   account_type: string;
   brand: string | null;
   color: string | null;
-  value: number;
-  prev: number;
-  contrib: number;
-  classes: { id: string; value: number }[];
+  value: string;
+  prev: string;
+  contrib: string;
+  classes: { id: string; value: string }[];
   sync_mode: string | null;
   updated_at: string;
 };
@@ -1310,8 +1311,8 @@ export type InvestmentPositionAsset = {
   asset_class: string;
   custody_id: string;
   account: string;
-  value: number;
-  contributed: number;
+  value: string;
+  contributed: string;
   risk: string | null;
   detail: string | null;
   month_return: number;
@@ -1320,9 +1321,9 @@ export type InvestmentPositionAsset = {
 
 export type InvestmentPosition = {
   workspace_id: string;
-  total: number;
-  total_contributed: number;
-  total_gain: number;
+  total: string;
+  total_contributed: string;
+  total_gain: string;
   month_return: number;
   year_return: number;
   ytd_return: number;
@@ -1331,7 +1332,7 @@ export type InvestmentPosition = {
   classes: InvestmentPositionClass[];
   accounts: InvestmentPositionAccount[];
   assets: InvestmentPositionAsset[];
-  history: { label: string; value: number }[];
+  history: { label: string; value: string }[];
 };
 
 export function getInvestmentClasses(session: ApiSession) {
