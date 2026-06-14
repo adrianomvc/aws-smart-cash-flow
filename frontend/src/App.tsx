@@ -644,6 +644,7 @@ function ProtectedApp({
           onNavigate={onNavigate}
           onOpenImports={onOpenImports}
           onOpenTransactions={onOpenTransactions}
+          hasTransactions={workspace.has_transactions}
           session={session}
           setDashboardPeriod={setDashboardPeriod}
           userName={workspace.user_name}

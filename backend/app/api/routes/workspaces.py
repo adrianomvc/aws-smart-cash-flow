@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.auth import AuthContext, AuthDependency
-from app.db.models import User, WorkspaceInvite, WorkspaceMember
+from app.db.models import Transaction, User, WorkspaceInvite, WorkspaceMember
 from app.db.session import get_db
 from app.services.workspace_service import WorkspaceService
 
@@ -24,6 +24,7 @@ class CurrentWorkspaceResponse(BaseModel):
     workspace_id: str
     workspace_name: str
     role: str
+    has_transactions: bool
     created_at: datetime
 
 
@@ -34,12 +35,16 @@ async def get_current_workspace(
 ) -> CurrentWorkspaceResponse:
     user, workspace, membership = WorkspaceService(db).get_or_create_current_workspace(auth)
     db.commit()
+    has_tx = db.scalar(
+        select(Transaction.id).where(Transaction.workspace_id == workspace.id).limit(1)
+    ) is not None
     return CurrentWorkspaceResponse(
         user_id=user.id,
         user_name=user.display_name or (user.email.split("@")[0] if user.email else "você"),
         workspace_id=workspace.id,
         workspace_name=workspace.name,
         role=membership.role,
+        has_transactions=has_tx,
         created_at=workspace.created_at,
     )
 

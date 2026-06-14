@@ -1263,6 +1263,7 @@ function SankeyMini({
 // ─── MAIN EXPORT ─────────────────────────────────────────────────────────────
 export function DashboardPage({
   dashboardPeriod,
+  hasTransactions,
   onNavigate,
   onOpenImports,
   session,
@@ -1270,6 +1271,7 @@ export function DashboardPage({
   workspaceName,
 }: {
   dashboardPeriod: PeriodState;
+  hasTransactions?: boolean;
   onNavigate: (page: Page) => void;
   onOpenImports: (drilldown?: ImportDrilldown) => void;
   onOpenTransactions: (drilldown?: TransactionDrilldown) => void;
@@ -1284,19 +1286,23 @@ export function DashboardPage({
   const ok = !!session;
   const staleTime = 3 * 60 * 1000;
 
-  const summaryQ  = useQuery({ queryKey: ["dash-summary",  session.token, q], queryFn: () => getDashboardSummary(session, q),                    enabled: ok, staleTime });
+  // A brand-new (empty) account is detected by the cheap has_transactions flag
+  // from /workspaces/current, so we skip every dashboard query and render the
+  // onboarding immediately instead of waiting on the slow summary.
+  const full = ok && hasTransactions !== false;
+  const summaryQ  = useQuery({ queryKey: ["dash-summary",  session.token, q], queryFn: () => getDashboardSummary(session, q),                    enabled: full, staleTime });
   // history: last 12 months ending at period.dateTo — for sparklines
-  const histMonthlyQ = useQuery({ queryKey: ["dash-history", session.token, historyQ_key], queryFn: () => getMonthlyCashflow(session, historyQ_key), enabled: ok, staleTime: 10 * 60 * 1000 });
+  const histMonthlyQ = useQuery({ queryKey: ["dash-history", session.token, historyQ_key], queryFn: () => getMonthlyCashflow(session, historyQ_key), enabled: full, staleTime: 10 * 60 * 1000 });
   // year: all 12 months of the selected year — for FlowCard "Mês" tab
-  const yearMonthlyQ = useQuery({ queryKey: ["dash-year", session.token, yearQ_key], queryFn: () => getMonthlyCashflow(session, yearQ_key), enabled: ok && !!yearQ_key, staleTime: 10 * 60 * 1000 });
-  const dailyQ    = useQuery({ queryKey: ["dash-daily",    session.token, q], queryFn: () => getDailyCashflow(session, q),                        enabled: ok, staleTime });
-  const catsQ     = useQuery({ queryKey: ["dash-cats",     session.token, q], queryFn: () => getCategoryRanking(session, q + (q ? "&" : "?") + "limit=8"), enabled: ok, staleTime });
-  const subsQ     = useQuery({ queryKey: ["dash-subs",     session.token, q], queryFn: () => getSubcategoryRanking(session, q + (q ? "&" : "?") + "limit=40"), enabled: ok, staleTime });
-  const qualityQ  = useQuery({ queryKey: ["dash-quality",  session.token, q], queryFn: () => getDataQuality(session, q),            enabled: ok, staleTime });
-  const goalsQ    = useQuery({ queryKey: ["goals",         session.token],     queryFn: () => getGoals(session),                     enabled: ok, staleTime });
-  const budgetsQ  = useQuery({ queryKey: ["budgets",       session.token, q],  queryFn: () => getBudgets(session, q),                enabled: ok, staleTime });
-  const cardsQ    = useQuery({ queryKey: ["credit-cards",  session.token],     queryFn: () => getCreditCards(session),               enabled: ok, staleTime });
-  const eventsQ   = useQuery({ queryKey: ["cal-events",    session.token, q],  queryFn: () => getCalendarEvents(session, q),         enabled: ok, staleTime });
+  const yearMonthlyQ = useQuery({ queryKey: ["dash-year", session.token, yearQ_key], queryFn: () => getMonthlyCashflow(session, yearQ_key), enabled: full && !!yearQ_key, staleTime: 10 * 60 * 1000 });
+  const dailyQ    = useQuery({ queryKey: ["dash-daily",    session.token, q], queryFn: () => getDailyCashflow(session, q),                        enabled: full, staleTime });
+  const catsQ     = useQuery({ queryKey: ["dash-cats",     session.token, q], queryFn: () => getCategoryRanking(session, q + (q ? "&" : "?") + "limit=8"), enabled: full, staleTime });
+  const subsQ     = useQuery({ queryKey: ["dash-subs",     session.token, q], queryFn: () => getSubcategoryRanking(session, q + (q ? "&" : "?") + "limit=40"), enabled: full, staleTime });
+  const qualityQ  = useQuery({ queryKey: ["dash-quality",  session.token, q], queryFn: () => getDataQuality(session, q),            enabled: full, staleTime });
+  const goalsQ    = useQuery({ queryKey: ["goals",         session.token],     queryFn: () => getGoals(session),                     enabled: full, staleTime });
+  const budgetsQ  = useQuery({ queryKey: ["budgets",       session.token, q],  queryFn: () => getBudgets(session, q),                enabled: full, staleTime });
+  const cardsQ    = useQuery({ queryKey: ["credit-cards",  session.token],     queryFn: () => getCreditCards(session),               enabled: full, staleTime });
+  const eventsQ   = useQuery({ queryKey: ["cal-events",    session.token, q],  queryFn: () => getCalendarEvents(session, q),         enabled: full, staleTime });
 
   const summary     = summaryQ.data;
   const histMonthly = histMonthlyQ.data?.items ?? [];
@@ -1329,11 +1335,9 @@ export function DashboardPage({
   const periodDate = dashboardPeriod.dateFrom ? new Date(dashboardPeriod.dateFrom + "T12:00:00") : new Date();
   const periodLabel = MONTHS_PT_D[periodDate.getMonth()] + " de " + periodDate.getFullYear();
 
-  // Empty state — nenhuma transação ainda
-  const isEmpty = !summaryQ.isLoading && summary && parseFloat(summary.transaction_count as unknown as string || "0") === 0 && (summary as unknown as { transaction_count: number }).transaction_count === 0;
-
-  // Onboarding for a brand-new account with no movement yet.
-  if (isEmpty) {
+  // Onboarding for a brand-new account with no movement yet — decided by the
+  // cheap has_transactions flag, so it shows immediately (no slow summary).
+  if (hasTransactions === false) {
     return (
       <div className="canvas stg">
         <div style={{ marginBottom: 18 }}>

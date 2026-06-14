@@ -13,6 +13,7 @@ export type WorkspaceCurrent = {
   workspace_id: string;
   workspace_name: string;
   role: string;
+  has_transactions: boolean;
   created_at: string;
 };
 

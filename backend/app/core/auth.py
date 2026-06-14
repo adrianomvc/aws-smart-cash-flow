@@ -17,6 +17,11 @@ LOCAL_WORKSPACE_ID = "00000000-0000-0000-0000-000000000002"
 _JWKS_CACHE: dict[str, tuple[list[dict], float]] = {}
 _JWKS_TTL_SECONDS = 3600
 
+# Cache the resolved workspace per user so identity-provider requests don't hit
+# the DB to resolve the workspace on every single call.
+_WS_CACHE: dict[str, tuple[str, float]] = {}
+_WS_TTL_SECONDS = 300
+
 
 @dataclass(frozen=True)
 class AuthContext:
@@ -188,12 +193,18 @@ async def get_auth_context(
     ctx = await _authenticate(authorization)
     # For identity-provider auth (Cognito/Supabase) the token has no workspace;
     # resolve (and create on first sign-in) the user's workspace so every data
-    # route is scoped correctly.
+    # route is scoped correctly. Cached per user to avoid a DB round-trip on
+    # every request.
     if ctx.workspace_id is None:
+        cached = _WS_CACHE.get(ctx.user_id)
+        if cached is not None and (time.time() - cached[1]) < _WS_TTL_SECONDS:
+            return replace(ctx, workspace_id=cached[0])
+
         from app.services.workspace_service import WorkspaceService
 
         _, workspace, _ = WorkspaceService(db).get_or_create_current_workspace(ctx)
         db.commit()
+        _WS_CACHE[ctx.user_id] = (workspace.id, time.time())
         ctx = replace(ctx, workspace_id=workspace.id)
     return ctx
 
