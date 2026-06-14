@@ -1338,8 +1338,9 @@ export function getInvestmentClasses(session: ApiSession) {
   return apiRequest<{ items: InvestmentClassRef[] }>("/investment-classes", session);
 }
 
-export function getInvestmentPosition(session: ApiSession) {
-  return apiRequest<InvestmentPosition>("/investments/position", session);
+export function getInvestmentPosition(session: ApiSession, asOf?: string) {
+  const qs = asOf ? `?as_of=${asOf}` : "";
+  return apiRequest<InvestmentPosition>(`/investments/position${qs}`, session);
 }
 
 export function getInvestmentCustodies(session: ApiSession) {

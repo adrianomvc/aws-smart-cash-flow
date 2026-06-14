@@ -137,10 +137,11 @@ def list_investment_classes() -> dict:
 
 @router.get("/investments/position")
 def investments_position(
+    as_of: date | None = None,
     auth: AuthContext = AuthDependency,
     db: Session = DbDependency,
 ) -> dict:
-    return position_summary(db, auth.workspace_id)
+    return position_summary(db, auth.workspace_id, as_of=as_of)
 
 
 # --------------------------------------------------------------------------- #

@@ -589,7 +589,7 @@ function ProtectedApp({
       {page === "goals" ? <GoalsPage session={session} period={dashboardPeriod} setPeriod={setDashboardPeriod} /> : null}
       {page === "planning" ? <PlanningPage session={session} onNavigate={onNavigate} /> : null}
       {page === "scenarios" ? <ScenariosPage session={session} onNavigate={onNavigate} /> : null}
-      {page === "investments" ? <InvestmentsPage session={session} /> : null}
+      {page === "investments" ? <InvestmentsPage session={session} period={dashboardPeriod} /> : null}
       {page === "reports" ? <ReportsPage onNavigate={onNavigate} session={session} /> : null}
       {page === "imports" ? <ImportsPage drilldown={importDrilldown} onOpenTransactions={onOpenTransactions} session={session} /> : null}
       {page === "transactions" ? <TransactionsPage drilldown={transactionDrilldown} session={session} /> : null}
@@ -828,7 +828,7 @@ function Topbar({
       </div>
       <div className="h-spacer" />
       <div className="h-tools">
-        {!(["settings", "rules", "review", "transactions", "planning", "scenarios", "investments"] as Page[]).includes(page) ? (
+        {!(["settings", "rules", "review", "transactions", "planning", "scenarios"] as Page[]).includes(page) ? (
           <DashboardPeriodPicker period={dashboardPeriod} onChange={setDashboardPeriod} />
         ) : null}
 

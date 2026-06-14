@@ -73,7 +73,9 @@ class _Series:
         return bool(self.points)
 
 
-def position_summary(db: Session, workspace_id: str) -> dict:
+def position_summary(
+    db: Session, workspace_id: str, as_of: date | None = None
+) -> dict:
     custodies = list(
         db.scalars(
             select(InvestmentCustody)
@@ -108,11 +110,26 @@ def position_summary(db: Session, workspace_id: str) -> dict:
     custody_by_id = {c.id: c for c in custodies}
 
     today = date.today()
-    month_ago = today - timedelta(days=30)
-    year_ago = today - timedelta(days=365)
-    ytd_start = date(today.year, 1, 1)
+    # ref_date is "now" for the position; when a past month is selected the
+    # position is reconstructed as of that date from the value snapshots.
+    ref_date = as_of or today
+    month_ago = ref_date - timedelta(days=30)
+    year_ago = ref_date - timedelta(days=365)
+    ytd_start = date(ref_date.year, 1, 1)
 
-    total = sum((a.current_value for a in assets), Decimal("0"))
+    def ev(a: InvestmentAsset) -> Decimal:
+        """Effective value of a position as of ref_date."""
+        s = series[a.id]
+        if ref_date >= today:
+            return a.current_value
+        at = s.value_at(ref_date)
+        if at is not None:
+            return at
+        # No snapshot up to ref_date: assume held flat if the asset has no
+        # history at all, otherwise it had no recorded value yet.
+        return a.current_value if not s.has_history else Decimal("0")
+
+    total = sum((ev(a) for a in assets), Decimal("0"))
     total_contrib = sum((a.contributed for a in assets), Decimal("0"))
     total_gain = total - total_contrib
 
@@ -123,7 +140,7 @@ def position_summary(db: Session, workspace_id: str) -> dict:
             prev = series[a.id].value_at(ref)
             if prev is not None and prev > 0:
                 prev_sum += prev
-                now_sum += a.current_value
+                now_sum += ev(a)
         return _pct(now_sum, prev_sum)
 
     month_return = group_return(assets, month_ago)
@@ -136,7 +153,7 @@ def position_summary(db: Session, workspace_id: str) -> dict:
         by_class.setdefault(a.asset_class, []).append(a)
     classes: list[dict] = []
     for class_id, group in by_class.items():
-        value = sum((a.current_value for a in group), Decimal("0"))
+        value = sum((ev(a) for a in group), Decimal("0"))
         if value <= 0:
             continue
         meta = class_meta(class_id)
@@ -161,16 +178,16 @@ def position_summary(db: Session, workspace_id: str) -> dict:
     accounts: list[dict] = []
     for c in custodies:
         group = assets_by_custody.get(c.id, [])
-        value = sum((a.current_value for a in group), Decimal("0"))
+        value = sum((ev(a) for a in group), Decimal("0"))
         prev = Decimal("0")
         for a in group:
             at = series[a.id].value_at(month_ago)
-            prev += at if at is not None else a.current_value
+            prev += at if at is not None else ev(a)
         contrib = sum((a.contributed for a in group), Decimal("0"))
         cls_breakdown: dict[str, Decimal] = {}
         for a in group:
             cls_breakdown[a.asset_class] = (
-                cls_breakdown.get(a.asset_class, Decimal("0")) + a.current_value
+                cls_breakdown.get(a.asset_class, Decimal("0")) + ev(a)
             )
         cls_sorted = sorted(cls_breakdown.items(), key=lambda kv: kv[1], reverse=True)
         accounts.append(
@@ -195,6 +212,7 @@ def position_summary(db: Session, workspace_id: str) -> dict:
     asset_rows: list[dict] = []
     for a in assets:
         s = series[a.id]
+        value = ev(a)
         prev_m = s.value_at(month_ago)
         prev_y = s.value_at(ytd_start)
         custody = custody_by_id.get(a.custody_id)
@@ -205,22 +223,21 @@ def position_summary(db: Session, workspace_id: str) -> dict:
                 "asset_class": a.asset_class,
                 "custody_id": a.custody_id,
                 "account": custody.name if custody is not None else "",
-                "value": a.current_value,
+                "value": value,
                 "contributed": a.contributed,
                 "risk": a.risk,
                 "detail": a.detail,
-                "month_return": _pct(a.current_value, prev_m) if prev_m is not None else 0.0,
-                "ytd_return": _pct(a.current_value, prev_y) if prev_y is not None else 0.0,
+                "month_return": _pct(value, prev_m) if prev_m is not None else 0.0,
+                "ytd_return": _pct(value, prev_y) if prev_y is not None else 0.0,
             }
         )
     asset_rows.sort(key=lambda r: r["value"], reverse=True)
 
     # ---- 12-month evolution ----
     history: list[dict] = []
-    year, month = today.year, today.month
     months: list[tuple[int, int]] = []
     for back in range(11, -1, -1):
-        months.append(_shift_month(year, month, -back))
+        months.append(_shift_month(ref_date.year, ref_date.month, -back))
     for i, (yy, mm) in enumerate(months):
         is_current = i == len(months) - 1
         if is_current:

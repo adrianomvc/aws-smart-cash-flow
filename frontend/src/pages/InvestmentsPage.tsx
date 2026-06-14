@@ -27,6 +27,7 @@ import type {
   InvestmentCustodyRead,
   InvestmentPositionAccount,
 } from "../lib/api";
+import type { PeriodState } from "../types";
 
 // --------------------------------------------------------------------------- //
 // Icons
@@ -105,9 +106,12 @@ function relativeTime(iso: string): string {
 // --------------------------------------------------------------------------- //
 // Page
 // --------------------------------------------------------------------------- //
-export function InvestmentsPage({ session }: { session: ApiSession }) {
+export function InvestmentsPage({ session, period }: { session: ApiSession; period?: PeriodState }) {
   const queryClient = useQueryClient();
-  const positionQ = useQuery({ queryKey: ["inv-position", session.token], queryFn: () => getInvestmentPosition(session) });
+  // The position is reconstructed as of the end of the selected month (the
+  // topbar month filter); an open current month uses the live value.
+  const asOf = period && period.periodPreset !== "all" ? period.dateTo : undefined;
+  const positionQ = useQuery({ queryKey: ["inv-position", session.token, asOf], queryFn: () => getInvestmentPosition(session, asOf) });
   const classesQ = useQuery({ queryKey: ["inv-classes"], queryFn: () => getInvestmentClasses(session) });
   const custodiesQ = useQuery({ queryKey: ["inv-custodies", session.token], queryFn: () => getInvestmentCustodies(session) });
   const assetsQ = useQuery({ queryKey: ["inv-assets", session.token], queryFn: () => getInvestmentAssets(session) });
