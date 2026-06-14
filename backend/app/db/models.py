@@ -57,7 +57,10 @@ class WorkspaceMember(Base):
     __tablename__ = "workspace_members"
     __table_args__ = (
         UniqueConstraint("workspace_id", "user_id", name="uq_workspace_member"),
-        CheckConstraint("role in ('owner', 'admin', 'member')", name="ck_workspace_member_role"),
+        CheckConstraint(
+            "role in ('owner', 'admin', 'member', 'viewer')",
+            name="ck_workspace_member_role",
+        ),
     )
 
     id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
@@ -66,6 +69,31 @@ class WorkspaceMember(Base):
     )
     user_id: Mapped[str] = mapped_column(UUID_TYPE, ForeignKey("users.id"), nullable=False)
     role: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class WorkspaceInvite(Base):
+    """A pending invitation for someone to join a workspace with a given role."""
+
+    __tablename__ = "workspace_invites"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "email", name="uq_workspace_invite"),
+        CheckConstraint(
+            "role in ('admin', 'member', 'viewer')", name="ck_workspace_invite_role"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), nullable=False
+    )
+    email: Mapped[str] = mapped_column(Text, nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending", server_default="pending"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
