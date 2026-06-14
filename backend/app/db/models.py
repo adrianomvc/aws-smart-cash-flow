@@ -710,3 +710,31 @@ class InvestmentSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class WealthItem(Base):
+    """A manually maintained net-worth line: an asset (property, vehicle,
+    account) or a liability (loan, debt). The investment portfolio is added
+    automatically and is not stored here."""
+
+    __tablename__ = "wealth_items"
+    __table_args__ = (
+        CheckConstraint("kind in ('asset', 'liability')", name="ck_wealth_item_kind"),
+        CheckConstraint("value >= 0", name="ck_wealth_item_value_non_negative"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str | None] = mapped_column(String(24))
+    value: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

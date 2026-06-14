@@ -16,6 +16,7 @@ from app.api.routes import (
     preferences,
     reports,
     transactions,
+    wealth,
     workspaces,
 )
 from app.core.config import settings
@@ -46,6 +47,7 @@ def create_app() -> FastAPI:
     app.include_router(planning.router, prefix="/v1")
     app.include_router(preferences.router, prefix="/v1")
     app.include_router(reports.router, prefix="/v1")
+    app.include_router(wealth.router, prefix="/v1")
     app.include_router(workspaces.router, prefix="/v1")
 
     @app.on_event("startup")
