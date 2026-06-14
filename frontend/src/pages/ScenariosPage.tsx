@@ -2,13 +2,22 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Check, CheckCircle2, ChevronRight, Edit3, Flag, Loader2, Minus, RefreshCw, SlidersHorizontal, X, XCircle, Zap } from "lucide-react";
 
-import { getDashboardSummary, getPlanningProjection } from "../lib/api";
+import { getDashboardSummary, getGoals, getPlanningProjection } from "../lib/api";
 import { money } from "../lib/utils";
 import { PageState } from "../components/ui";
 import type { ApiSession } from "../lib/api";
 import type { Page } from "../types";
 
 const num = (v: number, dec = 0) => v.toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
+
+const MONTHS_SHORT = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+function etaLabel(months: number): string {
+  if (!Number.isFinite(months) || months <= 0) return "—";
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + Math.ceil(months));
+  return `${MONTHS_SHORT[d.getMonth()]}/${String(d.getFullYear()).slice(2)}`;
+}
 
 function SliderRow({ label, value, min, max, step, fmt, onChange, accent = "var(--acc)" }: {
   label: string; value: number; min: number; max: number; step: number; fmt: (v: number) => string; onChange: (v: number) => void; accent?: string;
@@ -40,6 +49,7 @@ function ImpactRow({ label, before, after, fmt }: { label: string; before: numbe
 export function ScenariosPage({ session, onNavigate }: { session: ApiSession; onNavigate: (page: Page) => void }) {
   const summaryQ = useQuery({ queryKey: ["dash-summary", session.token, "scenarios"], queryFn: () => getDashboardSummary(session, "") });
   const projQ = useQuery({ queryKey: ["planning-projection", session.token, 90], queryFn: () => getPlanningProjection(session, 90) });
+  const goalsQ = useQuery({ queryKey: ["goals", session.token, "scenarios"], queryFn: () => getGoals(session) });
 
   const [purchase, setPurchase] = useState(0);
   const [installments, setInstallments] = useState(1);
@@ -86,6 +96,35 @@ export function ScenariosPage({ session, onNavigate }: { session: ApiSession; on
   const newRunway = monthlyExpense > 0 ? runway + (variableSaving - newSub - incomeLoss) / monthlyExpense : runway;
   const newSaving = savingRate + (monthlyImpact / Math.max(recIncome, 1)) * 100;
 
+  // Commitment of income: recurring outflows / recurring income. A parcela or
+  // new subscription raises the committed monthly amount.
+  const recExpense = Number(proj.recurring_expense);
+  const committedDelta = monthlyPurchase + newSub;
+  const commitment = recIncome > 0 ? (recExpense / recIncome) * 100 : 0;
+  const newCommitment = recIncome > 0 ? ((recExpense + committedDelta) / recIncome) * 100 : 0;
+
+  // Goals impact: the monthly surplus funds active goals in priority order
+  // (waterfall). Show the conclusion forecast before vs after the scenario.
+  const goals = (goalsQ.data?.items ?? [])
+    .filter(g => g.status === "active")
+    .map(g => ({ name: g.name, color: g.color, remaining: Math.max(0, Number(g.target_amount) - Number(g.current_amount)), priority: g.priority }))
+    .filter(g => g.remaining > 0.01)
+    .sort((a, b) => a.priority - b.priority || a.remaining - b.remaining)
+    .slice(0, 3);
+  const surplusBefore = Math.max(0, monthlyNet);
+  const surplusAfter = Math.max(0, newMonthlyNet);
+  let cumRemain = 0;
+  const goalRows = goals.map(g => {
+    cumRemain += g.remaining;
+    return {
+      name: g.name,
+      color: g.color,
+      remaining: g.remaining,
+      etaBefore: surplusBefore > 0 ? cumRemain / surplusBefore : Infinity,
+      etaAfter: surplusAfter > 0 ? cumRemain / surplusAfter : Infinity,
+    };
+  });
+
   let verdict: "seguro" | "atencao" | "nao";
   if (newMinProj > reserve && newMonthlyNet > 0) verdict = "seguro";
   else if (newMinProj > 0) verdict = "atencao";
@@ -115,8 +154,6 @@ export function ScenariosPage({ session, onNavigate }: { session: ApiSession; on
     { label: "E se a receita cair 20%?", fn: () => { reset(); setIncomeDrop(20); } },
     { label: "Nova assinatura R$ 60", fn: () => { reset(); setNewSub(60); } },
   ];
-
-  const goalsDays = Math.round(Math.abs(monthlyImpact) / 1200 * 30);
 
   return (
     <div className="canvas stg">
@@ -195,19 +232,50 @@ export function ScenariosPage({ session, onNavigate }: { session: ApiSession; on
               <ImpactRow label="Resultado do mês" before={monthlyNet} after={newMonthlyNet} fmt={money} />
               <ImpactRow label="Runway financeiro" before={runway} after={newRunway} fmt={(x) => `${num(x, 1)} meses`} />
               <ImpactRow label="Saving rate" before={savingRate} after={newSaving} fmt={(x) => `${num(x, 1)}%`} />
+              <ImpactRow label="Comprometimento da renda" before={-commitment} after={-newCommitment} fmt={(x) => `${num(Math.abs(x), 1)}%`} />
             </div>
           </div>
 
           <div className="card card-pad">
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: goalRows.length ? 12 : 0 }}>
               <Flag size={16} style={{ color: "var(--ink-3)" }} />
               <span style={{ fontSize: 13, fontWeight: 600 }}>Impacto nas metas</span>
-              <span style={{ marginLeft: "auto", fontSize: 12.5, color: monthlyImpact >= 0 ? "var(--pos)" : "var(--neg)", fontWeight: 600 }}>
-                {monthlyImpact === 0 ? "Sem mudança" : monthlyImpact > 0 ? `Acelera reserva em ${goalsDays} dias` : `Atrasa reserva em ${goalsDays} dias`}
+              <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--ink-3)" }}>
+                sobra/mês {money(surplusBefore)}{surplusAfter !== surplusBefore ? ` → ${money(surplusAfter)}` : ""}
               </span>
             </div>
+
+            {goalRows.length === 0 ? (
+              <p style={{ fontSize: 12.5, color: "var(--ink-3)", margin: 0 }}>
+                {surplusAfter <= 0 ? "Sem sobra mensal para aportar nas metas neste cenário." : "Nenhuma meta ativa em andamento."}
+              </p>
+            ) : (
+              <div style={{ display: "grid", gap: 11 }}>
+                {goalRows.map((g, i) => {
+                  const labBefore = etaLabel(g.etaBefore);
+                  const labAfter = etaLabel(g.etaAfter);
+                  const changed = labBefore !== labAfter;
+                  const later = g.etaAfter > g.etaBefore;
+                  return (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                      <span className="catdot" style={{ background: g.color || "var(--acc)", width: 8, height: 8, flex: "none" }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--ink-1)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</div>
+                        <div style={{ fontSize: 11, color: "var(--ink-3)" }}>faltam {money(g.remaining)}</div>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 5, flex: "none" }}>
+                        <span className="mono" style={{ fontSize: 12, color: changed ? "var(--ink-faint)" : "var(--ink-2)", textDecoration: changed ? "line-through" : "none" }}>{labBefore}</span>
+                        {changed && <ChevronRight size={12} style={{ color: "var(--ink-faint)" }} />}
+                        {changed && <span className="mono" style={{ fontSize: 12.5, fontWeight: 700, color: later ? "var(--neg)" : "var(--pos)" }}>{labAfter}</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             <button className="btn btn-ghost btn-sm" style={{ marginTop: 12, width: "100%" }} onClick={() => onNavigate("goals")}>
-              Ver metas afetadas <ChevronRight size={14} />
+              Gerenciar metas <ChevronRight size={14} />
             </button>
           </div>
         </div>
