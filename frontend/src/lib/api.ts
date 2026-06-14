@@ -1209,6 +1209,39 @@ export function getActiveAccounts(session: ApiSession) {
 }
 
 // --------------------------------------------------------------------------- //
+// Insights (explainable, rule-based)
+// --------------------------------------------------------------------------- //
+export type InsightItem = {
+  type: "pos" | "neg" | "warn" | "info";
+  title: string;
+  impact: string;
+  saving: string;
+  confidence: "Alta" | "Média" | "Baixa";
+  reason: string;
+  data: string;
+  action: string;
+  action_target: string;
+  action_param: string | null;
+};
+
+export type InsightsResponse = {
+  workspace_id: string;
+  date_from: string | null;
+  date_to: string | null;
+  kpis: {
+    insights_count: number;
+    potential_savings: string;
+    risk_alerts: number;
+    data_quality_pct: number | null;
+  };
+  items: InsightItem[];
+};
+
+export function getInsights(session: ApiSession, query = "") {
+  return apiRequest<InsightsResponse>(`/insights${query}`, session);
+}
+
+// --------------------------------------------------------------------------- //
 // Investments (position view)
 // --------------------------------------------------------------------------- //
 export type InvestmentClassRef = { id: string; label: string; color: string };

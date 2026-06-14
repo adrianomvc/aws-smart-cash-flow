@@ -1,0 +1,151 @@
+import { useQuery } from "@tanstack/react-query";
+import {
+  AlertTriangle, CheckCircle2, ChevronRight, Database, Info, Loader2, Lightbulb, Sparkles, TrendingUp,
+} from "lucide-react";
+
+import { getInsights } from "../lib/api";
+import { money } from "../lib/utils";
+import { PageState } from "../components/ui";
+import type { ApiSession, InsightItem } from "../lib/api";
+import type { Page, PeriodState, TransactionDrilldown } from "../types";
+
+const TONE: Record<string, { Icon: typeof Info; color: string; soft: string }> = {
+  pos: { Icon: CheckCircle2, color: "var(--pos)", soft: "var(--pos-soft)" },
+  neg: { Icon: AlertTriangle, color: "var(--neg)", soft: "var(--neg-soft)" },
+  warn: { Icon: AlertTriangle, color: "var(--warn)", soft: "var(--warn-soft)" },
+  info: { Icon: Lightbulb, color: "var(--info)", soft: "var(--info-soft)" },
+};
+const CONF_BADGE: Record<string, string> = { Alta: "b-pos", "Média": "b-warn", Baixa: "b-neutral" };
+const num1 = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+export function InsightsPage({ session, period, onNavigate, onOpenTransactions }: {
+  session: ApiSession;
+  period?: PeriodState;
+  onNavigate: (page: Page) => void;
+  onOpenTransactions: (drilldown?: TransactionDrilldown) => void;
+}) {
+  const query = period && period.periodPreset !== "all"
+    ? `?date_from=${period.dateFrom}&date_to=${period.dateTo}`
+    : "";
+  const insightsQ = useQuery({
+    queryKey: ["insights", session.token, query],
+    queryFn: () => getInsights(session, query),
+  });
+
+  if (insightsQ.isLoading) {
+    return <PageState icon={Loader2} title="Analisando seus dados" description="Gerando insights a partir das suas transações reais." spin />;
+  }
+  const data = insightsQ.data;
+  if (!data) {
+    return <PageState icon={AlertTriangle} title="Insights indisponíveis" description="Confira a API local e tente novamente." />;
+  }
+
+  const { kpis, items } = data;
+
+  function act(it: InsightItem) {
+    if (it.action_target === "transactions" && it.action_param) {
+      onOpenTransactions({ categoryId: it.action_param });
+    } else {
+      onNavigate(it.action_target as Page);
+    }
+  }
+
+  return (
+    <div className="canvas stg">
+      {/* Header */}
+      <div style={{ marginBottom: 16 }}>
+        <div className="eyebrow" style={{ marginBottom: 4 }}>Crescimento</div>
+        <h2 className="section-title"><Sparkles size={18} /> Insights IA</h2>
+        <p className="section-sub">Recomendações acionáveis e explicáveis, a partir dos dados do seu workspace. Nada de mágica — sempre mostramos o porquê e os dados usados.</p>
+      </div>
+
+      {/* KPIs */}
+      <div className="kpi-deck" style={{ marginBottom: 16 }}>
+        <div className="kpi">
+          <div className="kpi-top"><span className="kpi-ic"><Sparkles size={16} /></span><span className="kpi-label">Insights ativos</span></div>
+          <div className="kpi-val">{kpis.insights_count}</div>
+          <div className="kpi-sub">no período analisado</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-top"><span className="kpi-ic" style={{ background: "var(--pos-soft)", color: "var(--pos)" }}><TrendingUp size={16} /></span><span className="kpi-label">Economia potencial</span></div>
+          <div className="kpi-val" style={{ fontSize: 18 }}>{money(kpis.potential_savings)}</div>
+          <div className="kpi-sub">identificada / mês</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-top"><span className="kpi-ic" style={{ background: kpis.risk_alerts > 0 ? "var(--neg-soft)" : "var(--pos-soft)", color: kpis.risk_alerts > 0 ? "var(--neg)" : "var(--pos)" }}><AlertTriangle size={16} /></span><span className="kpi-label">Alertas de risco</span></div>
+          <div className="kpi-val">{kpis.risk_alerts}</div>
+          <div className="kpi-sub">{kpis.risk_alerts > 0 ? "exigem atenção" : "nenhum no momento"}</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-top"><span className="kpi-ic" style={{ background: "var(--acc-soft)", color: "var(--acc-ink)" }}><Database size={16} /></span><span className="kpi-label">Qualidade dos dados</span></div>
+          <div className="kpi-val">{kpis.data_quality_pct != null ? `${num1(kpis.data_quality_pct)}%` : "—"}</div>
+          <div className="kpi-sub">transações categorizadas</div>
+        </div>
+      </div>
+
+      {/* Insight cards */}
+      {items.length === 0 ? (
+        <div className="card card-pad" style={{ textAlign: "center", padding: "44px 24px" }}>
+          <div className="state-ic" style={{ margin: "0 auto 14px" }}><Sparkles size={24} /></div>
+          <h4 style={{ margin: "0 0 6px" }}>Sem insights neste período</h4>
+          <p className="t-sub" style={{ maxWidth: 420, margin: "0 auto" }}>
+            Nada que exija atenção agora. Conforme novas transações entram, geramos recomendações explicáveis aqui.
+          </p>
+        </div>
+      ) : (
+        <div className="grid cols-2">
+          {items.map((it, i) => {
+            const tone = TONE[it.type] ?? TONE.info;
+            const imp = Number(it.impact);
+            const sav = Number(it.saving);
+            const showImpact = imp !== 0;
+            const showSaving = !showImpact && sav > 0;
+            return (
+              <div key={i} className="card card-pad">
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                  <span style={{ width: 36, height: 36, flex: "none", borderRadius: 10, display: "grid", placeItems: "center", background: tone.soft, color: tone.color }}>
+                    <tone.Icon size={18} />
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14 }}>{it.title}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+                      {showImpact && (
+                        <span className="mono" style={{ fontWeight: 700, color: imp >= 0 ? "var(--acc)" : "var(--neg)" }}>
+                          Impacto: {imp >= 0 ? "+" : "−"}{money(Math.abs(imp))}
+                        </span>
+                      )}
+                      {showSaving && (
+                        <span className="mono" style={{ fontWeight: 700, color: "var(--acc)" }}>
+                          Economia: +{money(sav)}
+                        </span>
+                      )}
+                      <span className={"badge " + (CONF_BADGE[it.confidence] ?? "b-neutral")}>Confiança: {it.confidence}</span>
+                    </div>
+                  </div>
+                </div>
+                <p style={{ fontSize: 13, color: "var(--ink-2)", lineHeight: 1.55, margin: "12px 0" }}>{it.reason}</p>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 12, borderTop: "1px solid var(--line)" }}>
+                  <span className="mono t-sub" style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    <Database size={13} /> Dados: {it.data}
+                  </span>
+                  <button className="btn btn-ghost btn-sm" style={{ marginLeft: "auto" }} onClick={() => act(it)}>
+                    {it.action} <ChevronRight size={13} />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* How it works */}
+      <div className="alert info" style={{ marginTop: 16 }}>
+        <span className="alert-ic"><Info size={17} /></span>
+        <div>
+          <div className="a-ttl">Como a IA funciona aqui</div>
+          <div className="a-txt">Os insights são gerados a partir das suas transações reais e regras explicáveis. Quando os dados são insuficientes, dizemos claramente — e nunca inventamos números nem prometemos retorno financeiro.</div>
+        </div>
+      </div>
+    </div>
+  );
+}

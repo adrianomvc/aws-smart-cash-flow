@@ -31,6 +31,7 @@ export type Page =
   | "planning"
   | "scenarios"
   | "investments"
+  | "insights"
   | "reports"
   | "imports"
   | "categories"
@@ -570,6 +571,10 @@ export function pageMeta(page: Page) {
     investments: {
       description: "Visão de posição da carteira: patrimônio, alocação por classe e custódias.",
       title: "Investimentos",
+    },
+    insights: {
+      description: "Recomendações acionáveis e explicáveis a partir dos seus dados.",
+      title: "Insights IA",
     },
     reports: {
       description: "Consolide leituras financeiras e prepare exportações futuras.",
