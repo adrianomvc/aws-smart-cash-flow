@@ -22,13 +22,26 @@ function etaLabel(months: number): string {
 function SliderRow({ label, value, min, max, step, fmt, onChange, accent = "var(--acc)" }: {
   label: string; value: number; min: number; max: number; step: number; fmt: (v: number) => string; onChange: (v: number) => void; accent?: string;
 }) {
+  const pct = max > min ? ((value - min) / (max - min)) * 100 : 0;
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 6 }}>
         <span style={{ color: "var(--ink-2)" }}>{label}</span>
         <span className="mono" style={{ fontWeight: 700, color: value > 0 ? accent : "var(--ink-3)" }}>{fmt(value)}</span>
       </div>
-      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} style={{ width: "100%", accentColor: accent, cursor: "pointer" }} />
+      <input
+        type="range"
+        className="scn-rng"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        style={{
+          color: accent,
+          background: `linear-gradient(to right, ${accent} 0%, ${accent} ${pct}%, var(--bg-sunken) ${pct}%, var(--bg-sunken) 100%)`,
+        }}
+      />
     </div>
   );
 }
