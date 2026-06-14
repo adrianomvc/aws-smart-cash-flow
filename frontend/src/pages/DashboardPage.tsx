@@ -1332,6 +1332,45 @@ export function DashboardPage({
   // Empty state — nenhuma transação ainda
   const isEmpty = !summaryQ.isLoading && summary && parseFloat(summary.transaction_count as unknown as string || "0") === 0 && (summary as unknown as { transaction_count: number }).transaction_count === 0;
 
+  // Onboarding for a brand-new account with no movement yet.
+  if (isEmpty) {
+    return (
+      <div className="canvas stg">
+        <div style={{ marginBottom: 18 }}>
+          <h1 style={{ margin: 0, fontFamily: "var(--font-display)", fontSize: 24, fontWeight: 600, letterSpacing: "-.4px" }}>
+            {greet}, {firstName} 👋
+          </h1>
+          <p style={{ margin: "4px 0 0", color: "var(--ink-3)", fontSize: 13.5 }}>Vamos preparar seu painel — leva menos de um minuto.</p>
+        </div>
+        <div className="card card-pad" style={{ padding: "40px 28px", textAlign: "center", maxWidth: 760, margin: "0 auto" }}>
+          <div className="state-ic" style={{ margin: "0 auto 16px", width: 56, height: 56 }}><DIcon name="arrowDR" size={26} /></div>
+          <h2 style={{ margin: "0 0 8px", fontFamily: "var(--font-display)", fontSize: 22, fontWeight: 700 }}>Comece importando seus extratos</h2>
+          <p className="t-sub" style={{ maxWidth: 500, margin: "0 auto 24px", lineHeight: 1.55 }}>
+            O SmartCashFlow monta seu fluxo de caixa, indicadores e projeções a partir dos seus extratos (OFX, CSV ou Excel). Importe o primeiro arquivo e o painel se preenche sozinho.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, textAlign: "left", marginBottom: 26 }}>
+            {[
+              { n: "1", t: "Importe", d: "Suba o extrato do banco ou a fatura do cartão." },
+              { n: "2", t: "Categorize", d: "Revise as classificações automáticas." },
+              { n: "3", t: "Acompanhe", d: "Veja saúde financeira, metas e projeções." },
+            ].map((s) => (
+              <div key={s.n} style={{ background: "var(--card-2)", border: "1px solid var(--line)", borderRadius: 12, padding: "14px" }}>
+                <div style={{ width: 26, height: 26, borderRadius: "50%", background: "var(--acc-soft)", color: "var(--acc)", display: "grid", placeItems: "center", fontWeight: 700, fontSize: 13, marginBottom: 8 }}>{s.n}</div>
+                <div style={{ fontWeight: 700, fontSize: 13.5 }}>{s.t}</div>
+                <div className="t-sub" style={{ marginTop: 2, lineHeight: 1.4 }}>{s.d}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+            <button className="btn btn-primary" onClick={() => onOpenImports()}><DIcon name="arrowDR" size={15} /> Importar extrato</button>
+            <button className="btn btn-ghost" onClick={() => onNavigate("cards")}><DIcon name="card" size={15} /> Cadastrar cartão</button>
+            <button className="btn btn-ghost" onClick={() => onNavigate("goals")}><DIcon name="flag" size={15} /> Definir uma meta</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="canvas stg">
       {/* Saudação */}
@@ -1353,22 +1392,6 @@ export function DashboardPage({
           </button>
         </div>
       </div>
-
-      {/* Empty state — sem dados */}
-      {isEmpty && (
-        <div className="alert info" style={{ marginBottom: 16 }}>
-          <div className="alert-ic"><DIcon name="db" size={16} /></div>
-          <div>
-            <div className="a-ttl">Nenhuma transação importada</div>
-            <div className="a-txt">
-              Importe seus extratos bancários para ver os indicadores do dashboard.{" "}
-              <button className="btn btn-quiet btn-sm" onClick={() => onOpenImports()}>
-                Ir para Importações <ChevronRight size={12} />
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Story Strip */}
       {summary && <><StoryStrip summary={summary} /><div style={{ height: 16 }} /></>}
