@@ -28,6 +28,10 @@ import {
 } from "./lib/api";
 import { pageMeta, periodRange } from "./lib/utils";
 import smartCashFlowLogo from "./assets/logo-smartcash-flow-main.png";
+import {
+  cognitoConfigured, cognitoConfirmChallenge, cognitoConfirmReset, cognitoConfirmSignUp,
+  cognitoResetPassword, cognitoSignIn, cognitoSignOut, cognitoSignUp, getCognitoIdToken,
+} from "./lib/cognito";
 import type { ImportDrilldown, PeriodState, TransactionDrilldown, TransactionPeriodPreset } from "./types";
 import type { Page } from "./types";
 import { PageState } from "./components/ui";
@@ -234,9 +238,21 @@ function App() {
   const [transactionDrilldown, setTransactionDrilldown] = useState<TransactionDrilldown>(null);
   const [importDrilldown, setImportDrilldown] = useState<ImportDrilldown>(null);
 
+  // On reload with a Cognito session, make sure Amplify still holds valid tokens;
+  // otherwise drop the stored session (it will be refreshed per request via the
+  // registered token provider when valid).
+  useEffect(() => {
+    if (session?.mode === "cognito") {
+      void getCognitoIdToken().then((token) => { if (!token) void handleSession(null); });
+    }
+  }, []);
+
   async function handleSession(nextSession: ApiSession | null) {
     if (!nextSession && session?.mode === "supabase" && supabase) {
       await supabase.auth.signOut();
+    }
+    if (!nextSession && session?.mode === "cognito") {
+      await cognitoSignOut();
     }
     setSession(nextSession);
     if (nextSession) {
@@ -330,102 +346,138 @@ function App() {
 // LoginScreen
 // ---------------------------------------------------------------------------
 
+type LoginStep = "login" | "signup" | "confirm_signup" | "mfa" | "mfa_setup" | "new_password" | "reset" | "confirm_reset";
+
 function LoginScreen({ onLogin }: { onLogin: (session: ApiSession) => void }) {
-  const [isLogin, setIsLogin] = useState(true);
+  const [step, setStep] = useState<LoginStep>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [code, setCode] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [mfaSecret, setMfaSecret] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function handleAuth(event: FormEvent) {
-    event.preventDefault();
-    setError(null);
-    setSuccess(null);
-    setLoading(true);
-    try {
-      if (isLogin) {
-        const response = await apiLogin({ email, password });
-        onLogin({ token: response.access_token, mode: "supabase" });
-      } else {
-        await apiSignup({ email, password, display_name: displayName || undefined });
-        setSuccess("Conta criada com sucesso! Faça login para continuar.");
-        setIsLogin(true);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Ocorreu um erro");
-    } finally {
-      setLoading(false);
-    }
+  function reset(next: LoginStep) { setStep(next); setError(null); setSuccess(null); setCode(""); }
+  async function run(fn: () => Promise<void>) {
+    setError(null); setSuccess(null); setLoading(true);
+    try { await fn(); }
+    catch (err) { setError(err instanceof Error ? err.message : "Ocorreu um erro"); }
+    finally { setLoading(false); }
   }
 
-  async function handlePasswordReset(event: FormEvent) {
-    event.preventDefault();
-    setError(null);
-    setSuccess(null);
-    setLoading(true);
-    try {
-      await apiResetPassword(email);
-      setSuccess("Email de recuperação enviado se a conta existir.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao enviar email de recuperação");
-    } finally {
-      setLoading(false);
-    }
+  function handleSignInResult(r: Awaited<ReturnType<typeof cognitoSignIn>>) {
+    if (r.status === "done") onLogin({ token: r.idToken, mode: "cognito" });
+    else if (r.status === "mfa") setStep("mfa");
+    else if (r.status === "mfa_setup") { setMfaSecret(r.secret); setStep("mfa_setup"); }
+    else if (r.status === "new_password") setStep("new_password");
   }
 
-  return (
+  // ----- Cognito handlers -----
+  const cognitoLogin = (e: FormEvent) => { e.preventDefault(); run(async () => handleSignInResult(await cognitoSignIn(email, password))); };
+  const cognitoChallenge = (e: FormEvent) => { e.preventDefault(); run(async () => handleSignInResult(await cognitoConfirmChallenge(step === "new_password" ? newPassword : code))); };
+  const cognitoDoSignup = (e: FormEvent) => { e.preventDefault(); run(async () => { await cognitoSignUp(email, password, displayName || undefined); setSuccess("Enviamos um código para seu e-mail."); setStep("confirm_signup"); }); };
+  const cognitoDoConfirmSignup = (e: FormEvent) => { e.preventDefault(); run(async () => { await cognitoConfirmSignUp(email, code); setSuccess("Conta confirmada! Faça login."); reset("login"); }); };
+  const cognitoDoReset = (e: FormEvent) => { e.preventDefault(); run(async () => { await cognitoResetPassword(email); setSuccess("Enviamos um código para seu e-mail."); setStep("confirm_reset"); }); };
+  const cognitoDoConfirmReset = (e: FormEvent) => { e.preventDefault(); run(async () => { await cognitoConfirmReset(email, code, newPassword); setSuccess("Senha redefinida! Faça login."); reset("login"); }); };
+
+  // ----- Legacy (supabase) handlers, used only when Cognito is not configured -----
+  const legacyAuth = (e: FormEvent) => {
+    e.preventDefault();
+    run(async () => {
+      if (step === "login") { const r = await apiLogin({ email, password }); onLogin({ token: r.access_token, mode: "supabase" }); }
+      else { await apiSignup({ email, password, display_name: displayName || undefined }); setSuccess("Conta criada! Faça login."); reset("login"); }
+    });
+  };
+  const legacyReset = (e: FormEvent) => { e.preventDefault(); run(async () => { await apiResetPassword(email); setSuccess("Email de recuperação enviado se a conta existir."); }); };
+
+  const Shell = (children: ReactNode) => (
     <main className="login-shell">
       <section className="login-panel">
         <img className="login-brand-logo" src={smartCashFlowLogo} alt="SmartCashFlow" />
         <p className="eyebrow">SmartCashFlow</p>
         <h1>Controle financeiro auditável.</h1>
-        <p className="muted">
-          Importe extratos, revise classificações e acompanhe sua saúde financeira com rastreabilidade.
-        </p>
+        <p className="muted">Importe extratos, revise classificações e acompanhe sua saúde financeira com rastreabilidade.</p>
         {error ? <div className="inline-error">{error}</div> : null}
         {success ? <div className="inline-success">{success}</div> : null}
-        <form className="login-form" onSubmit={handleAuth}>
-          <label>
-            Email
-            <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required />
-          </label>
-          <label>
-            Senha
-            <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" required minLength={6} />
-          </label>
-          {!isLogin && (
-            <label>
-              Nome (opcional)
-              <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} type="text" />
-            </label>
-          )}
-          <button className="primary-button" disabled={loading} type="submit">
-            {loading ? <Loader2 className="spin" size={16} /> : null}
-            {isLogin ? "Entrar" : "Criar conta"}
-          </button>
-        </form>
-        <div className="login-actions">
-          {supabase ? (
-            <button className="ghost-button" onClick={() => { setIsLogin(!isLogin); setError(null); setSuccess(null); }} type="button">
-              {isLogin ? "Não tem conta? Criar conta" : "Já tem conta? Entrar"}
-            </button>
-          ) : (
-            <p className="muted">Cadastro real indisponível no modo local. Use a demonstração MVP.</p>
-          )}
-          {isLogin && supabase ? (
-            <button className="ghost-button" onClick={handlePasswordReset} disabled={loading || !email}>
-              Esqueceu a senha?
-            </button>
-          ) : null}
-        </div>
+        {children}
         <button className="ghost-button full" onClick={() => onLogin({ token: "local-dev", mode: "local" })}>
-          {supabase ? "Entrar em modo local (MVP)" : "Acessar demonstração MVP"}
+          Acessar demonstração MVP (local)
         </button>
       </section>
     </main>
   );
+
+  const submitBtn = (label: string) => (
+    <button className="primary-button" disabled={loading} type="submit">
+      {loading ? <Loader2 className="spin" size={16} /> : null}{label}
+    </button>
+  );
+  const emailField = <label>Email<input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required /></label>;
+  const passwordField = (ph?: string) => <label>Senha<input value={password} onChange={(e) => setPassword(e.target.value)} type="password" required minLength={8} placeholder={ph} /></label>;
+  const codeField = <label>Código (e-mail/app)<input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" required /></label>;
+  const newPwField = <label>Nova senha<input value={newPassword} onChange={(e) => setNewPassword(e.target.value)} type="password" required minLength={8} /></label>;
+
+  // -------- Cognito UI --------
+  if (cognitoConfigured) {
+    if (step === "signup") return Shell(<>
+      <form className="login-form" onSubmit={cognitoDoSignup}>
+        {emailField}{passwordField("mín. 8 caracteres")}
+        <label>Nome (opcional)<input value={displayName} onChange={(e) => setDisplayName(e.target.value)} type="text" /></label>
+        {submitBtn("Criar conta")}
+      </form>
+      <div className="login-actions"><button className="ghost-button" type="button" onClick={() => reset("login")}>Já tem conta? Entrar</button></div>
+    </>);
+    if (step === "confirm_signup") return Shell(<>
+      <form className="login-form" onSubmit={cognitoDoConfirmSignup}>{codeField}{submitBtn("Confirmar conta")}</form>
+      <div className="login-actions"><button className="ghost-button" type="button" onClick={() => reset("login")}>Voltar</button></div>
+    </>);
+    if (step === "mfa" || step === "mfa_setup") return Shell(<>
+      {step === "mfa_setup" && (
+        <p className="muted" style={{ fontSize: 12.5 }}>Configure o 2FA: adicione esta chave no app autenticador (Google Authenticator etc.) e digite o código gerado.<br /><strong className="mono">{mfaSecret}</strong></p>
+      )}
+      <form className="login-form" onSubmit={cognitoChallenge}>{codeField}{submitBtn("Verificar")}</form>
+      <div className="login-actions"><button className="ghost-button" type="button" onClick={() => reset("login")}>Cancelar</button></div>
+    </>);
+    if (step === "new_password") return Shell(<>
+      <p className="muted" style={{ fontSize: 12.5 }}>Defina uma nova senha para concluir o primeiro acesso.</p>
+      <form className="login-form" onSubmit={cognitoChallenge}>{newPwField}{submitBtn("Definir senha")}</form>
+    </>);
+    if (step === "reset") return Shell(<>
+      <form className="login-form" onSubmit={cognitoDoReset}>{emailField}{submitBtn("Enviar código")}</form>
+      <div className="login-actions"><button className="ghost-button" type="button" onClick={() => reset("login")}>Voltar</button></div>
+    </>);
+    if (step === "confirm_reset") return Shell(<>
+      <form className="login-form" onSubmit={cognitoDoConfirmReset}>{codeField}{newPwField}{submitBtn("Redefinir senha")}</form>
+      <div className="login-actions"><button className="ghost-button" type="button" onClick={() => reset("login")}>Voltar</button></div>
+    </>);
+    return Shell(<>
+      <form className="login-form" onSubmit={cognitoLogin}>{emailField}{passwordField()}{submitBtn("Entrar")}</form>
+      <div className="login-actions">
+        <button className="ghost-button" type="button" onClick={() => reset("signup")}>Não tem conta? Criar conta</button>
+        <button className="ghost-button" type="button" onClick={() => reset("reset")} disabled={loading}>Esqueceu a senha?</button>
+      </div>
+    </>);
+  }
+
+  // -------- Legacy fallback (supabase / local only) --------
+  return Shell(<>
+    <form className="login-form" onSubmit={legacyAuth}>
+      {emailField}{passwordField()}
+      {step === "signup" && <label>Nome (opcional)<input value={displayName} onChange={(e) => setDisplayName(e.target.value)} type="text" /></label>}
+      {submitBtn(step === "login" ? "Entrar" : "Criar conta")}
+    </form>
+    <div className="login-actions">
+      {supabase ? (
+        <button className="ghost-button" type="button" onClick={() => reset(step === "login" ? "signup" : "login")}>
+          {step === "login" ? "Não tem conta? Criar conta" : "Já tem conta? Entrar"}
+        </button>
+      ) : <p className="muted">Cadastro real indisponível no modo local. Use a demonstração MVP.</p>}
+      {step === "login" && supabase ? <button className="ghost-button" onClick={legacyReset} disabled={loading || !email}>Esqueceu a senha?</button> : null}
+    </div>
+  </>);
 }
 
 // ---------------------------------------------------------------------------

@@ -663,9 +663,21 @@ type ApiOptions = {
   headers?: HeadersInit;
 };
 
+// The Cognito layer registers a provider that returns a fresh (auto-refreshed)
+// ID token, so requests never carry an expired token.
+let cognitoTokenProvider: (() => Promise<string | null>) | null = null;
+export function setCognitoTokenProvider(fn: () => Promise<string | null>) {
+  cognitoTokenProvider = fn;
+}
+
 async function apiRequest<T>(path: string, session: ApiSession, options: ApiOptions = {}): Promise<T> {
   const headers = new Headers(options.headers);
-  headers.set("Authorization", `Bearer ${session.token}`);
+  let token = session.token;
+  if (session.mode === "cognito" && cognitoTokenProvider) {
+    const fresh = await cognitoTokenProvider();
+    if (fresh) token = fresh;
+  }
+  headers.set("Authorization", `Bearer ${token}`);
 
   let body: BodyInit | undefined;
   if (options.body instanceof FormData) {
