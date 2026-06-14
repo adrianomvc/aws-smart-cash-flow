@@ -675,7 +675,7 @@ export function TransactionExplorer({
   const [keepId, setKeepId] = useState("");
   const [pageSize, setPageSize] = useState(50);
   // Tab state: all | in | out | pending
-  const [tab, setTab] = useState<"all" | "in" | "out" | "pending">("all");
+  const [tab, setTab] = useState<"all" | "in" | "out" | "pending">(initialCategoryId === "__pending__" ? "pending" : "all");
   const [accountFilter, setAccountFilter] = useState("all");
   const duplicatePageSize = 10;
   const categories = useCategories(session);
