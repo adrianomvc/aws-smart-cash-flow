@@ -32,6 +32,7 @@ export type Page =
   | "scenarios"
   | "investments"
   | "insights"
+  | "wealth"
   | "reports"
   | "imports"
   | "categories"
@@ -575,6 +576,10 @@ export function pageMeta(page: Page) {
     insights: {
       description: "Recomendações acionáveis e explicáveis a partir dos seus dados.",
       title: "Insights IA",
+    },
+    wealth: {
+      description: "Patrimônio líquido: ativos, passivos e evolução da riqueza acumulada.",
+      title: "Patrimônio",
     },
     reports: {
       description: "Consolide leituras financeiras e prepare exportações futuras.",

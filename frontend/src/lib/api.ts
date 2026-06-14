@@ -1451,3 +1451,66 @@ export function createInvestmentSnapshot(
 export function deleteInvestmentSnapshot(session: ApiSession, snapshotId: string) {
   return apiRequest<void>(`/investment-snapshots/${snapshotId}`, session, { method: "DELETE" });
 }
+
+// --------------------------------------------------------------------------- //
+// Wealth (net worth)
+// --------------------------------------------------------------------------- //
+export type WealthItemRead = {
+  id: string;
+  workspace_id: string;
+  kind: "asset" | "liability";
+  label: string;
+  category: string | null;
+  value: string;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WealthItemPayload = {
+  kind?: string;
+  label?: string;
+  value?: number | string;
+  category?: string | null;
+  note?: string | null;
+};
+
+export type WealthRow = {
+  id: string | null;
+  label: string;
+  value: string;
+  category: string | null;
+  note: string | null;
+  source: "auto" | "manual";
+};
+
+export type WealthSummary = {
+  workspace_id: string;
+  net_worth: string;
+  total_assets: string;
+  total_liabilities: string;
+  delta: string;
+  delta_pct: number;
+  assets: WealthRow[];
+  liabilities: WealthRow[];
+  history: { label: string; value: string }[];
+};
+
+export function getWealth(session: ApiSession) {
+  return apiRequest<WealthSummary>("/wealth", session);
+}
+
+export function createWealthItem(session: ApiSession, payload: WealthItemPayload) {
+  return apiRequest<WealthItemRead>("/wealth-items", session, { method: "POST", body: payload });
+}
+
+export function updateWealthItem(session: ApiSession, itemId: string, payload: WealthItemPayload) {
+  return apiRequest<WealthItemRead>(`/wealth-items/${itemId}`, session, {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
+export function deleteWealthItem(session: ApiSession, itemId: string) {
+  return apiRequest<void>(`/wealth-items/${itemId}`, session, { method: "DELETE" });
+}
