@@ -650,7 +650,7 @@ function ProtectedApp({
           workspaceName={workspace.workspace_name}
         />
       ) : null}
-      {page === "cashflow" ? <CashflowPage onNavigate={onNavigate} onOpenTransactions={onOpenTransactions} session={session} period={dashboardPeriod} setPeriod={setDashboardPeriod} /> : null}
+      {page === "cashflow" ? <CashflowPage onNavigate={onNavigate} onOpenImports={onOpenImports} onOpenTransactions={onOpenTransactions} session={session} period={dashboardPeriod} setPeriod={setDashboardPeriod} /> : null}
       {page === "calendar" ? <CalendarPage onOpenTransactions={onOpenTransactions} period={dashboardPeriod} session={session} setPeriod={setDashboardPeriod} /> : null}
       {page === "cards" ? <CardsPage onOpenTransactions={onOpenTransactions} period={dashboardPeriod} session={session} setPeriod={setDashboardPeriod} /> : null}
       {page === "budgets" ? <BudgetsPage onOpenTransactions={onOpenTransactions} period={dashboardPeriod} setPeriod={setDashboardPeriod} session={session} /> : null}

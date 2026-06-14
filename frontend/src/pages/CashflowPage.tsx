@@ -14,6 +14,7 @@ import {
   YAxis,
 } from "recharts";
 import {
+  ArrowDownUp,
   BarChart3,
   ChevronRight,
   Loader2,
@@ -41,7 +42,7 @@ import {
 } from "../lib/utils";
 import { buildDailyCashflow, buildMonthlyCashflow } from "../lib/cashflow";
 import { usePeriod } from "../hooks";
-import { EmptyInline, PageState } from "../components/ui";
+import { EmptyInline, EmptyState, PageState } from "../components/ui";
 import type {
   ApiSession,
   CategoryRankingItem,
@@ -879,12 +880,14 @@ function CashflowTooltip({
 
 export function CashflowPage({
   onNavigate,
+  onOpenImports,
   onOpenTransactions,
   session,
   period: cashflowPeriod,
   setPeriod: setCashflowPeriod,
 }: {
   onNavigate: (page: Page) => void;
+  onOpenImports?: () => void;
   onOpenTransactions: (drilldown?: TransactionDrilldown) => void;
   session: ApiSession;
   period: PeriodState;
@@ -1000,6 +1003,21 @@ export function CashflowPage({
       label: chartMode === "month" ? `Fluxo ${monthTickLabel(data.activeLabel)}` : `Fluxo ${dateLabel(data.activeLabel)}`,
       periodPreset: "custom",
     });
+  }
+
+  const isEmpty = !summary.isLoading && summary.data != null && Number(summary.data.transaction_count ?? 0) === 0;
+  if (isEmpty) {
+    return (
+      <div className="canvas stg">
+        <div style={{ marginBottom: 18 }}>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>Fluxo de caixa</div>
+          <h2 className="section-title"><ArrowDownUp size={18} /> Fluxo de caixa</h2>
+        </div>
+        <EmptyState icon={ArrowDownUp} title="Comece importando seus extratos"
+          description="O SmartCashFlow monta seu fluxo de caixa, indicadores e projeções a partir dos seus extratos (OFX, CSV ou Excel). Importe o primeiro arquivo e o painel se preenche sozinho."
+          actionLabel="Importar extrato" onAction={() => (onOpenImports ? onOpenImports() : onNavigate("dashboard"))} />
+      </div>
+    );
   }
 
   return (
