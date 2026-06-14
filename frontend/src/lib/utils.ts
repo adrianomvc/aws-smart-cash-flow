@@ -30,6 +30,7 @@ export type Page =
   | "goals"
   | "planning"
   | "scenarios"
+  | "investments"
   | "reports"
   | "imports"
   | "categories"
@@ -565,6 +566,10 @@ export function pageMeta(page: Page) {
     scenarios: {
       description: "Simule decisões e veja o impacto no saldo, runway e metas antes de agir.",
       title: "Simulador de cenários",
+    },
+    investments: {
+      description: "Visão de posição da carteira: patrimônio, alocação por classe e custódias.",
+      title: "Investimentos",
     },
     reports: {
       description: "Consolide leituras financeiras e prepare exportações futuras.",

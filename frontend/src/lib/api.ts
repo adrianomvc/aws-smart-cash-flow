@@ -1207,3 +1207,212 @@ export async function resetPassword(email: string) {
 export function getActiveAccounts(session: ApiSession) {
   return apiRequest<{ items: ActiveAccountItem[]; total: number }>("/accounts/active", session);
 }
+
+// --------------------------------------------------------------------------- //
+// Investments (position view)
+// --------------------------------------------------------------------------- //
+export type InvestmentClassRef = { id: string; label: string; color: string };
+
+export type InvestmentCustodyRead = {
+  id: string;
+  workspace_id: string;
+  name: string;
+  kind: string | null;
+  account_type: string;
+  brand: string | null;
+  color: string | null;
+  sync_mode: string | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type InvestmentCustodyPayload = {
+  name?: string;
+  kind?: string | null;
+  account_type?: string;
+  brand?: string | null;
+  color?: string | null;
+  sync_mode?: string | null;
+  active?: boolean;
+};
+
+export type InvestmentAssetRead = {
+  id: string;
+  workspace_id: string;
+  custody_id: string;
+  name: string;
+  asset_class: string;
+  risk: string | null;
+  detail: string | null;
+  current_value: string;
+  contributed: string;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type InvestmentAssetPayload = {
+  custody_id?: string;
+  name?: string;
+  asset_class?: string;
+  risk?: string | null;
+  detail?: string | null;
+  current_value?: number | string;
+  contributed?: number | string;
+  active?: boolean;
+};
+
+export type InvestmentSnapshotRead = {
+  id: string;
+  asset_id: string;
+  as_of: string;
+  value: string;
+  contributed: string | null;
+  created_at: string;
+};
+
+export type InvestmentSnapshotPayload = {
+  value: number | string;
+  contributed?: number | string | null;
+  as_of?: string | null;
+};
+
+export type InvestmentPositionClass = {
+  id: string;
+  label: string;
+  color: string;
+  value: number;
+  pct: number;
+  contributed: number;
+  month_return: number;
+  year_return: number;
+};
+
+export type InvestmentPositionAccount = {
+  id: string;
+  name: string;
+  kind: string | null;
+  account_type: string;
+  brand: string | null;
+  color: string | null;
+  value: number;
+  prev: number;
+  contrib: number;
+  classes: { id: string; value: number }[];
+  sync_mode: string | null;
+  updated_at: string;
+};
+
+export type InvestmentPositionAsset = {
+  id: string;
+  name: string;
+  asset_class: string;
+  custody_id: string;
+  account: string;
+  value: number;
+  contributed: number;
+  risk: string | null;
+  detail: string | null;
+  month_return: number;
+  ytd_return: number;
+};
+
+export type InvestmentPosition = {
+  workspace_id: string;
+  total: number;
+  total_contributed: number;
+  total_gain: number;
+  month_return: number;
+  year_return: number;
+  ytd_return: number;
+  custody_count: number;
+  asset_count: number;
+  classes: InvestmentPositionClass[];
+  accounts: InvestmentPositionAccount[];
+  assets: InvestmentPositionAsset[];
+  history: { label: string; value: number }[];
+};
+
+export function getInvestmentClasses(session: ApiSession) {
+  return apiRequest<{ items: InvestmentClassRef[] }>("/investment-classes", session);
+}
+
+export function getInvestmentPosition(session: ApiSession) {
+  return apiRequest<InvestmentPosition>("/investments/position", session);
+}
+
+export function getInvestmentCustodies(session: ApiSession) {
+  return apiRequest<ListResponse<InvestmentCustodyRead>>("/investment-custodies", session);
+}
+
+export function createInvestmentCustody(session: ApiSession, payload: InvestmentCustodyPayload) {
+  return apiRequest<InvestmentCustodyRead>("/investment-custodies", session, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function updateInvestmentCustody(
+  session: ApiSession,
+  custodyId: string,
+  payload: InvestmentCustodyPayload,
+) {
+  return apiRequest<InvestmentCustodyRead>(`/investment-custodies/${custodyId}`, session, {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
+export function deleteInvestmentCustody(session: ApiSession, custodyId: string) {
+  return apiRequest<void>(`/investment-custodies/${custodyId}`, session, { method: "DELETE" });
+}
+
+export function getInvestmentAssets(session: ApiSession, custodyId?: string) {
+  const qs = custodyId ? `?custody_id=${custodyId}` : "";
+  return apiRequest<ListResponse<InvestmentAssetRead>>(`/investment-assets${qs}`, session);
+}
+
+export function createInvestmentAsset(session: ApiSession, payload: InvestmentAssetPayload) {
+  return apiRequest<InvestmentAssetRead>("/investment-assets", session, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function updateInvestmentAsset(
+  session: ApiSession,
+  assetId: string,
+  payload: InvestmentAssetPayload,
+) {
+  return apiRequest<InvestmentAssetRead>(`/investment-assets/${assetId}`, session, {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
+export function deleteInvestmentAsset(session: ApiSession, assetId: string) {
+  return apiRequest<void>(`/investment-assets/${assetId}`, session, { method: "DELETE" });
+}
+
+export function getInvestmentSnapshots(session: ApiSession, assetId: string) {
+  return apiRequest<{ asset_id: string; items: InvestmentSnapshotRead[]; total: number }>(
+    `/investment-assets/${assetId}/snapshots`,
+    session,
+  );
+}
+
+export function createInvestmentSnapshot(
+  session: ApiSession,
+  assetId: string,
+  payload: InvestmentSnapshotPayload,
+) {
+  return apiRequest<InvestmentSnapshotRead>(`/investment-assets/${assetId}/snapshots`, session, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function deleteInvestmentSnapshot(session: ApiSession, snapshotId: string) {
+  return apiRequest<void>(`/investment-snapshots/${snapshotId}`, session, { method: "DELETE" });
+}
