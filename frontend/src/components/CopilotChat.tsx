@@ -1,40 +1,79 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Send, Sparkles, Trash2, User } from "lucide-react";
+import { Database, MessageSquare, Plus, Send, Sparkles } from "lucide-react";
 
-import { copilotChat, getCopilotStatus } from "../lib/api";
+import { copilotChat, getCopilotStatus, getDashboardSummary } from "../lib/api";
 import type { ApiSession, CopilotTurn } from "../lib/api";
 import type { PeriodState } from "../types";
+import { money } from "../lib/utils";
 
 const SUGGESTIONS = [
   "Quais minhas 3 maiores categorias de gasto?",
-  "Onde eu poderia economizar neste mês?",
-  "Quanto gasto com custos fixos vs variáveis?",
-  "Posso gastar R$ 1.000 com tranquilidade agora?",
+  "Onde eu poderia economizar?",
+  "Custos fixos vs variáveis?",
+  "Posso gastar R$ 1.000 com tranquilidade?",
 ];
+const GREETING: CopilotTurn = {
+  role: "assistant",
+  content:
+    "Olá! Sou o Copiloto Financeiro do SmartCashFlow. Posso analisar seus gastos, "
+    + "categorias, custos fixos, metas e projeções — sempre com base nos seus dados reais. "
+    + "Use uma pergunta rápida ou escreva a sua.",
+};
+
+type Thread = { id: string; title: string; when: number; messages: CopilotTurn[] };
+
+const newId = () => Math.random().toString(36).slice(2, 10);
+const freshThread = (): Thread => ({ id: newId(), title: "Nova conversa", when: Date.now(), messages: [GREETING] });
+
+function whenLabel(ts: number): string {
+  const diff = Date.now() - ts;
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return "agora";
+  if (min < 60) return `há ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `há ${h} h`;
+  return new Date(ts).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
+}
+
+function renderRich(text: string) {
+  return text.split("\n").map((line, i) => {
+    if (!line.trim()) return <div key={i} style={{ height: 7 }} />;
+    const parts = line.split(/(\*\*[^*]+\*\*)/g).map((p, j) =>
+      p.startsWith("**") ? <b key={j}>{p.slice(2, -2)}</b> : <Fragment key={j}>{p}</Fragment>,
+    );
+    return <div key={i} style={{ marginBottom: 2 }}>{parts}</div>;
+  });
+}
+
+function pct(value: unknown): string {
+  const n = Number(value);
+  return Number.isFinite(n) ? `${Math.round(n * 100)}%` : "—";
+}
 
 export function CopilotChat({ session, period }: { session: ApiSession; period?: PeriodState }) {
-  // History is persisted (per session) so it survives tab switches, navigation
-  // and reloads — the component unmounts when you leave the Copiloto tab.
-  const storageKey = `scf_copilot_${session.token.slice(0, 16)}`;
-  const [messages, setMessages] = useState<CopilotTurn[]>(() => {
+  const threadsKey = `scf_copilot_threads_${session.token.slice(0, 16)}`;
+  const [threads, setThreads] = useState<Thread[]>(() => {
     try {
-      const raw = localStorage.getItem(storageKey);
-      return raw ? (JSON.parse(raw) as CopilotTurn[]) : [];
+      const raw = localStorage.getItem(threadsKey);
+      const parsed = raw ? (JSON.parse(raw) as Thread[]) : [];
+      return parsed.length ? parsed : [freshThread()];
     } catch {
-      return [];
+      return [freshThread()];
     }
   });
+  const [activeId, setActiveId] = useState(() => threads[0]?.id);
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  const active = threads.find((t) => t.id === activeId) ?? threads[0];
+  const messages = active?.messages ?? [GREETING];
+
   useEffect(() => {
     try {
-      localStorage.setItem(storageKey, JSON.stringify(messages.slice(-50)));
-    } catch {
-      // ignore quota/serialization errors
-    }
-  }, [messages, storageKey]);
+      localStorage.setItem(threadsKey, JSON.stringify(threads.slice(0, 20)));
+    } catch { /* ignore */ }
+  }, [threads, threadsKey]);
 
   const statusQ = useQuery({
     queryKey: ["copilot-status", session.token],
@@ -42,38 +81,61 @@ export function CopilotChat({ session, period }: { session: ApiSession; period?:
     staleTime: 5 * 60 * 1000,
   });
 
+  const sideQuery = period && period.periodPreset !== "all"
+    ? `?date_from=${period.dateFrom}&date_to=${period.dateTo}`
+    : "";
+  const summaryQ = useQuery({
+    queryKey: ["copilot-summary", session.token, sideQuery],
+    queryFn: () => getDashboardSummary(session, sideQuery),
+    staleTime: 2 * 60 * 1000,
+  });
+  const s = summaryQ.data;
+
   const dateFrom = period && period.periodPreset !== "all" ? period.dateFrom : null;
   const dateTo = period && period.periodPreset !== "all" ? period.dateTo : null;
+  const periodLabel = useMemo(() => {
+    if (!dateFrom || !dateTo) return "Todo o histórico";
+    const d = (x: string) => x.split("-").reverse().slice(0, 2).join("/");
+    return `${d(dateFrom)} a ${d(dateTo)}`;
+  }, [dateFrom, dateTo]);
+
+  function patchActive(fn: (t: Thread) => Thread) {
+    setThreads((ts) => ts.map((t) => (t.id === active?.id ? fn(t) : t)));
+  }
 
   const send = useMutation({
     mutationFn: (text: string) =>
-      copilotChat(session, {
-        message: text,
-        history: messages.slice(-6),
-        date_from: dateFrom,
-        date_to: dateTo,
-      }),
-    onSuccess: (res) => {
-      setMessages((m) => [
-        ...m,
-        { role: "assistant", content: res.reply || "Não consegui responder agora. Tente novamente." },
-      ]);
-    },
-    onError: () => {
-      setMessages((m) => [...m, { role: "assistant", content: "Erro ao falar com o copiloto. Tente novamente." }]);
-    },
+      copilotChat(session, { message: text, history: messages.slice(-6), date_from: dateFrom, date_to: dateTo }),
+    onSuccess: (res) =>
+      patchActive((t) => ({
+        ...t,
+        messages: [...t.messages, { role: "assistant", content: res.reply || "Não consegui responder agora. Tente novamente." }],
+      })),
+    onError: () =>
+      patchActive((t) => ({ ...t, messages: [...t.messages, { role: "assistant", content: "Erro ao falar com o copiloto. Tente novamente." }] })),
   });
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, send.isPending]);
+  }, [messages.length, send.isPending]);
 
-  function submit(text: string) {
+  function ask(text: string) {
     const t = text.trim();
     if (!t || send.isPending) return;
-    setMessages((m) => [...m, { role: "user", content: t }]);
+    patchActive((th) => ({
+      ...th,
+      title: th.messages.some((m) => m.role === "user") ? th.title : t.slice(0, 40),
+      when: Date.now(),
+      messages: [...th.messages, { role: "user", content: t }],
+    }));
     setInput("");
     send.mutate(t);
+  }
+
+  function newConversation() {
+    const t = freshThread();
+    setThreads((ts) => [t, ...ts]);
+    setActiveId(t.id);
   }
 
   if (statusQ.data && !statusQ.data.available) {
@@ -82,82 +144,123 @@ export function CopilotChat({ session, period }: { session: ApiSession; period?:
         <div className="state-ic" style={{ margin: "0 auto 14px", width: 52, height: 52 }}><Sparkles size={24} /></div>
         <h4 style={{ margin: "0 0 6px", fontSize: 16 }}>Copiloto de IA indisponível</h4>
         <p className="t-sub" style={{ maxWidth: 440, margin: "0 auto", lineHeight: 1.55 }}>
-          Configure uma chave de LLM (Groq ou Gemini) no backend (.env) para ativar o chat. A análise de Insights determinística continua funcionando.
+          Configure uma chave de LLM (Groq ou Gemini) no backend (.env) para ativar o chat.
         </p>
       </div>
     );
   }
 
   return (
-    <div className="card" style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 230px)", minHeight: 420 }}>
-      <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: "16px 18px", display: "flex", flexDirection: "column", gap: 14 }}>
-        {messages.length === 0 && (
-          <div style={{ margin: "auto", textAlign: "center", maxWidth: 460 }}>
-            <div className="state-ic" style={{ margin: "0 auto 12px", width: 48, height: 48 }}><Sparkles size={22} /></div>
-            <h4 style={{ margin: "0 0 6px", fontSize: 15.5 }}>Pergunte ao seu Copiloto Financeiro</h4>
-            <p className="t-sub" style={{ fontSize: 12.5, lineHeight: 1.55, marginBottom: 16 }}>
-              Ele responde com base nas suas transações reais do período selecionado.
-            </p>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
-              {SUGGESTIONS.map((s) => (
-                <button key={s} className="btn btn-ghost btn-sm" onClick={() => submit(s)} type="button" style={{ fontSize: 12 }}>
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        {messages.map((m, i) => (
-          <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", flexDirection: m.role === "user" ? "row-reverse" : "row" }}>
-            <span style={{
-              width: 28, height: 28, borderRadius: 8, flex: "none", display: "grid", placeItems: "center",
-              background: m.role === "user" ? "var(--acc-soft)" : "var(--info-soft)",
-              color: m.role === "user" ? "var(--acc)" : "var(--info)",
-            }}>
-              {m.role === "user" ? <User size={15} /> : <Sparkles size={15} />}
-            </span>
-            <div style={{
-              maxWidth: "78%", padding: "10px 13px", borderRadius: 12, fontSize: 13.5, lineHeight: 1.55,
-              whiteSpace: "pre-wrap",
-              background: m.role === "user" ? "var(--acc)" : "var(--card-2)",
-              color: m.role === "user" ? "#fff" : "var(--ink)",
-              border: m.role === "user" ? "none" : "1px solid var(--line)",
-            }}>
-              {m.content}
-            </div>
-          </div>
-        ))}
-        {send.isPending && (
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            <span style={{ width: 28, height: 28, borderRadius: 8, flex: "none", display: "grid", placeItems: "center", background: "var(--info-soft)", color: "var(--info)" }}><Sparkles size={15} /></span>
-            <span className="t-sub" style={{ fontSize: 12.5 }}>Pensando…</span>
-          </div>
-        )}
-      </div>
-      <form
-        onSubmit={(e) => { e.preventDefault(); submit(input); }}
-        style={{ display: "flex", gap: 8, padding: "12px 14px", borderTop: "1px solid var(--line)" }}
-      >
-        {messages.length > 0 && (
-          <button
-            className="btn btn-ghost btn-sm"
-            type="button"
-            title="Limpar conversa"
-            onClick={() => { setMessages([]); try { localStorage.removeItem(storageKey); } catch { /* ignore */ } }}
-          >
-            <Trash2 size={15} />
+    <div className="copilot" style={{ height: "calc(100dvh - 250px)", minHeight: 480 }}>
+      {/* Conversas */}
+      <div className="card cp-threads">
+        <div style={{ padding: "14px 14px 10px" }}>
+          <button className="btn btn-primary btn-sm" style={{ width: "100%" }} onClick={newConversation} type="button">
+            <Plus size={14} /> Nova conversa
           </button>
-        )}
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Pergunte sobre seus gastos, metas, onde economizar…"
-          style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: "1px solid var(--line)", fontSize: 13.5, background: "var(--card-2)", color: "var(--ink)" }}
-        />
-        <button className="btn btn-primary btn-sm" type="submit" disabled={send.isPending || !input.trim()}>
-          <Send size={15} /> Enviar
-        </button>
-      </form>
+        </div>
+        <div className="eyebrow" style={{ padding: "4px 16px 8px" }}>Conversas</div>
+        <div style={{ padding: "0 8px", overflowY: "auto" }}>
+          {threads.map((t) => (
+            <button key={t.id} onClick={() => setActiveId(t.id)} className={"cp-thread" + (t.id === active?.id ? " on" : "")} type="button">
+              <MessageSquare size={15} />
+              <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.title}</div>
+                <div className="t-sub">{whenLabel(t.when)}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Chat */}
+      <div className="card cp-chat">
+        <div ref={scrollRef} className="cp-scroll">
+          {messages.map((m, i) => (
+            m.role === "user" ? (
+              <div key={i} className="cp-msg user"><div className="cp-bubble user">{m.content}</div></div>
+            ) : (
+              <div key={i} className="cp-msg assistant">
+                <div className="cp-avatar"><Sparkles size={15} /></div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="cp-bubble">{renderRich(m.content)}</div>
+                  {i > 0 && (
+                    <div className="cp-sources">
+                      <span className="mono t-sub" style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                        <Database size={12} /> Fontes:
+                      </span>
+                      <span className="pill" style={{ fontSize: 10.5 }}>Seus dados</span>
+                      <span className="pill" style={{ fontSize: 10.5 }}>{periodLabel}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          ))}
+          {send.isPending && (
+            <div className="cp-msg assistant">
+              <div className="cp-avatar"><Sparkles size={15} /></div>
+              <div className="cp-bubble" style={{ display: "flex", gap: 4, padding: "14px 16px" }}>
+                <span className="cp-dot" /><span className="cp-dot" /><span className="cp-dot" />
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="cp-quick">
+          {SUGGESTIONS.map((q) => (
+            <button key={q} className="chip" onClick={() => ask(q)} type="button">{q}</button>
+          ))}
+        </div>
+        <div className="cp-input">
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") ask(input); }}
+            placeholder="Pergunte sobre suas finanças…"
+          />
+          <button className="btn btn-primary" onClick={() => ask(input)} disabled={send.isPending || !input.trim()} type="button">
+            <Send size={15} />
+          </button>
+        </div>
+      </div>
+
+      {/* Resumo financeiro */}
+      <div className="card cp-side">
+        <div style={{ padding: 16 }}>
+          <div className="eyebrow" style={{ marginBottom: 12 }}>Resumo financeiro</div>
+          <div style={{ display: "grid", gap: 12 }}>
+            <SideStat label="Saldo em conta" value={s ? money(s.current_balance) : "—"} />
+            <SideStat label="Gasto seguro (30d)" value={s ? money(s.safe_spend) : "—"} />
+            <SideStat label="Saúde financeira" value={s?.financial_health_score != null ? `${s.financial_health_score}/100` : "—"} />
+            <SideStat label="Comprometimento" value={s ? pct(s.commitment_rate) : "—"} />
+          </div>
+        </div>
+        <hr className="divider" />
+        <div style={{ padding: 16 }}>
+          <div className="eyebrow" style={{ marginBottom: 10 }}>Período analisado</div>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>{periodLabel}</div>
+          <div className="t-sub">As respostas usam os dados deste período.</div>
+        </div>
+        <hr className="divider" />
+        <div style={{ padding: 16 }}>
+          <div className="alert info">
+            <div className="alert-ic"><Sparkles size={16} /></div>
+            <div>
+              <div className="a-ttl">Limites do Copiloto</div>
+              <div className="a-txt">Não é consultoria financeira nem promete retornos. As respostas usam apenas seus dados.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SideStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <span style={{ fontSize: 12.5, color: "var(--ink-3)", flex: 1 }}>{label}</span>
+      <span style={{ fontWeight: 700, fontVariantNumeric: "tabular-nums", fontSize: 13 }}>{value}</span>
     </div>
   );
 }
