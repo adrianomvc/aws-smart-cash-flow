@@ -9,7 +9,6 @@ import {
   deleteTransaction,
   getActiveAccounts,
   getCreditCards,
-  getDashboardSummary,
   getRuleSuggestion,
   getTransactionDuplicates,
   getTransactions,
@@ -896,6 +895,7 @@ export function TransactionExplorer({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showDuplicates, setShowDuplicates] = useState(false);
   const [showAccounts, setShowAccounts] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
   const [duplicatePage, setDuplicatePage] = useState(0);
   const [activeReviewGroup, setActiveReviewGroup] = useState<DuplicateTransactionGroup | null>(null);
   const [keepId, setKeepId] = useState("");
@@ -989,8 +989,6 @@ export function TransactionExplorer({
     }
   }, [tab]);
 
-  const periodSummaryQuery = useMemo(() => { const params = new URLSearchParams(); if (dateFrom) params.set("date_from", dateFrom); if (dateTo) params.set("date_to", dateTo); return `?${params.toString()}`; }, [dateFrom, dateTo]);
-  const periodSummary = useQuery({ queryKey: ["transactions-period-summary", session.token, periodSummaryQuery], queryFn: () => getDashboardSummary(session, periodSummaryQuery), staleTime: 2 * 60 * 1000 });
   const query = useMemo(() => {
     const params = new URLSearchParams();
     if (search) params.set("q", search);
@@ -1193,14 +1191,20 @@ export function TransactionExplorer({
     setActionMessage("Categoria atualizada. Indicadores e listas foram recalculados.");
   }
 
-  // KPI values
-  const kpiIncome = !reviewMode ? (periodSummary.data?.income != null ? Math.abs(Number(periodSummary.data.income)) : pageIncome) : pageIncome;
-  const kpiExpenses = !reviewMode ? (periodSummary.data?.expenses != null ? Math.abs(Number(periodSummary.data.expenses)) : pageExpenses) : pageExpenses;
-  const kpiResult = kpiIncome - kpiExpenses;
+  // KPI values — reflect the FULL filtered set (backend aggregates), not just
+  // the current page nor only the period.
+  const kpiIncome = transactions.data?.total_income != null ? Math.abs(Number(transactions.data.total_income)) : pageIncome;
+  const kpiExpenses = transactions.data?.total_expense != null ? Math.abs(Number(transactions.data.total_expense)) : pageExpenses;
+  const kpiResult = transactions.data?.total_net != null ? Number(transactions.data.total_net) : kpiIncome - kpiExpenses;
+  const kpiCount = totalTransactions;
 
   const sub = reviewMode
     ? `${pagePending} transações precisam de revisão.`
     : `Consulte, filtre, revise e categorize.${pagePending > 0 ? ` ${pagePending} transações precisam de revisão.` : " Tudo revisado."}`;
+
+  const fGroup: React.CSSProperties = { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 };
+  const fLabel: React.CSSProperties = { fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: "var(--ink-3)", width: 88, flex: "none" };
+  const fInput: React.CSSProperties = { padding: "6px 8px", borderRadius: 7, border: "1px solid var(--line)", background: "var(--card-2)", fontSize: 12.5, color: "var(--ink)" };
 
   return (
     <div className="canvas stg">
@@ -1222,14 +1226,25 @@ export function TransactionExplorer({
         <p style={{ margin: 0, color: "var(--ink-3)", fontSize: 13 }}>{sub}</p>
       </div>
 
-      {/* ── KPI deck (3 tiles) ── */}
+      {/* ── KPI deck (4 tiles, reflect the active filters) ── */}
       {!reviewMode && (
-        <div className="grid cols-3" style={{ marginBottom: 16 }}>
+        <div className="grid cols-4" style={{ marginBottom: 16 }}>
+          {/* Quantidade */}
+          <div className="kpi">
+            <div className="kpi-top">
+              <div className="kpi-ic"><TIcon name="list" size={15} /></div>
+              <span className="kpi-label">Transações</span>
+            </div>
+            <div className="kpi-val">
+              {transactions.isLoading ? "…" : kpiCount.toLocaleString("pt-BR")}
+            </div>
+            <div className="kpi-sub">{activeFilterCount > 0 ? "no filtro atual" : "no total"}</div>
+          </div>
           {/* Entradas */}
           <div className="kpi">
             <div className="kpi-top">
               <div className="kpi-ic" style={{ background: "var(--acc-soft)", color: "var(--acc)" }}><TIcon name="arrowDR" size={15} /></div>
-              <span className="kpi-label">Entradas (filtro)</span>
+              <span className="kpi-label">Entradas</span>
             </div>
             <div className="kpi-val" style={{ color: "var(--acc)" }}>
               <span className="cur">R$</span>{compactMoneyAbs(kpiIncome)}
@@ -1240,7 +1255,7 @@ export function TransactionExplorer({
           <div className="kpi">
             <div className="kpi-top">
               <div className="kpi-ic" style={{ background: "var(--neg-soft)", color: "var(--neg)" }}><TIcon name="arrowUR" size={15} /></div>
-              <span className="kpi-label">Saídas (filtro)</span>
+              <span className="kpi-label">Saídas</span>
             </div>
             <div className="kpi-val" style={{ color: "var(--ink)" }}>
               <span className="cur">R$</span>{compactMoneyAbs(kpiExpenses)}
@@ -1251,7 +1266,7 @@ export function TransactionExplorer({
           <div className="kpi">
             <div className="kpi-top">
               <div className="kpi-ic" style={{ background: kpiResult >= 0 ? "var(--acc-soft)" : "var(--neg-soft)", color: kpiResult >= 0 ? "var(--acc)" : "var(--neg)" }}><TIcon name="flow" size={15} /></div>
-              <span className="kpi-label">Resultado (filtro)</span>
+              <span className="kpi-label">Resultado</span>
             </div>
             <div className="kpi-val" style={{ color: kpiResult >= 0 ? "var(--acc)" : "var(--neg)" }}>
               <span className="cur">R$</span>{compactMoneyAbs(kpiResult)}
@@ -1305,19 +1320,13 @@ export function TransactionExplorer({
               </button>
             ))}
           </div>
-          {/* Account filter */}
-          <select
-            value={accountFilter}
-            onChange={(e) => { setAccountFilter(e.target.value); setPage(0); }}
-            className="cat-select"
-            style={{ padding: "7px 10px" }}
-          >
-            <option value="all">Todas as contas</option>
-            {accountOptions.map((a) => <option key={a} value={a}>{a}</option>)}
-          </select>
-          {/* Advanced filters toggle */}
+          {/* Filters + advanced toggles */}
           {!reviewMode && (
             <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
+              <button className={`btn btn-sm ${showFilters || activeFilterCount > 0 ? "btn-primary" : "btn-ghost"}`} onClick={() => setShowFilters((c) => !c)} type="button">
+                <TIcon name="filter" size={13} /> Filtros
+                {activeFilterCount > 0 ? <span className="badge" style={{ marginLeft: 5, padding: "1px 6px", fontSize: 10, background: "rgba(255,255,255,.25)" }}>{activeFilterCount}</span> : null}
+              </button>
               <button className="btn btn-ghost btn-sm" onClick={() => setShowDuplicates((c) => !c)} type="button">
                 <TIcon name="filter" size={13} /> Duplicados
                 {duplicates.data?.total_groups ? <span className="badge b-warn" style={{ marginLeft: 4, padding: "1px 6px", fontSize: 10 }}>{duplicates.data.total_groups}</span> : null}
@@ -1359,68 +1368,80 @@ export function TransactionExplorer({
           </div>
         )}
 
-        {/* Category + amount filters */}
-        {!reviewMode && (
-          <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8, padding: "10px 14px", borderBottom: "1px solid var(--line)" }}>
-            <FlatMultiSelect
-              placeholder="Todas as categorias"
-              options={rootCategoryOptions}
-              selected={categoryIds}
-              onChange={(next) => {
-                // Drop subcategory selections whose parent is no longer chosen.
-                setSubcategoryIds((prev) => {
-                  if (next.size === 0) return prev;
-                  const kept = new Set([...prev].filter((sid) => next.has(subParent.get(sid) ?? "")));
-                  return kept;
-                });
-                setCategoryIds(next);
-                setPage(0);
-              }}
-            />
-            <FlatMultiSelect
-              placeholder="Todas as subcategorias"
-              options={subcategoryOptions}
-              selected={subcategoryIds}
-              onChange={(next) => { setSubcategoryIds(next); setPage(0); }}
-              emptyLabel={categoryIds.size > 0 ? "Sem subcategorias nesta categoria" : "Selecione categorias ou veja todas"}
-            />
-            <select className={`cat-select${sourceType ? " active" : ""}`} value={sourceType} onChange={(e) => { setSourceType(e.target.value); setPage(0); }} style={{ padding: "7px 10px" }}>
-              <option value="">Todas as origens</option>
-              <option value="bank_statement">Conta corrente</option>
-              <option value="credit_card_statement">Cartão de crédito</option>
-              <option value="unknown">Manual / Outras</option>
-            </select>
-            <select className={`cat-select${catSource ? " active" : ""}`} value={catSource} onChange={(e) => { setCatSource(e.target.value); setPage(0); }} style={{ padding: "7px 10px" }} title="Como a transação foi categorizada">
-              <option value="">Toda categorização</option>
-              <option value="rule">Por regra</option>
-              <option value="embedding">Por memória (similaridade)</option>
-              <option value="llm">Por IA</option>
-              <option value="manual">Manual</option>
-              <option value="__none__">Sem categoria</option>
-            </select>
-            <select className={`cat-select${reviewStatus ? " active" : ""}`} value={reviewStatus} onChange={(e) => { setReviewStatus(e.target.value); setPage(0); }} style={{ padding: "7px 10px" }} title="Status de revisão da categorização">
-              <option value="">Revisão: todas</option>
-              <option value="queue">A revisar (fila)</option>
-              <option value="pending">Sugestões pendentes</option>
-              <option value="accepted">Confirmadas</option>
-            </select>
-            {cardBrands.length > 0 && (
-              <select className={`cat-select${cardBrand ? " active" : ""}`} value={cardBrand} onChange={(e) => { setCardBrand(e.target.value); setPage(0); }} style={{ padding: "7px 10px" }}>
-                <option value="">Todas as bandeiras</option>
-                {cardBrands.map((b) => <option key={b} value={b}>{b}</option>)}
+        {/* Filters panel (grouped, collapsible) */}
+        {!reviewMode && (showFilters || activeFilterCount > 0) && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "12px 14px", borderBottom: "1px solid var(--line)" }}>
+            {/* Categorização */}
+            <div style={fGroup}>
+              <span style={fLabel}>Categorização</span>
+              <FlatMultiSelect
+                placeholder="Todas as categorias"
+                options={rootCategoryOptions}
+                selected={categoryIds}
+                onChange={(next) => {
+                  setSubcategoryIds((prev) => {
+                    if (next.size === 0) return prev;
+                    return new Set([...prev].filter((sid) => next.has(subParent.get(sid) ?? "")));
+                  });
+                  setCategoryIds(next);
+                  setPage(0);
+                }}
+              />
+              <FlatMultiSelect
+                placeholder="Todas as subcategorias"
+                options={subcategoryOptions}
+                selected={subcategoryIds}
+                onChange={(next) => { setSubcategoryIds(next); setPage(0); }}
+                emptyLabel={categoryIds.size > 0 ? "Sem subcategorias nesta categoria" : "Selecione categorias ou veja todas"}
+              />
+              <select className={`cat-select${catSource ? " active" : ""}`} value={catSource} onChange={(e) => { setCatSource(e.target.value); setPage(0); }} style={{ padding: "7px 10px" }} title="Como a transação foi categorizada">
+                <option value="">Toda categorização</option>
+                <option value="rule">Por regra</option>
+                <option value="embedding">Por memória (similaridade)</option>
+                <option value="llm">Por IA</option>
+                <option value="manual">Manual</option>
+                <option value="__none__">Sem categoria</option>
               </select>
-            )}
-            <input type="date" value={dateFrom} onChange={(e) => { setPeriodPreset("custom"); setDateFrom(e.target.value); setPage(0); }}
-              style={{ padding: "6px 8px", borderRadius: 7, border: "1px solid var(--line)", background: "var(--card-2)", fontSize: 12.5, color: "var(--ink)" }} placeholder="De" />
-            <input type="date" value={dateTo} onChange={(e) => { setPeriodPreset("custom"); setDateTo(e.target.value); setPage(0); }}
-              style={{ padding: "6px 8px", borderRadius: 7, border: "1px solid var(--line)", background: "var(--card-2)", fontSize: 12.5, color: "var(--ink)" }} placeholder="Até" />
-            <input type="number" placeholder="De R$" value={amountMin} min="0" onChange={(e) => { setAmountMin(e.target.value); setPage(0); }}
-              style={{ padding: "6px 8px", borderRadius: 7, border: "1px solid var(--line)", background: "var(--card-2)", fontSize: 12.5, width: 90, color: "var(--ink)" }} />
-            <input type="number" placeholder="Até R$" value={amountMax} min="0" onChange={(e) => { setAmountMax(e.target.value); setPage(0); }}
-              style={{ padding: "6px 8px", borderRadius: 7, border: "1px solid var(--line)", background: "var(--card-2)", fontSize: 12.5, width: 90, color: "var(--ink)" }} />
-            {activeFilterCount > 0 && (
-              <button className="btn btn-quiet btn-sm" onClick={clearFilters} type="button" style={{ marginLeft: "auto" }}>Limpar filtros</button>
-            )}
+              <select className={`cat-select${reviewStatus ? " active" : ""}`} value={reviewStatus} onChange={(e) => { setReviewStatus(e.target.value); setPage(0); }} style={{ padding: "7px 10px" }} title="Status de revisão da categorização">
+                <option value="">Revisão: todas</option>
+                <option value="queue">A revisar (fila)</option>
+                <option value="pending">Sugestões pendentes</option>
+                <option value="accepted">Confirmadas</option>
+              </select>
+            </div>
+            {/* Origem */}
+            <div style={fGroup}>
+              <span style={fLabel}>Origem</span>
+              <select value={accountFilter} onChange={(e) => { setAccountFilter(e.target.value); setPage(0); }} className={`cat-select${accountFilter !== "all" ? " active" : ""}`} style={{ padding: "7px 10px" }}>
+                <option value="all">Todas as contas</option>
+                {accountOptions.map((a) => <option key={a} value={a}>{a}</option>)}
+              </select>
+              <select className={`cat-select${sourceType ? " active" : ""}`} value={sourceType} onChange={(e) => { setSourceType(e.target.value); setPage(0); }} style={{ padding: "7px 10px" }}>
+                <option value="">Todas as origens</option>
+                <option value="bank_statement">Conta corrente</option>
+                <option value="credit_card_statement">Cartão de crédito</option>
+                <option value="unknown">Manual / Outras</option>
+              </select>
+              {cardBrands.length > 0 && (
+                <select className={`cat-select${cardBrand ? " active" : ""}`} value={cardBrand} onChange={(e) => { setCardBrand(e.target.value); setPage(0); }} style={{ padding: "7px 10px" }}>
+                  <option value="">Todas as bandeiras</option>
+                  {cardBrands.map((b) => <option key={b} value={b}>{b}</option>)}
+                </select>
+              )}
+            </div>
+            {/* Período + Valor */}
+            <div style={fGroup}>
+              <span style={fLabel}>Período</span>
+              <input type="date" value={dateFrom} onChange={(e) => { setPeriodPreset("custom"); setDateFrom(e.target.value); setPage(0); }} style={fInput} placeholder="De" />
+              <span style={{ color: "var(--ink-faint)", fontSize: 12 }}>até</span>
+              <input type="date" value={dateTo} onChange={(e) => { setPeriodPreset("custom"); setDateTo(e.target.value); setPage(0); }} style={fInput} placeholder="Até" />
+              <span style={{ ...fLabel, width: "auto", marginLeft: 12 }}>Valor</span>
+              <input type="number" placeholder="De R$" value={amountMin} min="0" onChange={(e) => { setAmountMin(e.target.value); setPage(0); }} style={{ ...fInput, width: 90 }} />
+              <input type="number" placeholder="Até R$" value={amountMax} min="0" onChange={(e) => { setAmountMax(e.target.value); setPage(0); }} style={{ ...fInput, width: 90 }} />
+              {activeFilterCount > 0 && (
+                <button className="btn btn-quiet btn-sm" onClick={clearFilters} type="button" style={{ marginLeft: "auto" }}>Limpar filtros ({activeFilterCount})</button>
+              )}
+            </div>
           </div>
         )}
 

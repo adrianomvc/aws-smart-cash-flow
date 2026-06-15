@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import and_, asc, delete, desc, func, or_, select
+from sqlalchemy import and_, asc, case, delete, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import AuthContext, AuthDependency
@@ -81,6 +81,10 @@ class TransactionListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+    # Aggregates over the FULL filtered set (not just the current page).
+    total_income: Decimal = Decimal("0")
+    total_expense: Decimal = Decimal("0")
+    total_net: Decimal = Decimal("0")
 
 
 class DescriptionNormalizationResponse(BaseModel):
@@ -472,6 +476,21 @@ async def list_transactions(
         .where(*filters)
     )
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
+    # Sums over the full filtered set (credit = income, debit = expense; payments
+    # are settlements and count as neither). Reuses the same WHERE filters.
+    abs_amount = func.abs(Transaction.amount)
+    income_sum, expense_sum = db.execute(
+        select(
+            func.coalesce(
+                func.sum(case((Transaction.direction == "credit", abs_amount), else_=0)), 0
+            ),
+            func.coalesce(
+                func.sum(case((Transaction.direction == "debit", abs_amount), else_=0)), 0
+            ),
+        ).where(*filters)
+    ).one()
+    income_sum = Decimal(income_sum)
+    expense_sum = Decimal(expense_sum)
     rows = db.execute(
         query
         .order_by(
@@ -491,6 +510,9 @@ async def list_transactions(
         total=total,
         limit=limit,
         offset=offset,
+        total_income=income_sum,
+        total_expense=expense_sum,
+        total_net=income_sum - expense_sum,
     )
 
 

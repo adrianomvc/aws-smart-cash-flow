@@ -1027,8 +1027,15 @@ export function uploadImport(session: ApiSession, file: File, sourceKind = "auto
   }>("/imports", session, { method: "POST", body: data });
 }
 
+export type TransactionListResponse = ListResponse<TransactionRead> & {
+  // Aggregates over the full filtered set (decimals serialized as strings).
+  total_income?: string;
+  total_expense?: string;
+  total_net?: string;
+};
+
 export function getTransactions(session: ApiSession, query: string) {
-  return apiRequest<ListResponse<TransactionRead>>(`/transactions${query}`, session);
+  return apiRequest<TransactionListResponse>(`/transactions${query}`, session);
 }
 
 export function getTransactionDuplicates(session: ApiSession, query = "?limit=20") {
