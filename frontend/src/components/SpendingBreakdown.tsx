@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { getSpendingBreakdown } from "../lib/api";
 import type { ApiSession, SizeBucketItem } from "../lib/api";
-import { compactMoneyAbs, money } from "../lib/utils";
+import { money } from "../lib/utils";
 
 // Color per size bucket (small → large = cool → hot).
 const SIZE_COLOR: Record<string, string> = {
@@ -37,7 +37,7 @@ function FixedVariableBar({ fixedTotal, variableTotal }: { fixedTotal: number; v
   );
 }
 
-function SizeRow({ b, detailed }: { b: SizeBucketItem; detailed?: boolean }) {
+function SizeRow({ b }: { b: SizeBucketItem }) {
   const share = pct(b.share_ratio);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -57,7 +57,7 @@ function SizeRow({ b, detailed }: { b: SizeBucketItem; detailed?: boolean }) {
             <div style={{ width: `${share}%`, height: "100%", background: SIZE_COLOR[b.key] ?? "var(--ink-3)" }} />
           </div>
           <span className="t-sub" style={{ fontSize: 11.5, whiteSpace: "nowrap" }}>
-            {b.count} {b.count === 1 ? "transação" : "transações"} · {share}%{detailed ? ` · méd. ${compactMoneyAbs(b.average)}` : ""}
+            {b.count} {b.count === 1 ? "transação" : "transações"} · {share}%
           </span>
         </div>
       </div>
@@ -126,25 +126,23 @@ export function SpendingProfileCard({ session, query }: { session: ApiSession; q
 export function SpendingProfileDetailed({ session, query }: { session: ApiSession; query: string }) {
   const q = useBreakdown(session, query);
   const d = q.data;
-  const buckets = d?.size_buckets ?? [];
-  const half = Math.ceil(buckets.length / 2);
 
   return (
-    <div className="card card-pad">
-      <h3 style={{ margin: "0 0 4px", fontSize: 14.5, fontWeight: 700 }}>Porte das transações</h3>
-      <p className="t-sub" style={{ margin: "0 0 14px", fontSize: 12 }}>
-        Por tamanho do gasto: <strong>P</strong> pequeno, <strong>M</strong> médio, <strong>G</strong> grande, <strong>GG</strong> gigante. Poucas compras grandes costumam dominar o volume.
-      </p>
-      <div className="grid cols-2" style={{ gap: "13px 28px" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
-          {buckets.slice(0, half).map((b) => <SizeRow key={b.key} b={b} detailed />)}
+    <div className="card">
+      <div className="card-head">
+        <div>
+          <span className="ttl">Porte das transações</span>
+          <div className="sub">Por tamanho do gasto · P · M · G · GG</div>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
-          {buckets.slice(half).map((b) => <SizeRow key={b.key} b={b} detailed />)}
+        <div className="spacer" />
+      </div>
+      <div className="card-body">
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {(d?.size_buckets ?? []).map((b) => <SizeRow key={b.key} b={b} />)}
+          {q.isLoading && <span className="t-sub" style={{ fontSize: 12 }}>Carregando…</span>}
+          {d && Number(d.total_expense) === 0 && <span className="t-sub" style={{ fontSize: 12 }}>Sem despesas no período.</span>}
         </div>
       </div>
-      {q.isLoading && <span className="t-sub" style={{ fontSize: 12 }}>Carregando…</span>}
-      {d && Number(d.total_expense) === 0 && <span className="t-sub" style={{ fontSize: 12 }}>Sem despesas no período.</span>}
     </div>
   );
 }

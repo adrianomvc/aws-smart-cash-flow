@@ -1251,8 +1251,8 @@ export function CashflowPage({
         </div>
       </div>
 
-      {/* Categorias de maior impacto + Recorrências relevantes */}
-      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      {/* Categorias de maior impacto · Recorrências relevantes · Porte */}
+      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr 1fr", gap: 16, alignItems: "stretch", marginBottom: 16 }}>
         <div className="card">
           <div className="card-head">
             <div>
@@ -1297,10 +1297,7 @@ export function CashflowPage({
             />
           </div>
         </div>
-      </div>
 
-      {/* Perfil de gastos detalhado: porte (P/M/G/GG) + fixo × variável */}
-      <div style={{ marginTop: 4, marginBottom: 16 }}>
         <SpendingProfileDetailed session={session} query={period.query} />
       </div>
     </div>
