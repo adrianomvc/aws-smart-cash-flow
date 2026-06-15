@@ -27,6 +27,7 @@ import {
   getCategoryRanking,
   getSubcategoryRanking,
   getRecurringExpenses,
+  getSpendingBreakdown,
 } from "../lib/api";
 import {
   compactMoneyAxis,
@@ -935,6 +936,11 @@ export function CashflowPage({
       ),
     staleTime: 3 * 60 * 1000,
   });
+  const breakdown = useQuery({
+    queryKey: ["cashflow-breakdown", session.token, period.query],
+    queryFn: () => getSpendingBreakdown(session, period.query),
+    staleTime: 3 * 60 * 1000,
+  });
 
   const income = Number(summary.data?.income ?? 0);
   const expenses = Number(summary.data?.expenses ?? 0);
@@ -978,10 +984,12 @@ export function CashflowPage({
   const subcategoryItems = subcategoryRanking.data?.items ?? [];
   const recurringItems = recurring.data?.items ?? [];
 
-  // Composição das despesas: fixas = recurring total, variáveis = expenses - fixas
-  const recurringFixed = recurringItems.reduce((sum, i) => sum + Math.abs(Number(i.average_amount ?? 0)), 0);
-  const recurringVariable = Math.max(0, expenses - recurringFixed);
-  const fixedPct = expenses > 0 ? Math.round((recurringFixed / expenses) * 100) : 0;
+  // Composição das despesas: cálculo preciso por transação (fixo = recorrente com
+  // valor estável; soma exatamente o total de despesas do período).
+  const recurringFixed = Number(breakdown.data?.fixed.total ?? 0);
+  const recurringVariable = Number(breakdown.data?.variable.total ?? 0);
+  const compTotal = recurringFixed + recurringVariable;
+  const fixedPct = compTotal > 0 ? Math.round((recurringFixed / compTotal) * 100) : 0;
   const varPct = 100 - fixedPct;
 
   function openCategoryTransactions(item: CategoryRankingItem) {

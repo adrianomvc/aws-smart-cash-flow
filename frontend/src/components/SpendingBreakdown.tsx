@@ -46,9 +46,9 @@ function SizeRow({ b, detailed }: { b: SizeBucketItem; detailed?: boolean }) {
         fontSize: 11, fontWeight: 800, color: "#fff", background: SIZE_COLOR[b.key] ?? "var(--ink-3)",
       }}>{b.key}</span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 3 }}>
-          <span style={{ color: "var(--ink-2)", fontWeight: 600 }}>
-            {b.label}{detailed ? <span className="t-sub" style={{ fontWeight: 400 }}> · {b.helper}</span> : null}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, fontSize: 12.5, marginBottom: 3 }}>
+          <span style={{ color: "var(--ink-2)", fontWeight: 600, whiteSpace: "nowrap" }}>
+            {b.label} <span className="t-sub" style={{ fontWeight: 400 }}>· {b.helper}</span>
           </span>
           <span className="mono" style={{ fontWeight: 700 }}>{money(b.total)}</span>
         </div>
@@ -132,23 +132,20 @@ export function SpendingProfileCard({ session, query }: { session: ApiSession; q
 }
 
 // ---------------------------------------------------------------------------
-// Detailed — Fluxo de caixa
+// Detailed — Fluxo de caixa: Porte (P/M/G/GG) + lista dos maiores custos fixos.
+// (Fixo × variável fica no card "Composição das despesas", não aqui.)
 // ---------------------------------------------------------------------------
 export function SpendingProfileDetailed({ session, query }: { session: ApiSession; query: string }) {
   const q = useBreakdown(session, query);
   const d = q.data;
-  const fixedTotal = Number(d?.fixed.total ?? 0);
-  const variableTotal = Number(d?.variable.total ?? 0);
-  const sum = fixedTotal + variableTotal;
-  const fixedPct = sum > 0 ? Math.round((fixedTotal / sum) * 100) : 0;
 
   return (
     <div className="grid cols-2" style={{ gap: 14 }}>
-      {/* Porte */}
+      {/* Porte das transações */}
       <div className="card card-pad">
         <h3 style={{ margin: "0 0 4px", fontSize: 14.5, fontWeight: 700 }}>Porte das transações</h3>
         <p className="t-sub" style={{ margin: "0 0 14px", fontSize: 12 }}>
-          Quantas e quanto você gasta por faixa de valor. Poucas compras grandes costumam dominar o volume.
+          Por tamanho do gasto: <strong>P</strong> pequeno, <strong>M</strong> médio, <strong>G</strong> grande, <strong>GG</strong> gigante. Poucas compras grandes costumam dominar o volume.
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
           {(d?.size_buckets ?? []).map((b) => <SizeRow key={b.key} b={b} detailed />)}
@@ -157,25 +154,13 @@ export function SpendingProfileDetailed({ session, query }: { session: ApiSessio
         </div>
       </div>
 
-      {/* Fixo × Variável + lista */}
+      {/* Maiores custos fixos (detalhe por trás da composição) */}
       <div className="card card-pad">
-        <h3 style={{ margin: "0 0 4px", fontSize: 14.5, fontWeight: 700 }}>Custos fixos × variáveis</h3>
+        <h3 style={{ margin: "0 0 4px", fontSize: 14.5, fontWeight: 700 }}>Maiores custos fixos</h3>
         <p className="t-sub" style={{ margin: "0 0 14px", fontSize: 12 }}>
-          Fixo = despesa que se repete todo mês com valor estável (assinaturas, financiamentos, escola). O resto é variável.
+          Despesas recorrentes com valor estável (assinaturas, financiamentos, escola) — o que forma a parcela "fixa" da composição.
         </p>
-        <FixedVariableBar fixedTotal={fixedTotal} variableTotal={variableTotal} />
-        <div style={{ display: "flex", justifyContent: "space-between", margin: "8px 0 14px" }}>
-          <div>
-            <div style={{ fontSize: 12, color: "var(--ink-2)" }}>Fixos · {fixedPct}%</div>
-            <div className="mono" style={{ fontWeight: 700 }}>{money(fixedTotal)} <span className="t-sub" style={{ fontWeight: 400, fontSize: 11 }}>({d?.fixed.count ?? 0})</span></div>
-          </div>
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 12, color: "var(--ink-2)" }}>Variáveis · {100 - fixedPct}%</div>
-            <div className="mono" style={{ fontWeight: 700 }}>{money(variableTotal)} <span className="t-sub" style={{ fontWeight: 400, fontSize: 11 }}>({d?.variable.count ?? 0})</span></div>
-          </div>
-        </div>
-        <span className="t-sub" style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>Principais custos fixos</span>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
           {(d?.fixed_items ?? []).slice(0, 8).map((it) => (
             <div key={it.description} style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -185,6 +170,7 @@ export function SpendingProfileDetailed({ session, query }: { session: ApiSessio
               <span className="mono" style={{ fontWeight: 700, fontSize: 12.5 }}>{money(it.total)}</span>
             </div>
           ))}
+          {q.isLoading && <span className="t-sub" style={{ fontSize: 12 }}>Carregando…</span>}
           {d && d.fixed_items.length === 0 && (
             <span className="t-sub" style={{ fontSize: 12 }}>Nenhum custo fixo recorrente identificado no período.</span>
           )}
