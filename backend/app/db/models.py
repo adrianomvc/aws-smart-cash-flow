@@ -792,3 +792,29 @@ class WealthSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class LlmCategorizationCache(Base):
+    """Caches the LLM's categorization per normalized description, so the LLM is
+    called at most once per unique description (per workspace) and reused across
+    runs and across all transactions that share the description."""
+
+    __tablename__ = "llm_categorization_cache"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "description_key", name="uq_llm_cache_ws_desc"),
+        Index("ix_llm_cache_ws_desc", "workspace_id", "description_key"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), nullable=False
+    )
+    description_key: Mapped[str] = mapped_column(Text, nullable=False)
+    category_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("categories.id", ondelete="CASCADE"), nullable=False
+    )
+    confidence: Mapped[Decimal | None] = mapped_column(Numeric(6, 4))
+    regex_suggestion: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
