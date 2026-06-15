@@ -1203,7 +1203,7 @@ export function TransactionExplorer({
     : `Consulte, filtre, revise e categorize.${pagePending > 0 ? ` ${pagePending} transações precisam de revisão.` : " Tudo revisado."}`;
 
   const fGroup: React.CSSProperties = { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 };
-  const fLabel: React.CSSProperties = { fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: "var(--ink-3)", width: 88, flex: "none" };
+  const fLabel: React.CSSProperties = { fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: "var(--ink-3)", minWidth: 78, flex: "none", whiteSpace: "nowrap" };
   const fInput: React.CSSProperties = { padding: "6px 8px", borderRadius: 7, border: "1px solid var(--line)", background: "var(--card-2)", fontSize: 12.5, color: "var(--ink)" };
 
   return (
@@ -1371,9 +1371,9 @@ export function TransactionExplorer({
         {/* Filters panel (grouped, collapsible) */}
         {!reviewMode && (showFilters || activeFilterCount > 0) && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "12px 14px", borderBottom: "1px solid var(--line)" }}>
-            {/* Categorização */}
+            {/* Categoria */}
             <div style={fGroup}>
-              <span style={fLabel}>Categorização</span>
+              <span style={fLabel}>Categoria</span>
               <FlatMultiSelect
                 placeholder="Todas as categorias"
                 options={rootCategoryOptions}
@@ -1395,7 +1395,7 @@ export function TransactionExplorer({
                 emptyLabel={categoryIds.size > 0 ? "Sem subcategorias nesta categoria" : "Selecione categorias ou veja todas"}
               />
               <select className={`cat-select${catSource ? " active" : ""}`} value={catSource} onChange={(e) => { setCatSource(e.target.value); setPage(0); }} style={{ padding: "7px 10px" }} title="Como a transação foi categorizada">
-                <option value="">Toda categorização</option>
+                <option value="">Categorizado por (todos)</option>
                 <option value="rule">Por regra</option>
                 <option value="embedding">Por memória (similaridade)</option>
                 <option value="llm">Por IA</option>
@@ -1435,7 +1435,7 @@ export function TransactionExplorer({
               <input type="date" value={dateFrom} onChange={(e) => { setPeriodPreset("custom"); setDateFrom(e.target.value); setPage(0); }} style={fInput} placeholder="De" />
               <span style={{ color: "var(--ink-faint)", fontSize: 12 }}>até</span>
               <input type="date" value={dateTo} onChange={(e) => { setPeriodPreset("custom"); setDateTo(e.target.value); setPage(0); }} style={fInput} placeholder="Até" />
-              <span style={{ ...fLabel, width: "auto", marginLeft: 12 }}>Valor</span>
+              <span style={{ ...fLabel, minWidth: "auto", marginLeft: 12 }}>Valor</span>
               <input type="number" placeholder="De R$" value={amountMin} min="0" onChange={(e) => { setAmountMin(e.target.value); setPage(0); }} style={{ ...fInput, width: 90 }} />
               <input type="number" placeholder="Até R$" value={amountMax} min="0" onChange={(e) => { setAmountMax(e.target.value); setPage(0); }} style={{ ...fInput, width: 90 }} />
               {activeFilterCount > 0 && (
