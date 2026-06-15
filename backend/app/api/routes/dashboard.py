@@ -125,6 +125,38 @@ class ExpenseSizeProfileResponse(BaseModel):
     items: list[ExpenseSizeProfileItem]
 
 
+class SizeBucketItem(BaseModel):
+    key: str
+    label: str
+    helper: str
+    count: int
+    total: Decimal
+    average: Decimal
+    share_ratio: Decimal
+
+
+class CostTypeStat(BaseModel):
+    count: int
+    total: Decimal
+
+
+class FixedCostItem(BaseModel):
+    description: str
+    category_name: str | None
+    total: Decimal
+    count: int
+    monthly_amount: Decimal
+
+
+class SpendingBreakdownResponse(BaseModel):
+    workspace_id: str
+    total_expense: Decimal
+    size_buckets: list[SizeBucketItem]
+    fixed: CostTypeStat
+    variable: CostTypeStat
+    fixed_items: list[FixedCostItem]
+
+
 class MerchantRankingItem(BaseModel):
     description: str
     amount: Decimal
@@ -378,6 +410,21 @@ def get_expense_size_profile(
         date_to=date_to,
     )
     return ExpenseSizeProfileResponse(workspace_id=auth.workspace_id, items=items)
+
+
+@router.get("/spending-breakdown")
+def get_spending_breakdown(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> SpendingBreakdownResponse:
+    data = DashboardService(db).spending_breakdown(
+        workspace_id=auth.workspace_id,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    return SpendingBreakdownResponse(workspace_id=auth.workspace_id, **data)
 
 
 @router.get("/merchant-ranking")

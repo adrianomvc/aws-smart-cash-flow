@@ -24,6 +24,19 @@ from app.services.parsers import extract_installment, normalize_transaction_desc
 ZERO = Decimal("0.00")
 ONE = Decimal("1")
 NEG_ONE = Decimal("-1")
+
+# Spending breakdown: transaction-size buckets (P/M/G/GG) in BRL. Tweak freely.
+_SIZE_BUCKETS = [
+    ("P", "Pequeno", "Até R$ 50", ZERO, Decimal("50")),
+    ("M", "Médio", "R$ 50–250", Decimal("50"), Decimal("250")),
+    ("G", "Grande", "R$ 250–1.000", Decimal("250"), Decimal("1000")),
+    ("GG", "Gigante", "Acima de R$ 1.000", Decimal("1000"), None),
+]
+# "Fixed" cost = same description recurring in >= N distinct months with a
+# stable amount (coefficient of variation <= threshold). Everything else is
+# "variable". Detection runs over a trailing 6-month window.
+_FIXED_MIN_MONTHS = 3
+_FIXED_MAX_CV = 0.20
 WEEKDAY_NAMES = [
     "Segunda",
     "Terca",
@@ -507,6 +520,149 @@ class DashboardService:
                 }
             )
         return items
+
+    def spending_breakdown(
+        self,
+        workspace_id: str,
+        date_from: date | None,
+        date_to: date | None,
+    ) -> dict[str, object]:
+        """Two expense views for the period: size buckets (P/M/G/GG) and
+        fixed vs variable costs (fixed = recurring with a stable amount)."""
+        # --- 1) Detect "fixed" descriptions over a trailing 6-month window. ----
+        if date_to is not None:
+            detect_from = _add_months(date(date_to.year, date_to.month, 1), -5)
+            if date_from is not None and date_from < detect_from:
+                detect_from = date_from
+        else:
+            detect_from = date_from
+        detect_amounts: dict[str, list[Decimal]] = {}
+        detect_months: dict[str, set[str]] = {}
+        for t in self._transactions(workspace_id, detect_from, date_to):
+            if t.direction != "debit":
+                continue
+            detect_amounts.setdefault(t.description, []).append(abs(t.amount))
+            detect_months.setdefault(t.description, set()).add(t.transaction_date.strftime("%Y-%m"))
+        fixed_descriptions: set[str] = set()
+        monthly_amount: dict[str, Decimal] = {}
+        for descr, amounts in detect_amounts.items():
+            if len(detect_months[descr]) < _FIXED_MIN_MONTHS or len(amounts) < 2:
+                continue
+            vals = [float(a) for a in amounts]
+            mean = sum(vals) / len(vals)
+            if mean <= 0:
+                continue
+            variance = sum((v - mean) ** 2 for v in vals) / len(vals)
+            if (variance ** 0.5) / mean <= _FIXED_MAX_CV:
+                fixed_descriptions.add(descr)
+                ordered = sorted(amounts)
+                monthly_amount[descr] = ordered[len(ordered) // 2]
+
+        # --- 2) Classify the period's expenses. --------------------------------
+        rows = self.db.execute(
+            select(Transaction, Category)
+            .outerjoin(
+                TransactionCategoryAssignment,
+                and_(
+                    TransactionCategoryAssignment.transaction_id == Transaction.id,
+                    TransactionCategoryAssignment.workspace_id == workspace_id,
+                ),
+            )
+            .outerjoin(
+                Category,
+                and_(
+                    Category.id == TransactionCategoryAssignment.category_id,
+                    Category.workspace_id == workspace_id,
+                ),
+            )
+            .where(
+                *self._transaction_filters(workspace_id, date_from, date_to),
+                Transaction.direction == "debit",
+            )
+        ).all()
+        cats_by_id = {c.id: c for _, c in rows if c is not None}
+
+        size_acc = {key: {"count": 0, "total": ZERO} for key, *_ in _SIZE_BUCKETS}
+        fixed_total = ZERO
+        fixed_count = 0
+        variable_total = ZERO
+        variable_count = 0
+        total_expense = ZERO
+        fixed_items_acc: dict[str, dict[str, object]] = {}
+        for transaction, category in rows:
+            amount = abs(transaction.amount)
+            total_expense += amount
+            for key, _label, _helper, low, high in _SIZE_BUCKETS:
+                if amount > low and (high is None or amount <= high):
+                    size_acc[key]["count"] += 1
+                    size_acc[key]["total"] += amount
+                    break
+            if transaction.description in fixed_descriptions:
+                fixed_total += amount
+                fixed_count += 1
+                display = (
+                    cats_by_id.get(category.parent_category_id)
+                    if category is not None and category.parent_category_id is not None
+                    else category
+                )
+                item = fixed_items_acc.setdefault(
+                    transaction.description,
+                    {
+                        "description": transaction.description,
+                        "category_name": display.name if display is not None else None,
+                        "total": ZERO,
+                        "count": 0,
+                    },
+                )
+                item["total"] = Decimal(item["total"]) + amount
+                item["count"] = int(item["count"]) + 1
+            else:
+                variable_total += amount
+                variable_count += 1
+
+        size_buckets: list[dict[str, object]] = []
+        for key, label, helper, _low, _high in _SIZE_BUCKETS:
+            total = Decimal(size_acc[key]["total"]).quantize(Decimal("0.01"))
+            count = int(size_acc[key]["count"])
+            size_buckets.append(
+                {
+                    "key": key,
+                    "label": label,
+                    "helper": helper,
+                    "count": count,
+                    "total": total,
+                    "average": (total / count).quantize(Decimal("0.01")) if count else ZERO,
+                    "share_ratio": (
+                        (total / total_expense).quantize(Decimal("0.0001"))
+                        if total_expense > ZERO
+                        else ZERO
+                    ),
+                }
+            )
+
+        fixed_items = sorted(
+            fixed_items_acc.values(), key=lambda i: Decimal(i["total"]), reverse=True
+        )[:15]
+        for item in fixed_items:
+            item_total = Decimal(item["total"]).quantize(Decimal("0.01"))
+            item["total"] = item_total
+            item["monthly_amount"] = monthly_amount.get(
+                str(item["description"]), item_total
+            ).quantize(Decimal("0.01"))
+
+        return {
+            "total_expense": total_expense.quantize(Decimal("0.01")),
+            "size_buckets": size_buckets,
+            "fixed": {
+                "count": fixed_count,
+                "total": fixed_total.quantize(Decimal("0.01")),
+            },
+            "variable": {
+                "count": variable_count,
+                "total": variable_total.quantize(Decimal("0.01")),
+            },
+            "fixed_items": fixed_items,
+        }
 
     def merchant_ranking(
         self,

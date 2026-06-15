@@ -42,6 +42,7 @@ import {
 } from "../lib/utils";
 import { buildDailyCashflow, buildMonthlyCashflow } from "../lib/cashflow";
 import { useHasTransactions, usePeriod } from "../hooks";
+import { SpendingProfileDetailed } from "../components/SpendingBreakdown";
 import { EmptyInline, EmptyState, PageState } from "../components/ui";
 import type {
   ApiSession,
@@ -1288,6 +1289,11 @@ export function CashflowPage({
             />
           </div>
         </div>
+      </div>
+
+      {/* Perfil de gastos detalhado: porte (P/M/G/GG) + fixo × variável */}
+      <div style={{ marginTop: 4, marginBottom: 16 }}>
+        <SpendingProfileDetailed session={session} query={period.query} />
       </div>
     </div>
   );

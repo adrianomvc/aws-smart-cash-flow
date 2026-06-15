@@ -297,6 +297,35 @@ export type ExpenseSizeProfileItem = {
   average_amount: string;
 };
 
+export type SizeBucketItem = {
+  key: string;
+  label: string;
+  helper: string;
+  count: number;
+  total: string;
+  average: string;
+  share_ratio: string;
+};
+
+export type CostTypeStat = { count: number; total: string };
+
+export type FixedCostItem = {
+  description: string;
+  category_name: string | null;
+  total: string;
+  count: number;
+  monthly_amount: string;
+};
+
+export type SpendingBreakdown = {
+  workspace_id: string;
+  total_expense: string;
+  size_buckets: SizeBucketItem[];
+  fixed: CostTypeStat;
+  variable: CostTypeStat;
+  fixed_items: FixedCostItem[];
+};
+
 export type MerchantRankingItem = {
   description: string;
   amount: string;
@@ -757,6 +786,10 @@ export function getSubcategoryRanking(session: ApiSession, query: string) {
 
 export function getExpenseSizeProfile(session: ApiSession, query: string) {
   return apiRequest<ListResponse<ExpenseSizeProfileItem>>(`/dashboard/expense-size-profile${query}`, session);
+}
+
+export function getSpendingBreakdown(session: ApiSession, query: string) {
+  return apiRequest<SpendingBreakdown>(`/dashboard/spending-breakdown${query}`, session);
 }
 
 export function getMerchantRanking(session: ApiSession, query: string) {

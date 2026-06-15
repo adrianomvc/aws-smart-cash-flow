@@ -32,6 +32,7 @@ import {
   type DataQuality, type GoalRead, type BudgetRead, type CreditCardRead,
   type CalendarEventRead,
 } from "../lib/api";
+import { SpendingProfileCard } from "../components/SpendingBreakdown";
 
 // ─── Cores por categoria (mapeamento de nomes → hex) ──────────────────────────
 const CAT_COLORS: Record<string, string> = {
@@ -1432,6 +1433,13 @@ export function DashboardPage({
             : <div className="card card-pad"><div className="skel" style={{ height: 120 }} /></div>}
         </div>
       </div>
+
+      {/* Perfil de gastos: porte (P/M/G/GG) + fixo × variável */}
+      {summary && (
+        <div className="grid cols-2" style={{ marginBottom: 16, alignItems: "start" }}>
+          <SpendingProfileCard session={session} query={q} />
+        </div>
+      )}
 
       {/* Sankey: De onde veio · para onde foi */}
       {summary && <SankeyMini summary={summary} categories={cats} subcategories={subs} onNav={onNavigate} />}
