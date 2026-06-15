@@ -822,7 +822,13 @@ export function TransactionExplorer({
   const [sourceType, setSourceType] = useState(initialSourceType);
   const [cardBrand, setCardBrand] = useState("");
   const [direction, setDirection] = useState(initialDirection);
-  const [statusFilter, setStatusFilter] = useState(initialCategoryId.startsWith("__") ? initialCategoryId : "");
+  const [statusFilter, setStatusFilter] = useState(
+    initialCategoryId === "__pending__" || initialCategoryId === "__confirmed__" ? initialCategoryId : "",
+  );
+  // Categorization-source filter ("" | manual | rule | embedding | llm | __none__)
+  const [catSource, setCatSource] = useState("");
+  // Review-status filter ("" | queue | pending | accepted). "__review__" drilldown → review queue.
+  const [reviewStatus, setReviewStatus] = useState(initialCategoryId === "__review__" ? "queue" : "");
   const [categoryIds, setCategoryIds] = useState<Set<string>>(() => new Set(initialCategoryId && !initialCategoryId.startsWith("__") ? [initialCategoryId] : []));
   const [subcategoryIds, setSubcategoryIds] = useState<Set<string>>(new Set());
   const [amountMin, setAmountMin] = useState("");
@@ -959,8 +965,10 @@ export function TransactionExplorer({
     if (amountMax) params.set("amount_max", amountMax);
     if (statusFilter === "__pending__") params.set("status", "pending");
     else if (statusFilter === "__confirmed__") params.set("status", "confirmed");
+    if (catSource) params.set("category_source", catSource);
+    if (reviewStatus) params.set("category_review_status", reviewStatus);
     return `?${params.toString()}`;
-  }, [amountMax, amountMin, cardBrand, effectiveCategoryIds, dateFrom, dateTo, direction, fixedQuery, importJobId, sourceFileId, page, pageSize, search, sortBy, sortDir, sourceType, statusFilter, weekday]);
+  }, [amountMax, amountMin, cardBrand, catSource, effectiveCategoryIds, dateFrom, dateTo, direction, fixedQuery, importJobId, reviewStatus, sourceFileId, page, pageSize, search, sortBy, sortDir, sourceType, statusFilter, weekday]);
   const transactions = useQuery({ queryKey: ["transactions", session.token, query], queryFn: () => getTransactions(session, query) });
   const duplicatesQuery = `?limit=${duplicatePageSize}&offset=${duplicatePage * duplicatePageSize}`;
   const duplicates = useQuery({ queryKey: ["transaction-duplicates", session.token, duplicatesQuery], queryFn: () => getTransactionDuplicates(session, duplicatesQuery), enabled: showDuplicates });
@@ -1086,9 +1094,9 @@ export function TransactionExplorer({
   const selCount = selectedIds.size;
   const nextPageDisabled = transactions.isLoading || fixedQuery === "category_id=__uncategorized__" ? visibleTransactions.length < pageSize : (page + 1) * pageSize >= totalTransactions;
   const totalPages = Math.max(1, Math.ceil(totalTransactions / pageSize));
-  const emptyMessage = statusFilter === "__pending__" ? "Ótimo! Nenhum lançamento pendente de categoria." : searchInput ? `Nenhum lançamento encontrado para "${searchInput}".` : (dateFrom || dateTo) ? "Nenhum lançamento no período selecionado." : "Nenhuma transação encontrada.";
+  const emptyMessage = (statusFilter === "__pending__" || reviewStatus === "queue") ? "Tudo certo! Nada na fila de revisão." : reviewStatus === "pending" ? "Nenhuma sugestão pendente de revisão." : searchInput ? `Nenhum lançamento encontrado para "${searchInput}".` : (dateFrom || dateTo) ? "Nenhum lançamento no período selecionado." : "Nenhuma transação encontrada.";
 
-  const activeFilterCount = [searchInput, sourceType, cardBrand, importJobId, sourceFileId, !reviewMode ? statusFilter : "", !reviewMode && (categoryIds.size > 0 || subcategoryIds.size > 0) ? "cat" : "", dateFrom || dateTo, weekday !== undefined ? String(weekday) : "", amountMin, amountMax].filter(Boolean).length;
+  const activeFilterCount = [searchInput, sourceType, cardBrand, importJobId, sourceFileId, !reviewMode ? statusFilter : "", !reviewMode ? catSource : "", !reviewMode ? reviewStatus : "", !reviewMode && (categoryIds.size > 0 || subcategoryIds.size > 0) ? "cat" : "", dateFrom || dateTo, weekday !== undefined ? String(weekday) : "", amountMin, amountMax].filter(Boolean).length;
   const filterSummary = transactionFilterSummary({ categoryIds: effectiveCategoryIds, categories: categories.data?.items ?? [], dateFrom, dateTo, direction, duplicateGroupCount: 0, importJobId, periodPreset, reviewMode, search, sourceType, weekday });
   void filterSummary;
 
@@ -1117,7 +1125,7 @@ export function TransactionExplorer({
   function updateDateTo(value: string) { setPeriodPreset("custom"); setDateTo(value); setPage(0); }
   void updateDateFrom; void updateDateTo;
 
-  function clearFilters() { setSearchInput(""); setSearch(""); setSourceType(""); setCardBrand(""); setDirection(""); setStatusFilter(""); setCategoryIds(new Set()); setSubcategoryIds(new Set()); setAmountMin(""); setAmountMax(""); setPeriodPreset("all"); setDateFrom(""); setDateTo(""); setPage(0); setTab("all"); setAccountFilter("all"); }
+  function clearFilters() { setSearchInput(""); setSearch(""); setSourceType(""); setCardBrand(""); setDirection(""); setStatusFilter(""); setCatSource(""); setReviewStatus(""); setCategoryIds(new Set()); setSubcategoryIds(new Set()); setAmountMin(""); setAmountMax(""); setPeriodPreset("all"); setDateFrom(""); setDateTo(""); setPage(0); setTab("all"); setAccountFilter("all"); }
   function openGroupReview(group: DuplicateTransactionGroup) { setActiveReviewGroup(group); setKeepId(duplicatePrimaryId(group)); }
   function resolveGroup() { if (!activeReviewGroup || !keepId) return; const deleteIds = activeReviewGroup.items.map((i) => i.id).filter((id) => id !== keepId); if (!deleteIds.length) return; removeDuplicateReviewItems.mutate(deleteIds); }
   function autoResolveAllGroups() {
@@ -1332,6 +1340,20 @@ export function TransactionExplorer({
               <option value="bank_statement">Conta corrente</option>
               <option value="credit_card_statement">Cartão de crédito</option>
               <option value="unknown">Manual / Outras</option>
+            </select>
+            <select className={`cat-select${catSource ? " active" : ""}`} value={catSource} onChange={(e) => { setCatSource(e.target.value); setPage(0); }} style={{ padding: "7px 10px" }} title="Como a transação foi categorizada">
+              <option value="">Toda categorização</option>
+              <option value="rule">Por regra</option>
+              <option value="embedding">Por memória (similaridade)</option>
+              <option value="llm">Por IA</option>
+              <option value="manual">Manual</option>
+              <option value="__none__">Sem categoria</option>
+            </select>
+            <select className={`cat-select${reviewStatus ? " active" : ""}`} value={reviewStatus} onChange={(e) => { setReviewStatus(e.target.value); setPage(0); }} style={{ padding: "7px 10px" }} title="Status de revisão da categorização">
+              <option value="">Revisão: todas</option>
+              <option value="queue">A revisar (fila)</option>
+              <option value="pending">Sugestões pendentes</option>
+              <option value="accepted">Confirmadas</option>
             </select>
             {cardBrands.length > 0 && (
               <select className={`cat-select${cardBrand ? " active" : ""}`} value={cardBrand} onChange={(e) => { setCardBrand(e.target.value); setPage(0); }} style={{ padding: "7px 10px" }}>

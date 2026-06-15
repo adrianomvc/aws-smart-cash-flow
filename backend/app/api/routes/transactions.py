@@ -282,6 +282,8 @@ async def list_transactions(
     amount_min: float | None = None,
     amount_max: float | None = None,
     tx_status: str | None = Query(default=None, alias="status"),
+    category_source: str | None = None,
+    category_review_status: str | None = None,
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> TransactionListResponse:
@@ -408,6 +410,52 @@ async def list_transactions(
             Transaction.id.in_(
                 select(TransactionCategoryAssignment.transaction_id).where(
                     TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+                )
+            )
+        )
+    # Filter by how the transaction was categorized.
+    if category_source == "__none__":
+        filters.append(
+            Transaction.id.not_in(
+                select(TransactionCategoryAssignment.transaction_id).where(
+                    TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+                    TransactionCategoryAssignment.category_id.is_not(None),
+                )
+            )
+        )
+    elif category_source in ("manual", "rule", "embedding", "llm"):
+        filters.append(
+            Transaction.id.in_(
+                select(TransactionCategoryAssignment.transaction_id).where(
+                    TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+                    TransactionCategoryAssignment.source == category_source,
+                )
+            )
+        )
+    if category_review_status == "queue":
+        # Unified "to review" queue: uncategorized OR a pending machine suggestion.
+        filters.append(
+            or_(
+                Transaction.id.not_in(
+                    select(TransactionCategoryAssignment.transaction_id).where(
+                        TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+                        TransactionCategoryAssignment.category_id.is_not(None),
+                    )
+                ),
+                Transaction.id.in_(
+                    select(TransactionCategoryAssignment.transaction_id).where(
+                        TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+                        TransactionCategoryAssignment.review_status == "pending",
+                    )
+                ),
+            )
+        )
+    elif category_review_status in ("pending", "accepted"):
+        filters.append(
+            Transaction.id.in_(
+                select(TransactionCategoryAssignment.transaction_id).where(
+                    TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+                    TransactionCategoryAssignment.review_status == category_review_status,
                 )
             )
         )

@@ -293,7 +293,7 @@ function App() {
       const periodDrill = dashboardPeriod.periodPreset !== "all"
         ? { dateFrom: dashboardPeriod.dateFrom, dateTo: dashboardPeriod.dateTo, periodPreset: dashboardPeriod.periodPreset }
         : {};
-      openTransactions({ categoryId: "__pending__", label: "Revisão", ...periodDrill });
+      openTransactions({ categoryId: "__review__", label: "A revisar", ...periodDrill });
       return;
     }
     setImportDrilldown(null);
