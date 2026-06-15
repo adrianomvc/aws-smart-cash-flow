@@ -1359,7 +1359,7 @@ export function getCopilotStatus(session: ApiSession) {
 
 export function copilotChat(
   session: ApiSession,
-  body: { message: string; history: CopilotTurn[]; date_from?: string | null; date_to?: string | null },
+  body: { message: string; history: CopilotTurn[] },
 ) {
   return apiRequest<{ reply: string | null; available: boolean }>("/copilot/chat", session, {
     method: "POST",

@@ -1,5 +1,3 @@
-from datetime import date
-
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -20,8 +18,6 @@ class CopilotTurn(BaseModel):
 class CopilotChatRequest(BaseModel):
     message: str
     history: list[CopilotTurn] = []
-    date_from: date | None = None
-    date_to: date | None = None
 
 
 class CopilotChatResponse(BaseModel):
@@ -47,7 +43,5 @@ def copilot_chat(
         workspace_id=auth.workspace_id,
         message=payload.message,
         history=[turn.model_dump() for turn in payload.history],
-        date_from=payload.date_from,
-        date_to=payload.date_to,
     )
     return CopilotChatResponse(reply=result.get("reply"), available=bool(result.get("available")))

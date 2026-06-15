@@ -1,10 +1,9 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Database, MessageSquare, Plus, Send, Sparkles } from "lucide-react";
 
 import { copilotChat, getCopilotStatus, getDashboardSummary } from "../lib/api";
 import type { ApiSession, CopilotTurn } from "../lib/api";
-import type { PeriodState } from "../types";
 import { money } from "../lib/utils";
 
 const SUGGESTIONS = [
@@ -51,7 +50,7 @@ function pct(value: unknown): string {
   return Number.isFinite(n) ? `${Math.round(n * 100)}%` : "—";
 }
 
-export function CopilotChat({ session, period }: { session: ApiSession; period?: PeriodState }) {
+export function CopilotChat({ session }: { session: ApiSession }) {
   const threadsKey = `scf_copilot_threads_${session.token.slice(0, 16)}`;
   const [threads, setThreads] = useState<Thread[]>(() => {
     try {
@@ -81,23 +80,14 @@ export function CopilotChat({ session, period }: { session: ApiSession; period?:
     staleTime: 5 * 60 * 1000,
   });
 
-  const sideQuery = period && period.periodPreset !== "all"
-    ? `?date_from=${period.dateFrom}&date_to=${period.dateTo}`
-    : "";
+  // The copilot is NOT tied to the dashboard period: it gets a multi-period
+  // snapshot and decides which period to use. The side panel shows all-time.
   const summaryQ = useQuery({
-    queryKey: ["copilot-summary", session.token, sideQuery],
-    queryFn: () => getDashboardSummary(session, sideQuery),
+    queryKey: ["copilot-summary", session.token],
+    queryFn: () => getDashboardSummary(session, ""),
     staleTime: 2 * 60 * 1000,
   });
   const s = summaryQ.data;
-
-  const dateFrom = period && period.periodPreset !== "all" ? period.dateFrom : null;
-  const dateTo = period && period.periodPreset !== "all" ? period.dateTo : null;
-  const periodLabel = useMemo(() => {
-    if (!dateFrom || !dateTo) return "Todo o histórico";
-    const d = (x: string) => x.split("-").reverse().slice(0, 2).join("/");
-    return `${d(dateFrom)} a ${d(dateTo)}`;
-  }, [dateFrom, dateTo]);
 
   function patchActive(fn: (t: Thread) => Thread) {
     setThreads((ts) => ts.map((t) => (t.id === active?.id ? fn(t) : t)));
@@ -105,7 +95,7 @@ export function CopilotChat({ session, period }: { session: ApiSession; period?:
 
   const send = useMutation({
     mutationFn: (text: string) =>
-      copilotChat(session, { message: text, history: messages.slice(-6), date_from: dateFrom, date_to: dateTo }),
+      copilotChat(session, { message: text, history: messages.slice(-6) }),
     onSuccess: (res) =>
       patchActive((t) => ({
         ...t,
@@ -190,7 +180,6 @@ export function CopilotChat({ session, period }: { session: ApiSession; period?:
                         <Database size={12} /> Fontes:
                       </span>
                       <span className="pill" style={{ fontSize: 10.5 }}>Seus dados</span>
-                      <span className="pill" style={{ fontSize: 10.5 }}>{periodLabel}</span>
                     </div>
                   )}
                 </div>
@@ -237,9 +226,9 @@ export function CopilotChat({ session, period }: { session: ApiSession; period?:
         </div>
         <hr className="divider" />
         <div style={{ padding: 16 }}>
-          <div className="eyebrow" style={{ marginBottom: 10 }}>Período analisado</div>
-          <div style={{ fontSize: 13, fontWeight: 600 }}>{periodLabel}</div>
-          <div className="t-sub">As respostas usam os dados deste período.</div>
+          <div className="eyebrow" style={{ marginBottom: 10 }}>Como funciona</div>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Todo o seu histórico</div>
+          <div className="t-sub">O copiloto escolhe o período conforme a sua pergunta.</div>
         </div>
         <hr className="divider" />
         <div style={{ padding: 16 }}>
