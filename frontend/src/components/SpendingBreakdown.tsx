@@ -113,69 +113,38 @@ export function SpendingProfileCard({ session, query }: { session: ApiSession; q
             <div className="t-sub" style={{ fontSize: 11 }}>{d?.variable.count ?? 0} transações</div>
           </div>
         </div>
-        {(d?.fixed_items?.length ?? 0) > 0 && (
-          <div style={{ borderTop: "1px solid var(--line)", marginTop: 12, paddingTop: 10 }}>
-            <span className="t-sub" style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px" }}>Maiores fixos</span>
-            <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 6 }}>
-              {(d?.fixed_items ?? []).slice(0, 3).map((it) => (
-                <div key={it.description} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12 }}>
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--ink-2)" }}>{it.description}</span>
-                  <span className="mono" style={{ fontWeight: 700, flex: "none" }}>{money(it.total)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
     </>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Detailed — Fluxo de caixa: Porte (P/M/G/GG) + lista dos maiores custos fixos.
-// (Fixo × variável fica no card "Composição das despesas", não aqui.)
+// Detailed — Fluxo de caixa: card "Porte das transações" (P/M/G/GG).
+// (Fixo × variável fica em "Composição das despesas"; a lista de recorrentes
+//  fica em "Recorrências relevantes" — aqui é só o porte, por tamanho de gasto.)
 // ---------------------------------------------------------------------------
 export function SpendingProfileDetailed({ session, query }: { session: ApiSession; query: string }) {
   const q = useBreakdown(session, query);
   const d = q.data;
+  const buckets = d?.size_buckets ?? [];
+  const half = Math.ceil(buckets.length / 2);
 
   return (
-    <div className="grid cols-2" style={{ gap: 14 }}>
-      {/* Porte das transações */}
-      <div className="card card-pad">
-        <h3 style={{ margin: "0 0 4px", fontSize: 14.5, fontWeight: 700 }}>Porte das transações</h3>
-        <p className="t-sub" style={{ margin: "0 0 14px", fontSize: 12 }}>
-          Por tamanho do gasto: <strong>P</strong> pequeno, <strong>M</strong> médio, <strong>G</strong> grande, <strong>GG</strong> gigante. Poucas compras grandes costumam dominar o volume.
-        </p>
+    <div className="card card-pad">
+      <h3 style={{ margin: "0 0 4px", fontSize: 14.5, fontWeight: 700 }}>Porte das transações</h3>
+      <p className="t-sub" style={{ margin: "0 0 14px", fontSize: 12 }}>
+        Por tamanho do gasto: <strong>P</strong> pequeno, <strong>M</strong> médio, <strong>G</strong> grande, <strong>GG</strong> gigante. Poucas compras grandes costumam dominar o volume.
+      </p>
+      <div className="grid cols-2" style={{ gap: "13px 28px" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
-          {(d?.size_buckets ?? []).map((b) => <SizeRow key={b.key} b={b} detailed />)}
-          {q.isLoading && <span className="t-sub" style={{ fontSize: 12 }}>Carregando…</span>}
-          {d && Number(d.total_expense) === 0 && <span className="t-sub" style={{ fontSize: 12 }}>Sem despesas no período.</span>}
+          {buckets.slice(0, half).map((b) => <SizeRow key={b.key} b={b} detailed />)}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
+          {buckets.slice(half).map((b) => <SizeRow key={b.key} b={b} detailed />)}
         </div>
       </div>
-
-      {/* Maiores custos fixos (detalhe por trás da composição) */}
-      <div className="card card-pad">
-        <h3 style={{ margin: "0 0 4px", fontSize: 14.5, fontWeight: 700 }}>Maiores custos fixos</h3>
-        <p className="t-sub" style={{ margin: "0 0 14px", fontSize: 12 }}>
-          Despesas recorrentes com valor estável (assinaturas, financiamentos, escola) — o que forma a parcela "fixa" da composição.
-        </p>
-        <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-          {(d?.fixed_items ?? []).slice(0, 8).map((it) => (
-            <div key={it.description} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--ink-1)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.description}</div>
-                <div className="t-sub" style={{ fontSize: 11 }}>{it.category_name ?? "Sem categoria"} · ~{money(it.monthly_amount)}/mês · {it.count}×</div>
-              </div>
-              <span className="mono" style={{ fontWeight: 700, fontSize: 12.5 }}>{money(it.total)}</span>
-            </div>
-          ))}
-          {q.isLoading && <span className="t-sub" style={{ fontSize: 12 }}>Carregando…</span>}
-          {d && d.fixed_items.length === 0 && (
-            <span className="t-sub" style={{ fontSize: 12 }}>Nenhum custo fixo recorrente identificado no período.</span>
-          )}
-        </div>
-      </div>
+      {q.isLoading && <span className="t-sub" style={{ fontSize: 12 }}>Carregando…</span>}
+      {d && Number(d.total_expense) === 0 && <span className="t-sub" style={{ fontSize: 12 }}>Sem despesas no período.</span>}
     </div>
   );
 }
