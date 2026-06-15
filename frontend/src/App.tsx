@@ -6,11 +6,14 @@ import {
   AlertCircle,
   BarChart3,
   Bell,
+  CheckCircle2,
+  Inbox,
   Loader2,
   LayoutDashboard,
   LogOut,
   Moon,
   Settings,
+  Sparkles,
   Sun,
   Tags,
   Upload,
@@ -23,7 +26,10 @@ import {
   signup as apiSignup,
   resetPassword as apiResetPassword,
   type ApiSession,
+  type InsightItem,
   getCurrentWorkspace,
+  getInsights,
+  getTransactions,
   getTransactionDuplicates,
 } from "./lib/api";
 import { pageMeta, periodRange } from "./lib/utils";
@@ -634,9 +640,11 @@ function ProtectedApp({
         dashboardPeriod={dashboardPeriod}
         setDashboardPeriod={setDashboardPeriod}
         duplicateCount={duplicateCount}
+        hasTransactions={workspace.has_transactions}
         onNavigate={onNavigate}
         onOpenTransactions={onOpenTransactions}
         page={page}
+        session={session}
       />
       {page === "dashboard" ? (
         <DashboardPage
@@ -871,24 +879,58 @@ function getPageSection(page: Page): string {
   return "";
 }
 
+const INSIGHT_TONE: Record<string, "warning" | "negative" | "info" | "positive"> = {
+  neg: "negative",
+  warn: "warning",
+  info: "info",
+  pos: "positive",
+};
+
 function Topbar({
   dashboardPeriod,
   setDashboardPeriod,
   duplicateCount = 0,
+  hasTransactions,
   onNavigate,
   onOpenTransactions,
   page,
+  session,
 }: {
   dashboardPeriod: PeriodState;
   setDashboardPeriod: Dispatch<SetStateAction<PeriodState>>;
   duplicateCount?: number;
+  hasTransactions?: boolean;
   onNavigate: (page: Page) => void;
   onOpenTransactions: (drilldown?: TransactionDrilldown) => void;
   page: Page;
+  session: ApiSession;
 }) {
   const [showNotifPopover, setShowNotifPopover] = useState(false);
   const meta = pageMeta(page);
   const sectionLabel = getPageSection(page);
+  const enabled = hasTransactions !== false;
+
+  const insightsQuery = dashboardPeriod.periodPreset !== "all"
+    ? `?date_from=${dashboardPeriod.dateFrom}&date_to=${dashboardPeriod.dateTo}`
+    : "";
+  const insightsQ = useQuery({
+    queryKey: ["insights", session.token, insightsQuery],
+    queryFn: () => getInsights(session, insightsQuery),
+    enabled,
+    staleTime: 5 * 60 * 1000,
+  });
+  const reviewQ = useQuery({
+    queryKey: ["notif-review", session.token],
+    queryFn: () => getTransactions(session, "?category_review_status=queue&limit=1"),
+    enabled,
+    staleTime: 2 * 60 * 1000,
+  });
+
+  const alertInsights: InsightItem[] = (insightsQ.data?.items ?? [])
+    .filter((i) => i.type === "neg" || i.type === "warn")
+    .slice(0, 4);
+  const reviewCount = reviewQ.data?.total ?? 0;
+  const alertCount = alertInsights.length + (reviewCount > 0 ? 1 : 0) + (duplicateCount > 0 ? 1 : 0);
 
   return (
     <header className="header">
@@ -906,33 +948,71 @@ function Topbar({
 
         <div className="notif-wrapper">
           <button
-            aria-label={duplicateCount > 0 ? `${duplicateCount} grupo(s) de duplicados pendentes` : "Sem alertas"}
-            className={`icon-btn notif-btn${duplicateCount > 0 ? " has-alerts" : ""}`}
+            aria-label={alertCount > 0 ? `${alertCount} alerta(s)` : "Sem alertas"}
+            className={`icon-btn notif-btn${alertCount > 0 ? " has-alerts" : ""}`}
             onClick={() => setShowNotifPopover((v) => !v)}
             type="button"
           >
             <Bell size={18} />
-            {duplicateCount > 0 ? <span className="notif-badge">{duplicateCount > 99 ? "99+" : duplicateCount}</span> : null}
+            {alertCount > 0 ? <span className="notif-badge">{alertCount > 99 ? "99+" : alertCount}</span> : null}
           </button>
           {showNotifPopover ? (
             <>
               <div className="notif-overlay" onClick={() => setShowNotifPopover(false)} />
               <div className="notif-popover">
                 <div className="notif-popover-header">
-                  <strong>Alertas</strong>
+                  <strong>Alertas {alertCount > 0 ? `(${alertCount})` : ""}</strong>
                   <button className="icon-btn" onClick={() => setShowNotifPopover(false)} type="button"><X size={14} /></button>
                 </div>
+
+                {/* Transações a revisar/classificar */}
+                {reviewCount > 0 ? (
+                  <button
+                    className="notif-item"
+                    onClick={() => { setShowNotifPopover(false); onOpenTransactions({ categoryId: "__review__", label: "A revisar" }); }}
+                    type="button"
+                  >
+                    <span className="notif-item-icon warning"><Inbox size={16} /></span>
+                    <span className="notif-item-body">
+                      <strong>{reviewCount} {reviewCount === 1 ? "transação para revisar" : "transações para revisar"}</strong>
+                      <small>Sem categoria ou sugestões aguardando seu aval</small>
+                    </span>
+                  </button>
+                ) : null}
+
+                {/* Insights de alerta */}
+                {alertInsights.map((ins, idx) => (
+                  <button
+                    key={`ins-${idx}`}
+                    className="notif-item"
+                    onClick={() => { setShowNotifPopover(false); onNavigate("insights"); }}
+                    type="button"
+                  >
+                    <span className={`notif-item-icon ${INSIGHT_TONE[ins.type] ?? "info"}`}><Sparkles size={16} /></span>
+                    <span className="notif-item-body">
+                      <strong>{ins.title}</strong>
+                      <small>{ins.impact_label || ins.reason}</small>
+                    </span>
+                  </button>
+                ))}
+
+                {/* Lançamentos duplicados */}
                 {duplicateCount > 0 ? (
                   <button className="notif-item" onClick={() => { setShowNotifPopover(false); onOpenTransactions(); }} type="button">
                     <span className="notif-item-icon warning"><AlertCircle size={16} /></span>
                     <span className="notif-item-body">
-                      <strong>{duplicateCount} grupo(s) de lançamentos duplicados</strong>
+                      <strong>{duplicateCount} {duplicateCount === 1 ? "grupo de duplicados" : "grupos de duplicados"}</strong>
                       <small>Clique para revisar na tela de Transações</small>
                     </span>
                   </button>
-                ) : (
-                  <p className="notif-empty">Nenhum alerta no momento.</p>
-                )}
+                ) : null}
+
+                {alertCount === 0 ? (
+                  <p className="notif-empty">
+                    <CheckCircle2 size={15} style={{ verticalAlign: "-2px", marginRight: 6, color: "var(--acc)" }} />
+                    Tudo em dia. Nenhum alerta no momento.
+                  </p>
+                ) : null}
               </div>
             </>
           ) : null}

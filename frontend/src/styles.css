@@ -1609,6 +1609,9 @@ input:focus, select:focus { border-color: var(--acc); box-shadow: 0 0 0 3px rgba
 .notif-item:hover { background: var(--bg-sunken); }
 .notif-item-icon { border-radius: 8px; flex-shrink: 0; padding: 6px; }
 .notif-item-icon.warning { background: var(--warn-soft, rgba(245,158,11,.12)); color: var(--warn); }
+.notif-item-icon.negative { background: var(--neg-soft, rgba(239,68,68,.12)); color: var(--neg); }
+.notif-item-icon.info { background: var(--info-soft, rgba(56,189,248,.12)); color: var(--info); }
+.notif-item-icon.positive { background: var(--acc-soft, rgba(34,197,94,.12)); color: var(--acc); }
 .notif-item-body { display: flex; flex-direction: column; gap: 2px; }
 .notif-item-body strong { font-size: 13px; color: var(--ink); }
 .notif-item-body small { color: var(--ink-3); font-size: 12px; }
