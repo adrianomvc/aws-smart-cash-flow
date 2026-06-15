@@ -664,6 +664,88 @@ class DashboardService:
             "fixed_items": fixed_items,
         }
 
+    def category_trends(
+        self,
+        workspace_id: str,
+        date_to: date | None,
+        months: int,
+        limit: int,
+    ) -> dict[str, object]:
+        """Monthly expense totals per top-level category over a trailing window,
+        for an evolution line chart (by category, not subcategory)."""
+        anchor = date_to or self._latest_transaction_date(workspace_id)
+        if anchor is None:
+            return {"months": [], "series": []}
+        start = _add_months(date(anchor.year, anchor.month, 1), -(months - 1))
+        month_labels: list[str] = []
+        cur = date(start.year, start.month, 1)
+        end_month = date(anchor.year, anchor.month, 1)
+        while cur <= end_month:
+            month_labels.append(cur.strftime("%Y-%m"))
+            cur = _add_months(cur, 1)
+        month_index = {m: i for i, m in enumerate(month_labels)}
+
+        rows = self.db.execute(
+            select(Transaction, Category)
+            .outerjoin(
+                TransactionCategoryAssignment,
+                and_(
+                    TransactionCategoryAssignment.transaction_id == Transaction.id,
+                    TransactionCategoryAssignment.workspace_id == workspace_id,
+                ),
+            )
+            .outerjoin(
+                Category,
+                and_(
+                    Category.id == TransactionCategoryAssignment.category_id,
+                    Category.workspace_id == workspace_id,
+                ),
+            )
+            .where(
+                *self._transaction_filters(workspace_id, start, anchor),
+                Transaction.direction == "debit",
+            )
+        ).all()
+        cats_by_id = {c.id: c for _, c in rows if c is not None}
+
+        acc: dict[str | None, dict[str, object]] = {}
+        for transaction, category in rows:
+            month = transaction.transaction_date.strftime("%Y-%m")
+            if month not in month_index:
+                continue
+            display = (
+                cats_by_id.get(category.parent_category_id)
+                if category is not None and category.parent_category_id is not None
+                else category
+            )
+            cid = display.id if display is not None else None
+            entry = acc.setdefault(
+                cid,
+                {
+                    "category_id": cid,
+                    "category_name": display.name if display is not None else "Sem categoria",
+                    "total": ZERO,
+                    "points": [ZERO] * len(month_labels),
+                },
+            )
+            amount = abs(transaction.amount)
+            entry["total"] = Decimal(entry["total"]) + amount
+            points = entry["points"]
+            assert isinstance(points, list)
+            points[month_index[month]] += amount
+
+        ranked = sorted(acc.values(), key=lambda e: Decimal(e["total"]), reverse=True)[:limit]
+        series = [
+            {
+                "category_id": e["category_id"],
+                "category_name": e["category_name"],
+                "total": Decimal(e["total"]).quantize(Decimal("0.01")),
+                "points": [Decimal(p).quantize(Decimal("0.01")) for p in e["points"]],  # type: ignore[union-attr]
+            }
+            for e in ranked
+        ]
+        return {"months": month_labels, "series": series}
+
     def merchant_ranking(
         self,
         workspace_id: str,

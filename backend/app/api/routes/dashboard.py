@@ -157,6 +157,19 @@ class SpendingBreakdownResponse(BaseModel):
     fixed_items: list[FixedCostItem]
 
 
+class CategoryTrendSeries(BaseModel):
+    category_id: str | None
+    category_name: str
+    total: Decimal
+    points: list[Decimal]
+
+
+class CategoryTrendsResponse(BaseModel):
+    workspace_id: str
+    months: list[str]
+    series: list[CategoryTrendSeries]
+
+
 class MerchantRankingItem(BaseModel):
     description: str
     amount: Decimal
@@ -425,6 +438,23 @@ def get_spending_breakdown(
         date_to=date_to,
     )
     return SpendingBreakdownResponse(workspace_id=auth.workspace_id, **data)
+
+
+@router.get("/category-trends")
+def get_category_trends(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+    date_to: date | None = None,
+    months: int = Query(default=6, ge=2, le=12),
+    limit: int = Query(default=6, ge=1, le=12),
+) -> CategoryTrendsResponse:
+    data = DashboardService(db).category_trends(
+        workspace_id=auth.workspace_id,
+        date_to=date_to,
+        months=months,
+        limit=limit,
+    )
+    return CategoryTrendsResponse(workspace_id=auth.workspace_id, **data)
 
 
 @router.get("/merchant-ranking")

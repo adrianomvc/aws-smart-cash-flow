@@ -36,6 +36,7 @@ import {
   StatusBadge,
 } from "../components/ui";
 import { TransactionExplorer } from "./TransactionExplorer";
+import { CategoryCharts } from "../components/CategoryCharts";
 import type {
   ApiSession,
   CategorizationRuleRead,
@@ -1262,6 +1263,15 @@ export function CategoriesPage({ session, period, onOpenImports, onOpenTransacti
           </div>
         </div>
       </div>
+
+      {/* Distribuição (rosca) + Evolução (linha) por categoria */}
+      {!categories.isLoading && (
+        <CategoryCharts
+          session={session}
+          rankingItems={rankQ.data?.items ?? []}
+          trendsQuery={period.dateTo ? `?date_to=${period.dateTo}&months=6&limit=6` : "?months=6&limit=6"}
+        />
+      )}
 
       {/* Loading */}
       {categories.isLoading && (

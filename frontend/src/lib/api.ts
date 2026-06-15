@@ -792,6 +792,23 @@ export function getSpendingBreakdown(session: ApiSession, query: string) {
   return apiRequest<SpendingBreakdown>(`/dashboard/spending-breakdown${query}`, session);
 }
 
+export type CategoryTrendSeries = {
+  category_id: string | null;
+  category_name: string;
+  total: string;
+  points: string[];
+};
+
+export type CategoryTrends = {
+  workspace_id: string;
+  months: string[];
+  series: CategoryTrendSeries[];
+};
+
+export function getCategoryTrends(session: ApiSession, query: string) {
+  return apiRequest<CategoryTrends>(`/dashboard/category-trends${query}`, session);
+}
+
 export function getMerchantRanking(session: ApiSession, query: string) {
   return apiRequest<ListResponse<MerchantRankingItem>>(`/dashboard/merchant-ranking${query}`, session);
 }
