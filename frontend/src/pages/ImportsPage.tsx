@@ -13,6 +13,9 @@ import {
   uploadImport,
 } from "../lib/api";
 import { apiErrorMessage, cardLabel, dateLabel, monthYearLabel } from "../lib/utils";
+import { ArrowLeftRight } from "lucide-react";
+import { useHasTransactions } from "../hooks";
+import { NoDataOnboarding } from "../components/ui";
 import { TransactionExplorer } from "./TransactionExplorer";
 import type { ApiSession, CreditCardRead, CreditCardStatementRead, ImportJobRead, TransactionRead } from "../lib/api";
 import type { BatchPreviewResult, BatchUploadProgress, BatchUploadResult, TransactionDrilldown } from "../types";
@@ -922,11 +925,14 @@ export function ImportsPage({
 
 export function TransactionsPage({
   drilldown,
+  onOpenImports,
   session,
 }: {
   drilldown: import("../types").TransactionDrilldown;
+  onOpenImports?: () => void;
   session: ApiSession;
 }) {
+  const hasTransactions = useHasTransactions(session);
   const [selected, setSelected] = useState<TransactionRead | null>(null);
   const drilldownKey = [
     drilldown?.categoryId ?? "all",
@@ -940,6 +946,17 @@ export function TransactionsPage({
     drilldown?.sourceType ?? "",
     drilldown?.weekday ?? "",
   ].join("-");
+  if (hasTransactions === false) {
+    return (
+      <NoDataOnboarding
+        icon={ArrowLeftRight}
+        eyebrow="Transações"
+        title="Importe extratos para ver suas transações"
+        description="Aqui ficam todos os seus lançamentos, com busca, filtros e categorização. Importe um extrato (OFX, CSV ou Excel) e suas transações aparecem prontas para revisar."
+        onImport={onOpenImports}
+      />
+    );
+  }
   return (
     <TransactionExplorer
       key={drilldownKey}

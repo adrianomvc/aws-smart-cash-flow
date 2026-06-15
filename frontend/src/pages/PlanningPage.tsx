@@ -16,7 +16,8 @@ import { Area, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveCont
 
 import { getPlanningProjection } from "../lib/api";
 import { dateLabel, money, moneyAbs } from "../lib/utils";
-import { EmptyState, PageState } from "../components/ui";
+import { EmptyState, NoDataOnboarding, PageState } from "../components/ui";
+import { useHasTransactions } from "../hooks";
 import type { ApiSession } from "../lib/api";
 import type { Page } from "../types";
 
@@ -86,13 +87,27 @@ function ScenarioCard({ tone, title, value, note, main }: { tone: "pos" | "acc" 
   );
 }
 
-export function PlanningPage({ session, onNavigate }: { session: ApiSession; onNavigate: (page: Page) => void }) {
+export function PlanningPage({ session, onNavigate, onOpenImports }: { session: ApiSession; onNavigate: (page: Page) => void; onOpenImports?: () => void }) {
+  const hasTransactions = useHasTransactions(session);
   const [h, setH] = useState(90);
   const projection = useQuery({
     queryKey: ["planning-projection", session.token, h],
     queryFn: () => getPlanningProjection(session, h),
+    enabled: hasTransactions !== false,
   });
   const selLabel = HORIZONS.find((hz) => hz.days === h)?.label ?? `${h} dias`;
+
+  if (hasTransactions === false) {
+    return (
+      <NoDataOnboarding
+        icon={TrendingUp}
+        eyebrow="Planejamento"
+        title="Projete seu saldo futuro"
+        description="A projeção usa seu saldo atual, recorrências, parcelas e eventos sazonais para mostrar como seu dinheiro evolui nos próximos meses. Importe seus extratos para o SmartCashFlow montar os cenários."
+        onImport={onOpenImports ?? (() => onNavigate("dashboard"))}
+      />
+    );
+  }
 
   if (projection.isLoading) {
     return <PageState icon={Loader2} title="Calculando projeção" description="Saldo, recorrências, parcelas e eventos anuais." spin />;

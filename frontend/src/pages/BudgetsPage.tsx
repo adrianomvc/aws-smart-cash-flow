@@ -19,7 +19,9 @@ import {
   periodRange,
   withQueryParams,
 } from "../lib/utils";
-import { useCategories, usePeriod } from "../hooks";
+import { PiggyBank } from "lucide-react";
+import { useCategories, useHasTransactions, usePeriod } from "../hooks";
+import { NoDataOnboarding } from "../components/ui";
 import type { ApiSession, BudgetRead, CategoryRankingItem, CategoryRead } from "../lib/api";
 import type { PeriodState, TransactionDrilldown } from "../types";
 
@@ -340,16 +342,19 @@ function BudgetModal({
 // ---------------------------------------------------------------------------
 
 export function BudgetsPage({
+  onOpenImports,
   onOpenTransactions,
   period: budgetPeriod,
   setPeriod,
   session,
 }: {
+  onOpenImports?: () => void;
   onOpenTransactions: (drilldown?: TransactionDrilldown) => void;
   period: PeriodState;
   setPeriod: Dispatch<SetStateAction<PeriodState>>;
   session: ApiSession;
 }) {
+  const hasTransactions = useHasTransactions(session);
   const [showModal, setShowModal] = useState(false);
   const [budgetForm, setBudgetForm] = useState<BudgetFormState>(emptyBudgetForm);
   const [formError, setFormError] = useState("");
@@ -453,6 +458,20 @@ export function BudgetsPage({
     if (!budgetForm.limitAmount || Number(budgetForm.limitAmount) <= 0) { setFormError("Informe um valor limite válido."); return; }
     setFormError("");
     saveBudget.mutate();
+  }
+
+  if (hasTransactions === false && (persistedBudgets.data?.items?.length ?? 0) === 0 && !showModal) {
+    return (
+      <NoDataOnboarding
+        icon={PiggyBank}
+        eyebrow="Orçamentos"
+        title="Defina seu primeiro orçamento"
+        description="Estabeleça limites de gasto por categoria e acompanhe o consumo no mês. Importe seus extratos para o SmartCashFlow sugerir limites com base no seu histórico, ou crie um orçamento manualmente."
+        onImport={onOpenImports}
+        secondaryLabel="Criar orçamento"
+        onSecondary={() => setShowModal(true)}
+      />
+    );
   }
 
   return (

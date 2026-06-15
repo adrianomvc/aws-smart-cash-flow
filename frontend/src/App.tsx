@@ -652,20 +652,20 @@ function ProtectedApp({
         />
       ) : null}
       {page === "cashflow" ? <CashflowPage onNavigate={onNavigate} onOpenImports={onOpenImports} onOpenTransactions={onOpenTransactions} session={session} period={dashboardPeriod} setPeriod={setDashboardPeriod} /> : null}
-      {page === "calendar" ? <CalendarPage onOpenTransactions={onOpenTransactions} period={dashboardPeriod} session={session} setPeriod={setDashboardPeriod} /> : null}
-      {page === "cards" ? <CardsPage onOpenTransactions={onOpenTransactions} period={dashboardPeriod} session={session} setPeriod={setDashboardPeriod} /> : null}
-      {page === "budgets" ? <BudgetsPage onOpenTransactions={onOpenTransactions} period={dashboardPeriod} setPeriod={setDashboardPeriod} session={session} /> : null}
-      {page === "goals" ? <GoalsPage session={session} period={dashboardPeriod} setPeriod={setDashboardPeriod} /> : null}
-      {page === "planning" ? <PlanningPage session={session} onNavigate={onNavigate} /> : null}
-      {page === "scenarios" ? <ScenariosPage session={session} onNavigate={onNavigate} /> : null}
+      {page === "calendar" ? <CalendarPage onOpenImports={onOpenImports} onOpenTransactions={onOpenTransactions} period={dashboardPeriod} session={session} setPeriod={setDashboardPeriod} /> : null}
+      {page === "cards" ? <CardsPage onOpenImports={onOpenImports} onOpenTransactions={onOpenTransactions} period={dashboardPeriod} session={session} setPeriod={setDashboardPeriod} /> : null}
+      {page === "budgets" ? <BudgetsPage onOpenImports={onOpenImports} onOpenTransactions={onOpenTransactions} period={dashboardPeriod} setPeriod={setDashboardPeriod} session={session} /> : null}
+      {page === "goals" ? <GoalsPage onOpenImports={onOpenImports} session={session} period={dashboardPeriod} setPeriod={setDashboardPeriod} /> : null}
+      {page === "planning" ? <PlanningPage session={session} onNavigate={onNavigate} onOpenImports={onOpenImports} /> : null}
+      {page === "scenarios" ? <ScenariosPage session={session} onNavigate={onNavigate} onOpenImports={onOpenImports} /> : null}
       {page === "investments" ? <InvestmentsPage session={session} period={dashboardPeriod} /> : null}
-      {page === "insights" ? <InsightsPage session={session} period={dashboardPeriod} onNavigate={onNavigate} onOpenTransactions={onOpenTransactions} /> : null}
+      {page === "insights" ? <InsightsPage session={session} period={dashboardPeriod} onNavigate={onNavigate} onOpenImports={onOpenImports} onOpenTransactions={onOpenTransactions} /> : null}
       {page === "wealth" ? <WealthPage session={session} onNavigate={onNavigate} /> : null}
       {page === "family" ? <FamilyPage session={session} /> : null}
       {page === "reports" ? <ReportsPage onNavigate={onNavigate} period={dashboardPeriod} session={session} /> : null}
       {page === "imports" ? <ImportsPage drilldown={importDrilldown} onOpenTransactions={onOpenTransactions} session={session} /> : null}
-      {page === "transactions" ? <TransactionsPage drilldown={transactionDrilldown} session={session} /> : null}
-      {page === "categories" ? <CategoriesPage session={session} period={dashboardPeriod} onOpenTransactions={onOpenTransactions} /> : null}
+      {page === "transactions" ? <TransactionsPage drilldown={transactionDrilldown} onOpenImports={onOpenImports} session={session} /> : null}
+      {page === "categories" ? <CategoriesPage session={session} period={dashboardPeriod} onOpenImports={onOpenImports} onOpenTransactions={onOpenTransactions} /> : null}
       {page === "rules" ? <RulesPage session={session} /> : null}
       {page === "review" ? <ReviewPage session={session} /> : null}
       {page === "settings" ? <SettingsPage onNavigate={onNavigate} onOpenTransactions={onOpenTransactions} workspaceName={workspace.workspace_name} session={session} /> : null}

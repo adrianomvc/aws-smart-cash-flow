@@ -6,7 +6,8 @@ import {
 
 import { getInsights } from "../lib/api";
 import { money } from "../lib/utils";
-import { PageState } from "../components/ui";
+import { NoDataOnboarding, PageState } from "../components/ui";
+import { useHasTransactions } from "../hooks";
 import type { ApiSession, InsightItem } from "../lib/api";
 import type { Page, PeriodState, TransactionDrilldown } from "../types";
 
@@ -37,19 +38,34 @@ function renderReason(text: string) {
   );
 }
 
-export function InsightsPage({ session, period, onNavigate, onOpenTransactions }: {
+export function InsightsPage({ session, period, onNavigate, onOpenImports, onOpenTransactions }: {
   session: ApiSession;
   period?: PeriodState;
   onNavigate: (page: Page) => void;
+  onOpenImports?: () => void;
   onOpenTransactions: (drilldown?: TransactionDrilldown) => void;
 }) {
+  const hasTransactions = useHasTransactions(session);
   const query = period && period.periodPreset !== "all"
     ? `?date_from=${period.dateFrom}&date_to=${period.dateTo}`
     : "";
   const insightsQ = useQuery({
     queryKey: ["insights", session.token, query],
     queryFn: () => getInsights(session, query),
+    enabled: hasTransactions !== false,
   });
+
+  if (hasTransactions === false) {
+    return (
+      <NoDataOnboarding
+        icon={Sparkles}
+        eyebrow="Insights"
+        title="Insights inteligentes a partir dos seus dados"
+        description="O SmartCashFlow analisa seus gastos e identifica oportunidades de economia, alertas de orçamento e tendências — tudo explicável e baseado nas suas transações reais. Importe seus extratos para gerar os primeiros insights."
+        onImport={onOpenImports}
+      />
+    );
+  }
 
   if (insightsQ.isLoading) {
     return <PageState icon={Loader2} title="Analisando seus dados" description="Gerando insights a partir das suas transações reais." spin />;

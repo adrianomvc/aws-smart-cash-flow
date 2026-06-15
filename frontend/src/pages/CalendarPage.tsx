@@ -20,7 +20,9 @@ import {
   moneyAbs,
   withQueryParams,
 } from "../lib/utils";
-import { useCategories, usePeriod } from "../hooks";
+import { CalendarDays } from "lucide-react";
+import { NoDataOnboarding } from "../components/ui";
+import { useCategories, useHasTransactions, usePeriod } from "../hooks";
 import type { ApiSession } from "../lib/api";
 import type { CalendarEvent, PeriodState, TransactionDrilldown } from "../types";
 
@@ -291,16 +293,19 @@ function CalendarMonthGrid({
 // ---------------------------------------------------------------------------
 
 export function CalendarPage({
+  onOpenImports,
   onOpenTransactions,
   period: calendarPeriod,
   session,
   setPeriod: setCalendarPeriod,
 }: {
+  onOpenImports?: () => void;
   onOpenTransactions: (drilldown?: TransactionDrilldown) => void;
   period: PeriodState;
   session: ApiSession;
   setPeriod: Dispatch<SetStateAction<PeriodState>>;
 }) {
+  const hasTransactions = useHasTransactions(session);
   const [showEventModal, setShowEventModal] = useState(false);
   const [calFilter, setCalFilter] = useState<CalendarFilter>("all");
   const [eventForm, setEventForm] = useState(() => ({
@@ -515,6 +520,18 @@ export function CalendarPage({
       periodPreset: period.periodPreset,
       search: event.search,
     });
+
+  if (hasTransactions === false) {
+    return (
+      <NoDataOnboarding
+        icon={CalendarDays}
+        eyebrow="Calendário"
+        title="Seu calendário financeiro aparece aqui"
+        description="Compromissos, parcelas de cartão e recorrências são montados a partir dos seus extratos e lançamentos. Importe o primeiro arquivo para preencher o calendário."
+        onImport={onOpenImports}
+      />
+    );
+  }
 
   return (
     <div className="canvas stg">

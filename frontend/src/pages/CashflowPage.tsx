@@ -41,7 +41,7 @@ import {
   trailingMonthsQuery,
 } from "../lib/utils";
 import { buildDailyCashflow, buildMonthlyCashflow } from "../lib/cashflow";
-import { usePeriod } from "../hooks";
+import { useHasTransactions, usePeriod } from "../hooks";
 import { EmptyInline, EmptyState, PageState } from "../components/ui";
 import type {
   ApiSession,
@@ -893,6 +893,7 @@ export function CashflowPage({
   period: PeriodState;
   setPeriod: Dispatch<SetStateAction<PeriodState>>;
 }) {
+  const hasTransactions = useHasTransactions(session);
   const period = usePeriod(cashflowPeriod, setCashflowPeriod);
   const [view, setView] = useState<"mes" | "liq">("mes");
   const [chartMode, setChartMode] = useState<"day" | "month">("month");
@@ -1005,7 +1006,8 @@ export function CashflowPage({
     });
   }
 
-  const isEmpty = !summary.isLoading && summary.data != null && Number(summary.data.transaction_count ?? 0) === 0;
+  const isEmpty = hasTransactions === false
+    || (!summary.isLoading && summary.data != null && Number(summary.data.transaction_count ?? 0) === 0);
   if (isEmpty) {
     return (
       <div className="canvas stg">

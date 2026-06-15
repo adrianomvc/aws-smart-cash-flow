@@ -15,7 +15,9 @@ import {
   updateGoal,
 } from "../lib/api";
 import { apiErrorMessage, dateInputLabel, moneyAbs } from "../lib/utils";
-import { usePeriod } from "../hooks";
+import { Target } from "lucide-react";
+import { useHasTransactions, usePeriod } from "../hooks";
+import { NoDataOnboarding } from "../components/ui";
 import type { AccountItem, ApiSession, DashboardSummary, GoalRead } from "../lib/api";
 import type { PeriodState } from "../types";
 
@@ -505,11 +507,14 @@ export function GoalsPage({
   session,
   period: goalPeriod,
   setPeriod,
+  onOpenImports,
 }: {
   session: ApiSession;
   period: PeriodState;
   setPeriod: Dispatch<SetStateAction<PeriodState>>;
+  onOpenImports?: () => void;
 }) {
+  const hasTransactions = useHasTransactions(session);
   const [showModal, setShowModal] = useState(false);
   const [goalForm, setGoalForm] = useState<GoalFormState>(emptyGoalForm);
   const [formError, setFormError] = useState("");
@@ -618,6 +623,20 @@ export function GoalsPage({
     if (goalForm.trackingMode === "account" && !goalForm.linkedAccount) { setFormError("Selecione a conta vinculada."); return; }
     setFormError("");
     saveGoalMutation.mutate();
+  }
+
+  if (hasTransactions === false && (persistedGoals.data?.items?.length ?? 0) === 0 && !showModal) {
+    return (
+      <NoDataOnboarding
+        icon={Target}
+        eyebrow="Metas"
+        title="Crie sua primeira meta"
+        description="Defina objetivos (reserva de emergência, viagem, entrada de imóvel) e acompanhe o progresso. Importe seus extratos para o SmartCashFlow projetar quando você atinge cada meta, ou crie uma meta manualmente."
+        onImport={onOpenImports}
+        secondaryLabel="Criar meta"
+        onSecondary={openCreate}
+      />
+    );
   }
 
   return (

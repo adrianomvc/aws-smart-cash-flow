@@ -1,7 +1,7 @@
 import { useMemo, Dispatch, SetStateAction } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ApiSession, PeriodState, TransactionPeriodPreset } from "./types";
-import { getCategories } from "./lib/api";
+import { getCategories, getCurrentWorkspace } from "./lib/api";
 
 // ---------------------------------------------------------------------------
 // Helper functions used by usePeriod
@@ -170,4 +170,20 @@ export function useCategories(session: ApiSession) {
     queryKey: ["categories", session.token],
     queryFn: () => getCategories(session),
   });
+}
+
+/**
+ * Reads the cheap `has_transactions` flag from the current-workspace query.
+ * Shares App's ["workspace", token] cache, so this resolves instantly on most
+ * pages (no extra round-trip). Returns:
+ *   - undefined  → still loading / unknown
+ *   - false      → workspace has no imported transactions (show onboarding)
+ *   - true       → has data
+ */
+export function useHasTransactions(session: ApiSession): boolean | undefined {
+  const ws = useQuery({
+    queryKey: ["workspace", session.token],
+    queryFn: () => getCurrentWorkspace(session),
+  });
+  return ws.data?.has_transactions;
 }

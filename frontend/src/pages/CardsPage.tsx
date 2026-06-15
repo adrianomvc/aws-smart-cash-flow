@@ -21,8 +21,9 @@ import {
   moneyAbs,
   withQueryParams,
 } from "../lib/utils";
-import { useCategories, usePeriod } from "../hooks";
-import { InlineError } from "../components/ui";
+import { CreditCard } from "lucide-react";
+import { useCategories, useHasTransactions, usePeriod } from "../hooks";
+import { InlineError, NoDataOnboarding } from "../components/ui";
 import type {
   ApiSession,
   CategoryRead,
@@ -241,16 +242,19 @@ function PaymentMatchListPanel({ items, loading, onOpenMatch }: {
 // ---------------------------------------------------------------------------
 
 export function CardsPage({
+  onOpenImports,
   onOpenTransactions,
   period: cardPeriod,
   session,
   setPeriod: setCardPeriod,
 }: {
+  onOpenImports?: () => void;
   onOpenTransactions: (drilldown?: TransactionDrilldown) => void;
   period: PeriodState;
   session: ApiSession;
   setPeriod: Dispatch<SetStateAction<PeriodState>>;
 }) {
+  const hasTransactions = useHasTransactions(session);
   const period = usePeriod(cardPeriod, setCardPeriod);
   // active = -1 → all cards (aggregate); 0..n → a specific card.
   const [active, setActive] = useState(-1);
@@ -320,6 +324,20 @@ export function CardsPage({
   }
   function openTransaction(t: TransactionRead) {
     onOpenTransactions({ dateFrom: t.transaction_date, dateTo: t.transaction_date, direction: t.direction, label: t.description, periodPreset: "custom", search: t.description, sourceType: "credit_card_statement" });
+  }
+
+  if (hasTransactions === false && cardList.length === 0 && !showNewCard) {
+    return (
+      <NoDataOnboarding
+        icon={CreditCard}
+        eyebrow="Cartões"
+        title="Cadastre seu primeiro cartão"
+        description="Acompanhe faturas, limites, vencimentos e parcelados. Cadastre um cartão manualmente ou importe a fatura (OFX/CSV) para o SmartCashFlow montar tudo automaticamente."
+        onImport={onOpenImports}
+        secondaryLabel="Cadastrar cartão"
+        onSecondary={() => setShowNewCard(true)}
+      />
+    );
   }
 
   return (

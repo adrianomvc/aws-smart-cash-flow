@@ -4,7 +4,8 @@ import { AlertTriangle, Check, CheckCircle2, ChevronRight, Edit3, Flag, Loader2,
 
 import { getDashboardSummary, getGoals, getPlanningProjection } from "../lib/api";
 import { money } from "../lib/utils";
-import { EmptyState, PageState } from "../components/ui";
+import { EmptyState, NoDataOnboarding, PageState } from "../components/ui";
+import { useHasTransactions } from "../hooks";
 import type { ApiSession } from "../lib/api";
 import type { Page } from "../types";
 
@@ -59,10 +60,12 @@ function ImpactRow({ label, before, after, fmt }: { label: string; before: numbe
   );
 }
 
-export function ScenariosPage({ session, onNavigate }: { session: ApiSession; onNavigate: (page: Page) => void }) {
-  const summaryQ = useQuery({ queryKey: ["dash-summary", session.token, "scenarios"], queryFn: () => getDashboardSummary(session, "") });
-  const projQ = useQuery({ queryKey: ["planning-projection", session.token, 90], queryFn: () => getPlanningProjection(session, 90) });
-  const goalsQ = useQuery({ queryKey: ["goals", session.token, "scenarios"], queryFn: () => getGoals(session) });
+export function ScenariosPage({ session, onNavigate, onOpenImports }: { session: ApiSession; onNavigate: (page: Page) => void; onOpenImports?: () => void }) {
+  const hasTransactions = useHasTransactions(session);
+  const enabled = hasTransactions !== false;
+  const summaryQ = useQuery({ queryKey: ["dash-summary", session.token, "scenarios"], queryFn: () => getDashboardSummary(session, ""), enabled });
+  const projQ = useQuery({ queryKey: ["planning-projection", session.token, 90], queryFn: () => getPlanningProjection(session, 90), enabled });
+  const goalsQ = useQuery({ queryKey: ["goals", session.token, "scenarios"], queryFn: () => getGoals(session), enabled });
 
   const [purchase, setPurchase] = useState(0);
   const [installments, setInstallments] = useState(1);
@@ -72,6 +75,18 @@ export function ScenariosPage({ session, onNavigate }: { session: ApiSession; on
   const [extra, setExtra] = useState(0);
 
   function reset() { setPurchase(0); setInstallments(1); setVariableCut(0); setIncomeDrop(0); setNewSub(0); setExtra(0); }
+
+  if (hasTransactions === false) {
+    return (
+      <NoDataOnboarding
+        icon={SlidersHorizontal}
+        eyebrow="Cenários"
+        title="Simule decisões sobre seus números reais"
+        description="Teste o impacto de uma compra parcelada, um corte de gastos ou uma nova assinatura no seu saldo e nas suas metas. Importe seus extratos para liberar o simulador com seus dados."
+        onImport={onOpenImports ?? (() => onNavigate("dashboard"))}
+      />
+    );
+  }
 
   if (summaryQ.isLoading || projQ.isLoading) {
     return <PageState icon={Loader2} title="Carregando simulador" description="Lendo seus indicadores reais." spin />;

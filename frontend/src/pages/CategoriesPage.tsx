@@ -23,12 +23,14 @@ import {
   moneyAbs,
   orderedCategoryOptions,
 } from "../lib/utils";
-import { useCategories } from "../hooks";
+import { Tags } from "lucide-react";
+import { useCategories, useHasTransactions } from "../hooks";
 import {
   Drawer,
   EmptyInline,
   InlineError,
   InlineSuccess,
+  NoDataOnboarding,
   QualityRow,
   StatusBadge,
 } from "../components/ui";
@@ -948,11 +950,13 @@ function TableView({
 // CategoriesPage
 // ---------------------------------------------------------------------------
 
-export function CategoriesPage({ session, period, onOpenTransactions }: {
+export function CategoriesPage({ session, period, onOpenImports, onOpenTransactions }: {
   session: ApiSession;
   period: PeriodState;
+  onOpenImports?: () => void;
   onOpenTransactions: (drilldown?: TransactionDrilldown) => void;
 }) {
+  const hasTransactions = useHasTransactions(session);
   const queryClient = useQueryClient();
   const categories = useCategories(session);
   const allCats = categories.data?.items ?? [];
@@ -1128,6 +1132,18 @@ export function CategoriesPage({ session, period, onOpenTransactions }: {
     if (window.confirm(`Excluir "${cat.name}"${extra}? Esta ação não pode ser desfeita.`)) {
       remove.mutate(cat);
     }
+  }
+
+  if (hasTransactions === false) {
+    return (
+      <NoDataOnboarding
+        icon={Tags}
+        eyebrow="Categorias"
+        title="Suas categorias ganham vida com os lançamentos"
+        description="O SmartCashFlow classifica automaticamente cada transação em categorias e mostra para onde vai o seu dinheiro. Importe seus extratos para ver a distribuição por categoria e ajustar as regras."
+        onImport={onOpenImports}
+      />
+    );
   }
 
   return (
