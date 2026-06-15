@@ -68,6 +68,28 @@ function DistributionDonut({ items }: { items: CategoryRankingItem[] }) {
   );
 }
 
+type TooltipEntry = { value: number | string; name: string; color: string };
+
+function LineTooltip({ active, payload, label }: { active?: boolean; payload?: TooltipEntry[]; label?: string }) {
+  if (!active || !payload?.length) return null;
+  const items = [...payload]
+    .filter((p) => Number(p.value) > 0)
+    .sort((a, b) => Number(b.value) - Number(a.value));
+  if (!items.length) return null;
+  return (
+    <div style={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 10, padding: "8px 11px", boxShadow: "var(--sh-pop)", fontSize: 12, maxWidth: 250 }}>
+      <div style={{ fontWeight: 700, marginBottom: 6, color: "var(--ink)" }}>{label}</div>
+      {items.map((p, i) => (
+        <div key={i} style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 3 }}>
+          <span style={{ width: 9, height: 9, borderRadius: 99, background: p.color, flex: "none" }} />
+          <span style={{ flex: 1, minWidth: 0, color: "var(--ink-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+          <span className="mono" style={{ fontWeight: 700, color: "var(--ink)" }}>{money(Number(p.value))}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Linha — evolução das categorias (por categoria, não subcategoria)
 // ---------------------------------------------------------------------------
@@ -99,12 +121,7 @@ function EvolutionLine({ session, query }: { session: ApiSession; query: string 
           <CartesianGrid stroke="var(--line)" strokeDasharray="3 3" vertical={false} />
           <XAxis dataKey="month" interval={tickInterval} tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--ink-3)" }} />
           <YAxis tickFormatter={(v: number) => compactMoneyAbs(v)} tickLine={false} axisLine={false} width={52} tick={{ fontSize: 11, fill: "var(--ink-3)" }} />
-          <Tooltip
-            formatter={(v: number) => money(v)}
-            contentStyle={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 10, fontSize: 12 }}
-            itemStyle={{ color: "var(--ink)" }}
-            labelStyle={{ color: "var(--ink)" }}
-          />
+          <Tooltip content={<LineTooltip />} />
           <Legend wrapperStyle={{ fontSize: 11.5, color: "var(--ink-2)" }} />
           {d.series.map((s, i) => (
             <Line key={s.category_name} type="monotone" dataKey={s.category_name} stroke={s.color || COLORS[i % COLORS.length]} strokeWidth={2} dot={false} isAnimationActive={false} />
