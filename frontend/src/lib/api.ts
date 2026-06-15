@@ -795,6 +795,7 @@ export function getSpendingBreakdown(session: ApiSession, query: string) {
 export type CategoryTrendSeries = {
   category_id: string | null;
   category_name: string;
+  color: string | null;
   total: string;
   points: string[];
 };

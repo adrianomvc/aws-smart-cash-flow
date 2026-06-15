@@ -724,6 +724,7 @@ class DashboardService:
                 {
                     "category_id": cid,
                     "category_name": display.name if display is not None else "Sem categoria",
+                    "color": display.color if display is not None else None,
                     "total": ZERO,
                     "points": [ZERO] * len(month_labels),
                 },
@@ -739,6 +740,7 @@ class DashboardService:
             {
                 "category_id": e["category_id"],
                 "category_name": e["category_name"],
+                "color": e["color"],
                 "total": Decimal(e["total"]).quantize(Decimal("0.01")),
                 "points": [Decimal(p).quantize(Decimal("0.01")) for p in e["points"]],  # type: ignore[union-attr]
             }

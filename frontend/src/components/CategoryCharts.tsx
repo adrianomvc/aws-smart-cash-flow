@@ -22,15 +22,16 @@ const monthLabel = (ym: string) => `${MONTHS[Number(ym.slice(5, 7)) - 1] ?? ym}/
 function DistributionDonut({ items }: { items: CategoryRankingItem[] }) {
   const data = useMemo(() => {
     const sorted = [...items]
-      .map((i) => ({ name: i.category_name ?? "Sem categoria", value: Math.abs(Number(i.amount ?? 0)) }))
+      .map((i) => ({ name: i.category_name ?? "Sem categoria", value: Math.abs(Number(i.amount ?? 0)), color: i.color }))
       .filter((i) => i.value > 0)
       .sort((a, b) => b.value - a.value);
-    const top = sorted.slice(0, 7);
+    const top: { name: string; value: number; color: string | null }[] = sorted.slice(0, 7);
     const restValue = sorted.slice(7).reduce((s, i) => s + i.value, 0);
-    if (restValue > 0) top.push({ name: "Outras", value: restValue });
+    if (restValue > 0) top.push({ name: "Outras", value: restValue, color: "#94a3b8" });
     return top;
   }, [items]);
   const total = data.reduce((s, i) => s + i.value, 0);
+  const colorOf = (d: { color: string | null }, i: number) => d.color || COLORS[i % COLORS.length];
 
   if (total === 0) {
     return <p className="t-sub" style={{ fontSize: 12, padding: "30px 0", textAlign: "center" }}>Sem despesas para distribuir.</p>;
@@ -41,16 +42,21 @@ function DistributionDonut({ items }: { items: CategoryRankingItem[] }) {
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie data={data} dataKey="value" nameKey="name" innerRadius={55} outerRadius={88} paddingAngle={2} stroke="none">
-              {data.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+              {data.map((d, i) => <Cell key={i} fill={colorOf(d, i)} />)}
             </Pie>
-            <Tooltip formatter={(v: number) => money(v)} contentStyle={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 10, fontSize: 12 }} />
+            <Tooltip
+              formatter={(v: number) => money(v)}
+              contentStyle={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 10, fontSize: 12 }}
+              itemStyle={{ color: "var(--ink)" }}
+              labelStyle={{ color: "var(--ink)" }}
+            />
           </PieChart>
         </ResponsiveContainer>
       </div>
       <div style={{ flex: 1, minWidth: 160, display: "flex", flexDirection: "column", gap: 6 }}>
         {data.map((d, i) => (
           <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
-            <span style={{ width: 9, height: 9, borderRadius: 3, background: COLORS[i % COLORS.length], flex: "none" }} />
+            <span style={{ width: 9, height: 9, borderRadius: 3, background: colorOf(d, i), flex: "none" }} />
             <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--ink-2)" }}>{d.name}</span>
             <span className="t-sub" style={{ fontSize: 11 }}>{((d.value / total) * 100).toFixed(0)}%</span>
             <span className="mono" style={{ fontWeight: 700, minWidth: 72, textAlign: "right" }}>{compactMoneyAbs(d.value)}</span>
@@ -90,10 +96,15 @@ function EvolutionLine({ session, query }: { session: ApiSession; query: string 
           <CartesianGrid stroke="var(--line)" strokeDasharray="3 3" vertical={false} />
           <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--ink-3)" }} />
           <YAxis tickFormatter={(v: number) => compactMoneyAbs(v)} tickLine={false} axisLine={false} width={52} tick={{ fontSize: 11, fill: "var(--ink-3)" }} />
-          <Tooltip formatter={(v: number) => money(v)} contentStyle={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 10, fontSize: 12 }} />
-          <Legend wrapperStyle={{ fontSize: 11.5 }} />
+          <Tooltip
+            formatter={(v: number) => money(v)}
+            contentStyle={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 10, fontSize: 12 }}
+            itemStyle={{ color: "var(--ink)" }}
+            labelStyle={{ color: "var(--ink)" }}
+          />
+          <Legend wrapperStyle={{ fontSize: 11.5, color: "var(--ink-2)" }} />
           {d.series.map((s, i) => (
-            <Line key={s.category_name} type="monotone" dataKey={s.category_name} stroke={COLORS[i % COLORS.length]} strokeWidth={2} dot={false} isAnimationActive={false} />
+            <Line key={s.category_name} type="monotone" dataKey={s.category_name} stroke={s.color || COLORS[i % COLORS.length]} strokeWidth={2} dot={false} isAnimationActive={false} />
           ))}
         </LineChart>
       </ResponsiveContainer>

@@ -160,6 +160,7 @@ class SpendingBreakdownResponse(BaseModel):
 class CategoryTrendSeries(BaseModel):
     category_id: str | None
     category_name: str
+    color: str | None = None
     total: Decimal
     points: list[Decimal]
 
@@ -446,7 +447,7 @@ def get_category_trends(
     db: Session = DbDependency,
     date_to: date | None = None,
     months: int = Query(default=6, ge=2, le=12),
-    limit: int = Query(default=6, ge=1, le=12),
+    limit: int = Query(default=8, ge=1, le=40),
 ) -> CategoryTrendsResponse:
     data = DashboardService(db).category_trends(
         workspace_id=auth.workspace_id,
