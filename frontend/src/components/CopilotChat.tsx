@@ -4,6 +4,7 @@ import { Database, MessageSquare, Plus, Send, Sparkles } from "lucide-react";
 
 import { copilotChat, getCopilotStatus, getDashboardSummary } from "../lib/api";
 import type { ApiSession, CopilotTurn } from "../lib/api";
+import type { TransactionDrilldown } from "../types";
 import { money } from "../lib/utils";
 
 const SUGGESTIONS = [
@@ -50,7 +51,10 @@ function pct(value: unknown): string {
   return Number.isFinite(n) ? `${Math.round(n * 100)}%` : "—";
 }
 
-export function CopilotChat({ session }: { session: ApiSession }) {
+export function CopilotChat({ session, onOpenTransactions }: {
+  session: ApiSession;
+  onOpenTransactions?: (drilldown?: TransactionDrilldown) => void;
+}) {
   const threadsKey = `scf_copilot_threads_${session.token.slice(0, 16)}`;
   const [threads, setThreads] = useState<Thread[]>(() => {
     try {
@@ -223,6 +227,16 @@ export function CopilotChat({ session }: { session: ApiSession }) {
             <SideStat label="Saúde financeira" value={s?.financial_health_score != null ? `${s.financial_health_score}/100` : "—"} />
             <SideStat label="Comprometimento" value={s ? pct(s.commitment_rate) : "—"} />
           </div>
+          {onOpenTransactions && (
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{ width: "100%", marginTop: 14 }}
+              onClick={() => onOpenTransactions()}
+              type="button"
+            >
+              <Database size={14} /> Ver transações
+            </button>
+          )}
         </div>
         <hr className="divider" />
         <div style={{ padding: 16 }}>

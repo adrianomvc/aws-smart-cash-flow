@@ -77,7 +77,7 @@ export function InsightsPage({ session, period, onNavigate, onOpenImports, onOpe
           <h2 className="section-title"><MessageSquare size={18} /> Copiloto Financeiro</h2>
         </div>
         {tabBar}
-        <CopilotChat session={session} />
+        <CopilotChat session={session} onOpenTransactions={onOpenTransactions} />
       </div>
     );
   }
