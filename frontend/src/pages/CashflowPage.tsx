@@ -695,10 +695,12 @@ function CatImpactAccordion({
   const [open, setOpen] = useState<string | null>(null);
   if (loading) return <PageState icon={Loader2} title="Carregando categorias" description="Aguarde." spin compact />;
   if (!items.length) return <EmptyInline message="Sem categorias para o período." />;
-  const sorted = [...items]
+  const ranked = [...items]
     .filter((c) => c.category_id !== null)
-    .sort((a, b) => Math.abs(Number(b.amount ?? 0)) - Math.abs(Number(a.amount ?? 0)))
-    .slice(0, 7);
+    .sort((a, b) => Math.abs(Number(b.amount ?? 0)) - Math.abs(Number(a.amount ?? 0)));
+  const sorted = ranked.slice(0, 5);
+  const hiddenCount = ranked.length - sorted.length;
+  const hiddenAmount = ranked.slice(5).reduce((sum, item) => sum + Math.abs(Number(item.amount ?? 0)), 0);
   const totalAmount = sorted.reduce((sum, item) => sum + Math.abs(Number(item.amount ?? 0)), 0);
 
   return (
@@ -794,6 +796,16 @@ function CatImpactAccordion({
           </div>
         );
       })}
+      {hiddenCount > 0 && (
+        <button
+          className="btn btn-quiet btn-sm"
+          onClick={onOpenTransactions}
+          type="button"
+          style={{ alignSelf: "flex-start", marginTop: 2 }}
+        >
+          +{hiddenCount} {hiddenCount === 1 ? "outra categoria" : "outras categorias"} · {moneyAbs(hiddenAmount)} · ver todas
+        </button>
+      )}
     </div>
   );
 }
