@@ -9,7 +9,10 @@ from sqlalchemy.orm import Session
 from app.db.models import CategorizationRule, Transaction, TransactionCategoryAssignment
 from app.services.parsers import normalize_transaction_description
 
-_TRGM_THRESHOLD = 0.45  # minimum trigram similarity to accept a suggestion
+_TRGM_THRESHOLD = 0.45  # piso: abaixo disso nem sugere
+# Tier de auto-aplicação. Medido por leave-one-out na base real: >=0.65 deu
+# ~100% de precisão; 0.45–0.65 ~94% (vai como sugestão p/ revisão).
+_TRGM_AUTO_THRESHOLD = 0.65
 
 
 class CategorizationService:
@@ -200,6 +203,7 @@ class CategorizationService:
             ).first()
             if row is None:
                 continue
+            auto = row.sim >= _TRGM_AUTO_THRESHOLD
             self.db.add(
                 TransactionCategoryAssignment(
                     id=str(uuid4()),
@@ -208,8 +212,9 @@ class CategorizationService:
                     category_id=row.category_id,
                     source="embedding",
                     confidence=Decimal(str(round(row.sim, 4))),
-                    reason=f"Similaridade de texto ({row.sim:.0%})",
-                    review_status="pending",
+                    reason=f"Similaridade de texto ({row.sim:.0%})"
+                    + ("" if auto else " — revisar"),
+                    review_status="accepted" if auto else "pending",
                 )
             )
             applied += 1

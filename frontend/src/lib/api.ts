@@ -1165,6 +1165,15 @@ export function applyRules(session: ApiSession) {
   }>("/categorization-rules/apply", session, { method: "POST" });
 }
 
+export function categorizePending(session: ApiSession) {
+  return apiRequest<{
+    workspace_id: string;
+    trgm_applied: number;
+    llm_applied: number;
+    total_applied: number;
+  }>("/categorize-pending", session, { method: "POST" });
+}
+
 export function getRulePreview(session: ApiSession, ruleId: string) {
   return apiRequest<RulePreview>(`/categorization-rules/${ruleId}/preview`, session);
 }

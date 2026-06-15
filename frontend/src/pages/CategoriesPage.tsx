@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   applyRules,
+  categorizePending,
   createCategory,
   createRule,
   deleteCategory,
@@ -1716,6 +1717,14 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
       void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
     },
   });
+  const categorize = useMutation({
+    mutationFn: () => categorizePending(session),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      void queryClient.invalidateQueries({ queryKey: ["data-quality-rules"] });
+    },
+  });
 
   const saving = create.isPending || update.isPending;
   const ruleItems = rules.data?.items ?? [];
@@ -1839,6 +1848,14 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
       {apply.isError && (
         <InlineError message={apiErrorMessage(apply.error, "Falha ao aplicar regras.")} />
       )}
+      {categorize.data && (
+        <InlineSuccess
+          message={`${categorize.data.total_applied} pendentes categorizadas: ${categorize.data.trgm_applied} por memória (similaridade) e ${categorize.data.llm_applied} por IA. Alta confiança já entrou; o restante ficou como sugestão para revisar.`}
+        />
+      )}
+      {categorize.isError && (
+        <InlineError message={apiErrorMessage(categorize.error, "Falha ao categorizar pendentes.")} />
+      )}
 
       {/* Tabbed card: Regras / Normalização / Apelidos */}
       <div className="card">
@@ -1866,9 +1883,19 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
                 className="btn btn-ghost btn-sm"
                 onClick={() => apply.mutate()}
                 disabled={apply.isPending}
+                title="Reaplica suas regras atuais em todas as transações (não mexe no que você categorizou na mão)."
               >
                 <CIcon name="refresh" size={14} />
                 {apply.isPending ? "Aplicando…" : "Aplicar regras"}
+              </button>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => categorize.mutate()}
+                disabled={categorize.isPending}
+                title="Para o que as regras não pegaram: usa memória (similaridade) e IA. Alta confiança entra direto; o resto fica como sugestão para revisar."
+              >
+                <CIcon name="zap" size={14} />
+                {categorize.isPending ? "Categorizando…" : "Categorizar pendentes"}
               </button>
               <button
                 className="btn btn-primary btn-sm"

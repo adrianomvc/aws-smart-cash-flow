@@ -20,6 +20,9 @@ from app.db.models import Category, Transaction, TransactionCategoryAssignment
 logger = logging.getLogger(__name__)
 
 _BATCH_SIZE = 40
+# Tier de auto-aplicação da IA: só aceita sozinho com alta confiança; o resto
+# vira sugestão para revisão do usuário.
+_LLM_AUTO_CONFIDENCE = 0.9
 _GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     "gemini-1.5-flash:generateContent"
@@ -168,6 +171,7 @@ Responda com um array JSON com {len(transactions)} objetos, um por transação, 
             if regex_suggestion:
                 reason += f" | regex sugerido: {regex_suggestion}"
 
+            auto = float(confidence) >= _LLM_AUTO_CONFIDENCE
             self.db.add(
                 TransactionCategoryAssignment(
                     id=str(uuid4()),
@@ -176,8 +180,8 @@ Responda com um array JSON com {len(transactions)} objetos, um por transação, 
                     category_id=cat_id,
                     source="llm",
                     confidence=confidence,
-                    reason=reason,
-                    review_status="pending",
+                    reason=reason + ("" if auto else " — revisar"),
+                    review_status="accepted" if auto else "pending",
                 )
             )
             applied += 1
