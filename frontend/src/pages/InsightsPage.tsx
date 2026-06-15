@@ -1,12 +1,14 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle, CalendarDays, CheckCircle2, ChevronRight, Database, Info, Loader2, Lightbulb,
-  Sparkles, TrendingUp,
+  MessageSquare, Sparkles, TrendingUp,
 } from "lucide-react";
 
 import { getInsights } from "../lib/api";
 import { money } from "../lib/utils";
 import { NoDataOnboarding, PageState } from "../components/ui";
+import { CopilotChat } from "../components/CopilotChat";
 import { useHasTransactions } from "../hooks";
 import type { ApiSession, InsightItem } from "../lib/api";
 import type { Page, PeriodState, TransactionDrilldown } from "../types";
@@ -46,14 +48,39 @@ export function InsightsPage({ session, period, onNavigate, onOpenImports, onOpe
   onOpenTransactions: (drilldown?: TransactionDrilldown) => void;
 }) {
   const hasTransactions = useHasTransactions(session);
+  const [view, setView] = useState<"insights" | "copilot">("insights");
   const query = period && period.periodPreset !== "all"
     ? `?date_from=${period.dateFrom}&date_to=${period.dateTo}`
     : "";
   const insightsQ = useQuery({
     queryKey: ["insights", session.token, query],
     queryFn: () => getInsights(session, query),
-    enabled: hasTransactions !== false,
+    enabled: hasTransactions !== false && view === "insights",
   });
+
+  const tabBar = (
+    <div className="seg" style={{ marginBottom: 16 }}>
+      <button className={view === "insights" ? "on" : ""} onClick={() => setView("insights")} type="button">
+        <Sparkles size={13} style={{ verticalAlign: "-2px", marginRight: 5 }} />Insights
+      </button>
+      <button className={view === "copilot" ? "on" : ""} onClick={() => setView("copilot")} type="button">
+        <MessageSquare size={13} style={{ verticalAlign: "-2px", marginRight: 5 }} />Copiloto IA
+      </button>
+    </div>
+  );
+
+  if (hasTransactions !== false && view === "copilot") {
+    return (
+      <div className="canvas stg">
+        <div style={{ marginBottom: 12 }}>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>Insights</div>
+          <h2 className="section-title"><MessageSquare size={18} /> Copiloto Financeiro</h2>
+        </div>
+        {tabBar}
+        <CopilotChat session={session} period={period} />
+      </div>
+    );
+  }
 
   if (hasTransactions === false) {
     return (
@@ -150,6 +177,8 @@ export function InsightsPage({ session, period, onNavigate, onOpenImports, onOpe
           <CalendarDays size={13} /> Período analisado: <strong style={{ color: "var(--ink-2)" }}>{period_lbl}</strong>
         </div>
       </div>
+
+      {tabBar}
 
       {/* KPIs */}
       <div className="kpi-deck" style={{ marginBottom: 16 }}>

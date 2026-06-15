@@ -7,6 +7,7 @@ from app.api.routes import (
     auth,
     cards,
     categories,
+    copilot,
     dashboard,
     health,
     imports,
@@ -41,6 +42,7 @@ def create_app() -> FastAPI:
     app.include_router(transactions.router, prefix="/v1")
     app.include_router(categories.router, prefix="/v1")
     app.include_router(cards.router, prefix="/v1")
+    app.include_router(copilot.router, prefix="/v1")
     app.include_router(dashboard.router, prefix="/v1")
     app.include_router(insights.router, prefix="/v1")
     app.include_router(investments.router, prefix="/v1")

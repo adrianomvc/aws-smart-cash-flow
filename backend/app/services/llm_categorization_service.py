@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import logging
-import ssl
 from collections import defaultdict
 from decimal import Decimal
 from uuid import uuid4
@@ -23,6 +22,16 @@ from app.db.models import (
     Transaction,
     TransactionCategoryAssignment,
 )
+from app.services.llm_client import (
+    _GEMINI_URL,
+    _GROQ_URL,
+)
+from app.services.llm_client import (
+    SSL_CONTEXT as _SSL_CONTEXT,
+)
+from app.services.llm_client import (
+    resolve_provider as _resolve_provider,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,30 +39,6 @@ _BATCH_SIZE = 40
 # Tier de auto-aplicação da IA: só aceita sozinho com alta confiança; o resto
 # vira sugestão para revisão do usuário.
 _LLM_AUTO_CONFIDENCE = 0.9
-_GEMINI_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    "gemini-1.5-flash:generateContent"
-)
-_GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-# Use the OS trust store (Windows/Linux) so corporate CAs are honored — httpx's
-# default certifi bundle fails behind a corporate TLS-inspecting proxy.
-_SSL_CONTEXT = ssl.create_default_context()
-
-
-def _resolve_provider() -> tuple[str, str]:
-    """Returns (provider, api_key). Provider is LLM_PROVIDER, or auto-detected:
-    groq if GROQ_API_KEY is set, else gemini if GEMINI_API_KEY is set."""
-    provider = (getattr(settings, "llm_provider", "") or "").lower()
-    if not provider:
-        if getattr(settings, "groq_api_key", ""):
-            provider = "groq"
-        elif getattr(settings, "gemini_api_key", ""):
-            provider = "gemini"
-    if provider == "groq":
-        return "groq", getattr(settings, "groq_api_key", "")
-    if provider == "gemini":
-        return "gemini", getattr(settings, "gemini_api_key", "")
-    return provider, ""
 
 
 def _parse_results(text: str) -> list[dict]:

@@ -1351,6 +1351,22 @@ export function getInsights(session: ApiSession, query = "") {
   return apiRequest<InsightsResponse>(`/insights${query}`, session);
 }
 
+export type CopilotTurn = { role: "user" | "assistant"; content: string };
+
+export function getCopilotStatus(session: ApiSession) {
+  return apiRequest<{ available: boolean }>("/copilot/status", session);
+}
+
+export function copilotChat(
+  session: ApiSession,
+  body: { message: string; history: CopilotTurn[]; date_from?: string | null; date_to?: string | null },
+) {
+  return apiRequest<{ reply: string | null; available: boolean }>("/copilot/chat", session, {
+    method: "POST",
+    body,
+  });
+}
+
 // --------------------------------------------------------------------------- //
 // Investments (position view)
 // --------------------------------------------------------------------------- //
