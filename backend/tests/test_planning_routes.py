@@ -221,11 +221,16 @@ def test_projection_endpoint_returns_horizons_and_assumptions(
     )
     db_session.commit()
 
-    response = client.get("/v1/planning/projection?date_from=2026-06-01&horizons=30,60")
+    response = client.get("/v1/planning/projection?horizon_days=60")
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["workspace_id"] == auth.workspace_id
-    assert [item["days"] for item in payload["horizons"]] == [30, 60]
-    assert payload["horizons"][0]["projected_balance"] == "2900.00"
+    assert payload["horizon_days"] == 60
+    # New contract: monthly projection points (probable/best/worst) + summary fields.
+    assert isinstance(payload["points"], list) and payload["points"]
+    for point in payload["points"]:
+        assert {"month", "probable", "best", "worst"} <= point.keys()
+    assert {"end_best", "end_probable", "end_worst", "min_balance"} <= payload.keys()
+    assert isinstance(payload["commitments"], list)
     assert payload["assumptions"]

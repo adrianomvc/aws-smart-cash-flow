@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     supabase_anon_key: str = ""
     supabase_service_role_key: str = ""
     supabase_storage_bucket: str = "financial-files"
+    # Amazon Cognito (preferred auth provider on AWS). When the user pool is
+    # configured, bearer tokens are validated as Cognito ID tokens (RS256/JWKS).
+    cognito_region: str = Field(default="", alias="COGNITO_REGION")
+    cognito_user_pool_id: str = Field(default="", alias="COGNITO_USER_POOL_ID")
+    cognito_app_client_id: str = Field(default="", alias="COGNITO_APP_CLIENT_ID")
     allow_local_auth: bool = Field(default=False, alias="ALLOW_LOCAL_AUTH")
     database_pool_size: int = 5
     database_max_overflow: int = 10
@@ -28,6 +33,11 @@ class Settings(BaseSettings):
     default_credit_card_closing_day: int = Field(default=23, ge=1, le=31)
     default_credit_card_due_day: int = Field(default=30, ge=1, le=31)
     gemini_api_key: str = ""
+    # LLM categorization provider. "" → auto-detect (groq if GROQ_API_KEY set,
+    # else gemini if GEMINI_API_KEY set). Otherwise force "groq" or "gemini".
+    llm_provider: str = Field(default="", alias="LLM_PROVIDER")
+    groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
+    groq_model: str = Field(default="llama-3.3-70b-versatile", alias="GROQ_MODEL")
     cors_origins_raw: str = Field(
         default=(
             "http://localhost:5173,http://127.0.0.1:5173,"

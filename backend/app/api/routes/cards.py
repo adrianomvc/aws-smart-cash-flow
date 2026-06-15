@@ -1,6 +1,6 @@
 import re
 from calendar import monthrange
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -24,6 +24,7 @@ class CreditCardCreate(BaseModel):
     issuer: str | None = Field(default=None, max_length=120)
     brand: str | None = Field(default=None, max_length=40)
     last_four: str | None = Field(default=None, min_length=4, max_length=4)
+    color: str | None = Field(default=None, max_length=32)
     closing_day: int | None = Field(default=None, ge=1, le=31)
     due_day: int | None = Field(default=None, ge=1, le=31)
     limit_amount: Decimal | None = None
@@ -34,6 +35,7 @@ class CreditCardUpdate(BaseModel):
     issuer: str | None = Field(default=None, max_length=120)
     brand: str | None = Field(default=None, max_length=40)
     last_four: str | None = Field(default=None, min_length=4, max_length=4)
+    color: str | None = Field(default=None, max_length=32)
     closing_day: int | None = Field(default=None, ge=1, le=31)
     due_day: int | None = Field(default=None, ge=1, le=31)
     limit_amount: Decimal | None = None
@@ -47,6 +49,7 @@ class CreditCardRead(BaseModel):
     issuer: str | None
     brand: str | None
     last_four: str | None
+    color: str | None
     closing_day: int
     due_day: int
     limit_amount: Decimal | None
@@ -80,6 +83,7 @@ class CreditCardStatementRead(BaseModel):
     workspace_id: str
     credit_card_id: str
     source_file_id: str | None
+    source_file_name: str | None = None
     statement_month: date
     closing_date: date | None
     due_date: date
@@ -125,6 +129,7 @@ def create_credit_card(
         issuer=_normalize_optional_text(payload.issuer),
         brand=_normalize_optional_text(payload.brand),
         last_four=_normalize_last_four(payload.last_four),
+        color=_normalize_optional_text(payload.color),
         closing_day=payload.closing_day or settings.default_credit_card_closing_day,
         due_day=payload.due_day or settings.default_credit_card_due_day,
         limit_amount=_positive_decimal_or_none(payload.limit_amount, "Card limit must be positive"),
@@ -158,6 +163,8 @@ def update_credit_card(
         card.brand = _normalize_optional_text(payload.brand)
     if payload.last_four is not None:
         card.last_four = _normalize_last_four(payload.last_four)
+    if payload.color is not None:
+        card.color = _normalize_optional_text(payload.color)
     if payload.closing_day is not None:
         card.closing_day = payload.closing_day
     if payload.due_day is not None:
@@ -198,9 +205,19 @@ def list_credit_card_statements(
     if date_to is not None:
         query = query.where(CreditCardStatement.due_date <= date_to)
     statements = db.scalars(query.order_by(CreditCardStatement.due_date.desc())).all()
+    file_ids = {s.source_file_id for s in statements if s.source_file_id}
+    names: dict[str, str] = {}
+    if file_ids:
+        for source_file in db.scalars(
+            select(SourceFile).where(SourceFile.id.in_(file_ids))
+        ).all():
+            names[source_file.id] = source_file.original_filename
     return CreditCardStatementListResponse(
         workspace_id=auth.workspace_id,
-        items=[_statement_read(statement) for statement in statements],
+        items=[
+            _statement_read(statement, names.get(statement.source_file_id or ""))
+            for statement in statements
+        ],
         total=len(statements),
     )
 
@@ -313,6 +330,310 @@ def associate_credit_card_source_file(
     return _statement_read(statement)
 
 
+@router.delete(
+    "/credit-card-source-files/{source_file_id}/link",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def unlink_credit_card_source_file(
+    source_file_id: str,
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> None:
+    """Remove the link between an imported file and its card by deleting the
+    statement(s) created from that file. Transactions are kept (they reference
+    the source file, not the statement)."""
+    _validate_uuid(source_file_id, "Invalid source file id")
+    statements = list(
+        db.scalars(
+            select(CreditCardStatement).where(
+                CreditCardStatement.workspace_id == auth.workspace_id,
+                CreditCardStatement.source_file_id == source_file_id,
+            )
+        ).all()
+    )
+    if not statements:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No card link found for this file",
+        )
+    for statement in statements:
+        db.delete(statement)
+    db.commit()
+    return None
+
+
+class AutoAssociateResponse(BaseModel):
+    linked: int
+
+
+@router.post("/credit-cards/auto-associate")
+def auto_associate_credit_card_files(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> AutoAssociateResponse:
+    from app.services.card_association_service import auto_associate_statements
+
+    linked = auto_associate_statements(db, auth.workspace_id)
+    return AutoAssociateResponse(linked=linked)
+
+
+class StatementReportItem(BaseModel):
+    statement_id: str
+    credit_card_id: str
+    card_name: str
+    source_file_id: str | None
+    source_file_name: str | None
+    statement_month: date
+    due_date: date
+    status: str
+    file_total: Decimal | None
+    paid_amount: Decimal | None
+    paid_date: date | None
+
+
+class StatementReportResponse(BaseModel):
+    workspace_id: str
+    items: list[StatementReportItem]
+
+
+@router.get("/credit-card-statement-report")
+def credit_card_statement_report(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> StatementReportResponse:
+    statements = db.scalars(
+        select(CreditCardStatement)
+        .where(CreditCardStatement.workspace_id == auth.workspace_id)
+        .order_by(CreditCardStatement.due_date.desc())
+    ).all()
+    cards = {
+        c.id: c
+        for c in db.scalars(
+            select(CreditCard).where(CreditCard.workspace_id == auth.workspace_id)
+        ).all()
+    }
+    file_ids = {s.source_file_id for s in statements if s.source_file_id}
+    files = (
+        {
+            sf.id: sf
+            for sf in db.scalars(select(SourceFile).where(SourceFile.id.in_(file_ids))).all()
+        }
+        if file_ids
+        else {}
+    )
+    bank_payments = list(
+        db.scalars(
+            select(Transaction).where(
+                Transaction.workspace_id == auth.workspace_id,
+                Transaction.direction == "payment",
+                Transaction.source_type == "bank_statement",
+            )
+        ).all()
+    )
+
+    items: list[StatementReportItem] = []
+    for statement in statements:
+        file_total = statement.total_amount
+        if file_total is None and statement.source_file_id:
+            source_file = files.get(statement.source_file_id)
+            if source_file is not None:
+                file_total = _statement_total_for_source_file(db=db, source_file=source_file)
+
+        paid_amount: Decimal | None = None
+        paid_date: date | None = None
+        if file_total is not None and file_total > 0:
+            tolerance = max(Decimal("5.00"), file_total * Decimal("0.03"))
+            best: tuple[int, Transaction] | None = None
+            for payment in bank_payments:
+                if abs(abs(payment.amount) - file_total) > tolerance:
+                    continue
+                delta = abs((payment.transaction_date - statement.due_date).days)
+                if delta > 15:
+                    continue
+                if best is None or delta < best[0]:
+                    best = (delta, payment)
+            if best is not None:
+                paid_amount = abs(best[1].amount)
+                paid_date = best[1].transaction_date
+
+        card = cards.get(statement.credit_card_id)
+        source_file = files.get(statement.source_file_id) if statement.source_file_id else None
+        items.append(
+            StatementReportItem(
+                statement_id=statement.id,
+                credit_card_id=statement.credit_card_id,
+                card_name=card.name if card is not None else "Cartão",
+                source_file_id=statement.source_file_id,
+                source_file_name=source_file.original_filename if source_file is not None else None,
+                statement_month=statement.statement_month,
+                due_date=statement.due_date,
+                status=statement.status,
+                file_total=file_total,
+                paid_amount=paid_amount,
+                paid_date=paid_date,
+            )
+        )
+    return StatementReportResponse(workspace_id=auth.workspace_id, items=items)
+
+
+class CreditCardSourceFileItem(BaseModel):
+    source_file_id: str
+    original_filename: str
+    received_at: datetime
+    total: Decimal | None
+    reference_month: str | None  # "YYYY-MM", a maioria (moda) do ano/mês das transações
+    linked_credit_card_id: str | None
+    linked_card_name: str | None
+    # Conciliation data (present when the file is linked to a card statement)
+    due_date: date | None = None
+    status: str | None = None
+    paid_amount: Decimal | None = None
+    paid_date: date | None = None
+
+
+class CreditCardSourceFileResponse(BaseModel):
+    workspace_id: str
+    items: list[CreditCardSourceFileItem]
+
+
+@router.get("/credit-card-source-files")
+def credit_card_source_files(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> CreditCardSourceFileResponse:
+    """List imported credit-card CSV files with computed total and the reference
+    month (the most frequent year/month among the file's transactions), plus the
+    card currently linked to it. Powers manual file→card linking."""
+    source_files = list(
+        db.scalars(
+            select(SourceFile)
+            .where(
+                SourceFile.workspace_id == auth.workspace_id,
+                SourceFile.source_kind == "credit_card_csv",
+            )
+            .order_by(SourceFile.received_at.desc())
+        ).all()
+    )
+    file_ids = [sf.id for sf in source_files]
+    if not file_ids:
+        return CreditCardSourceFileResponse(workspace_id=auth.workspace_id, items=[])
+
+    # Totals per file (one grouped query).
+    totals: dict[str, Decimal] = {}
+    for sfid, total in db.execute(
+        select(Transaction.source_file_id, func.sum(Transaction.amount))
+        .where(
+            Transaction.workspace_id == auth.workspace_id,
+            Transaction.source_file_id.in_(file_ids),
+            Transaction.source_type == "credit_card_statement",
+            Transaction.direction.in_(("debit", "credit")),
+        )
+        .group_by(Transaction.source_file_id)
+    ).all():
+        if sfid is not None and total is not None:
+            totals[sfid] = max(total, Decimal("0.00"))
+
+    # Reference month = mode of (year, month) over the file's transactions
+    # (one grouped query; pick the month with the most transactions per file).
+    month_counts: dict[str, list[tuple[date, int]]] = {}
+    for sfid, month_start, cnt in db.execute(
+        select(
+            Transaction.source_file_id,
+            func.date_trunc("month", Transaction.transaction_date).label("m"),
+            func.count().label("cnt"),
+        )
+        .where(
+            Transaction.workspace_id == auth.workspace_id,
+            Transaction.source_file_id.in_(file_ids),
+            Transaction.source_type == "credit_card_statement",
+        )
+        .group_by(Transaction.source_file_id, "m")
+    ).all():
+        if sfid is not None and month_start is not None:
+            month_counts.setdefault(sfid, []).append((month_start, int(cnt)))
+
+    reference_month: dict[str, str] = {}
+    for sfid, pairs in month_counts.items():
+        # most transactions wins; tie-break on the more recent month
+        best_month = max(pairs, key=lambda p: (p[1], p[0]))[0]
+        reference_month[sfid] = f"{best_month.year:04d}-{best_month.month:02d}"
+
+    # Current link per file (source_file_id -> card / statement).
+    linked_card: dict[str, CreditCard] = {}
+    linked_statement: dict[str, CreditCardStatement] = {}
+    cards_by_id = {
+        c.id: c
+        for c in db.scalars(
+            select(CreditCard).where(CreditCard.workspace_id == auth.workspace_id)
+        ).all()
+    }
+    for statement in db.scalars(
+        select(CreditCardStatement).where(
+            CreditCardStatement.workspace_id == auth.workspace_id,
+            CreditCardStatement.source_file_id.in_(file_ids),
+        )
+    ).all():
+        if statement.source_file_id and statement.credit_card_id in cards_by_id:
+            linked_card[statement.source_file_id] = cards_by_id[statement.credit_card_id]
+            linked_statement[statement.source_file_id] = statement
+
+    # Bank payments, for matching the paid amount of each linked statement.
+    bank_payments = list(
+        db.scalars(
+            select(Transaction).where(
+                Transaction.workspace_id == auth.workspace_id,
+                Transaction.direction == "payment",
+                Transaction.source_type == "bank_statement",
+            )
+        ).all()
+    )
+
+    def _matched_payment(due: date, file_total: Decimal | None) -> tuple[Decimal, date] | None:
+        if file_total is None or file_total <= 0:
+            return None
+        tolerance = max(Decimal("5.00"), file_total * Decimal("0.03"))
+        best: tuple[int, Transaction] | None = None
+        for payment in bank_payments:
+            if abs(abs(payment.amount) - file_total) > tolerance:
+                continue
+            delta = abs((payment.transaction_date - due).days)
+            if delta > 15:
+                continue
+            if best is None or delta < best[0]:
+                best = (delta, payment)
+        if best is None:
+            return None
+        return abs(best[1].amount), best[1].transaction_date
+
+    items: list[CreditCardSourceFileItem] = []
+    for sf in source_files:
+        statement = linked_statement.get(sf.id)
+        total = totals.get(sf.id)
+        paid_amount: Decimal | None = None
+        paid_date: date | None = None
+        if statement is not None:
+            file_total = statement.total_amount if statement.total_amount is not None else total
+            match = _matched_payment(statement.due_date, file_total)
+            if match is not None:
+                paid_amount, paid_date = match
+        items.append(
+            CreditCardSourceFileItem(
+                source_file_id=sf.id,
+                original_filename=sf.original_filename,
+                received_at=sf.received_at,
+                total=total,
+                reference_month=reference_month.get(sf.id),
+                linked_credit_card_id=linked_card[sf.id].id if sf.id in linked_card else None,
+                linked_card_name=linked_card[sf.id].name if sf.id in linked_card else None,
+                due_date=statement.due_date if statement is not None else None,
+                status=statement.status if statement is not None else None,
+                paid_amount=paid_amount,
+                paid_date=paid_date,
+            )
+        )
+    return CreditCardSourceFileResponse(workspace_id=auth.workspace_id, items=items)
+
+
 def _credit_card_read(card: CreditCard) -> CreditCardRead:
     return CreditCardRead(
         id=card.id,
@@ -321,6 +642,7 @@ def _credit_card_read(card: CreditCard) -> CreditCardRead:
         issuer=card.issuer,
         brand=card.brand,
         last_four=card.last_four,
+        color=card.color,
         closing_day=card.closing_day,
         due_day=card.due_day,
         limit_amount=card.limit_amount,
@@ -329,12 +651,15 @@ def _credit_card_read(card: CreditCard) -> CreditCardRead:
     )
 
 
-def _statement_read(statement: CreditCardStatement) -> CreditCardStatementRead:
+def _statement_read(
+    statement: CreditCardStatement, source_file_name: str | None = None
+) -> CreditCardStatementRead:
     return CreditCardStatementRead(
         id=statement.id,
         workspace_id=statement.workspace_id,
         credit_card_id=statement.credit_card_id,
         source_file_id=statement.source_file_id,
+        source_file_name=source_file_name,
         statement_month=statement.statement_month,
         closing_date=statement.closing_date,
         due_date=statement.due_date,

@@ -29,11 +29,16 @@ export type Page =
   | "budgets"
   | "goals"
   | "planning"
+  | "scenarios"
+  | "investments"
+  | "insights"
+  | "wealth"
   | "reports"
   | "imports"
   | "categories"
   | "rules"
   | "review"
+  | "family"
   | "settings";
 
 export type TransactionPeriodPreset =
@@ -79,6 +84,32 @@ export const PERIOD_PRESETS: { label: string; value: TransactionPeriodPreset }[]
   { label: "Todos", value: "all" },
   { label: "Personalizado", value: "custom" },
 ];
+
+// ---------------------------------------------------------------------------
+// Category colors (shared by the Categorias page, charts, etc.)
+// ---------------------------------------------------------------------------
+
+export const CATEGORY_HEX_PALETTE = [
+  "#3567b8", "#1f8a5b", "#6a52c9", "#c98a2b", "#cf4d43",
+  "#d98234", "#2a9d8f", "#9a6b14", "#7c8696", "#a35a7d", "#3d7d63", "#5a7dc9",
+];
+export const CATEGORY_GREY = "#94a3b8";
+
+/**
+ * Resolves a category's solid hex color consistently everywhere (cadastro cards
+ * + charts):
+ * - "Sem categoria" (category_id === null, or that name) → always grey;
+ * - otherwise the registered color from the cadastro;
+ * - otherwise a stable palette color derived from the name (same formula the
+ *   Categorias cards use), so a category looks identical across all views.
+ */
+export function categoryChartColor(name?: string | null, registered?: string | null, categoryId?: string | null): string {
+  if (categoryId === null || (name ?? "").trim().toLowerCase() === "sem categoria") return CATEGORY_GREY;
+  if (registered) return registered;
+  const n = name ?? "";
+  if (!n) return CATEGORY_GREY;
+  return CATEGORY_HEX_PALETTE[Math.abs(n.charCodeAt(0) + n.length) % CATEGORY_HEX_PALETTE.length];
+}
 
 // ---------------------------------------------------------------------------
 // Money formatters
@@ -526,8 +557,8 @@ export function withQueryParams(query: string, params: Record<string, string>) {
 export function pageMeta(page: Page) {
   const pages: Record<Page, { description: string; title: string }> = {
     cashflow: {
-      description: "Entenda entradas, saídas, faturas e tendência mensal do dinheiro.",
-      title: "Fluxo de caixa",
+      description: "Por que sobrou ou faltou dinheiro? Entradas, saídas e saldo acumulado.",
+      title: "Fluxo de Caixa",
     },
     calendar: {
       description: "Veja compromissos, recorrências e parcelas que impactam os próximos dias.",
@@ -547,7 +578,7 @@ export function pageMeta(page: Page) {
     },
     dashboard: {
       description: "Acompanhe a história do seu dinheiro e os sinais que pedem atenção.",
-      title: "Visão geral",
+      title: "Dashboard",
     },
     imports: {
       description: "Carregue extratos e faturas, revise a prévia e acompanhe o que entrou na base.",
@@ -560,6 +591,26 @@ export function pageMeta(page: Page) {
     planning: {
       description: "Veja horizontes de caixa, riscos e premissas para os próximos passos.",
       title: "Planejamento",
+    },
+    scenarios: {
+      description: "Simule decisões e veja o impacto no saldo, runway e metas antes de agir.",
+      title: "Simulador de cenários",
+    },
+    investments: {
+      description: "Visão de posição da carteira: patrimônio, alocação por classe e custódias.",
+      title: "Investimentos",
+    },
+    insights: {
+      description: "Recomendações acionáveis e explicáveis a partir dos seus dados.",
+      title: "Insights IA",
+    },
+    family: {
+      description: "Membros do workspace, papéis e convites — uso compartilhado em família.",
+      title: "Família / Membros",
+    },
+    wealth: {
+      description: "Patrimônio líquido: ativos, passivos e evolução da riqueza acumulada.",
+      title: "Patrimônio",
     },
     reports: {
       description: "Consolide leituras financeiras e prepare exportações futuras.",
@@ -711,42 +762,70 @@ export function calendarEventStatusLabel(eventStatus: string) {
 
 export function buildCalendarEvents({
   apiEvents,
+  categories,
   installments,
   recurring,
   transactions,
 }: {
   apiEvents?: CalendarEventRead[];
+  categories?: CategoryRead[];
   installments: CreditCardInstallmentItem[];
   recurring: RecurringExpenseItem[];
   transactions: TransactionRead[];
 }): CalendarEvent[] {
+  const categoryById = new Map((categories ?? []).map((c) => [c.id, c]));
+  const categoryByName = new Map((categories ?? []).map((c) => [c.name.toLowerCase(), c]));
+
   const apiCalendarEvents: CalendarEvent[] = (apiEvents ?? []).map((event) => ({
     amount: event.amount ?? 0,
     date: event.due_date,
     detail: `${calendarEventTypeLabel(event.event_type)} · ${calendarEventStatusLabel(event.status)}`,
     direction: event.event_type === "income" ? "credit" : "debit",
+    forecast: true,
     kind: event.recurrence === "monthly" ? "Recorrente" : "Planejado",
     label: event.title,
     search: event.title,
     tone: calendarEventTone(event),
   }));
 
-  const recurringEvents: CalendarEvent[] = recurring.map((item) => ({
-    amount: item.last_amount || item.average_amount,
-    date: item.last_transaction_date,
-    detail: `${item.transaction_count} ocorrências em ${item.month_count} mês${item.month_count === 1 ? "" : "es"}`,
-    direction: "debit",
-    kind: item.category_name ?? "Recorrência provável",
-    label: item.description,
-    search: item.description,
-    tone: Number(item.change_ratio ?? 0) >= 0.3 ? "warning" : "info",
-  }));
+  // Projects the next occurrence of a recurring expense, starting from its last
+  // charge and advancing by months until it is today or later.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const nextRecurrence = (lastDate: string): string => {
+    const d = new Date(lastDate + "T00:00:00");
+    const today = new Date(todayIso + "T00:00:00");
+    while (d < today) d.setMonth(d.getMonth() + 1);
+    return d.toISOString().slice(0, 10);
+  };
+  const recurringEvents: CalendarEvent[] = recurring.map((item) => {
+    const cat = item.category_name ? categoryByName.get(item.category_name.toLowerCase()) : undefined;
+    return {
+      // Recurring items are expenses — always an outflow (negative).
+      amount: -Math.abs(Number(item.last_amount || item.average_amount || 0)),
+      category: item.category_name ?? null,
+      categoryColor: cat?.color ?? null,
+      // Projected to its next future occurrence — shown as a forecast ("prevista")
+      // until the real charge is imported.
+      date: item.last_transaction_date ? nextRecurrence(item.last_transaction_date) : item.last_transaction_date,
+      detail: `${item.transaction_count} ocorrências em ${item.month_count} mês${item.month_count === 1 ? "" : "es"}`,
+      direction: "debit",
+      forecast: true,
+      recurring: true,
+      kind: item.category_name ?? "Recorrência provável",
+      label: item.description,
+      search: item.description,
+      // Recurring is treated as a forecast ("Previsto"), same colour as other projections.
+      tone: "info",
+    };
+  });
 
   const installmentEvents: CalendarEvent[] = installments.map((item) => ({
-    amount: item.amount,
+    // Credit-card installments are expenses — always an outflow (negative).
+    amount: -Math.abs(Number(item.amount ?? 0)),
     date: item.last_transaction_date,
     detail: `${item.installment_current}/${item.installment_total} · faltam ${item.remaining_installments}`,
     direction: "debit",
+    forecast: true,
     kind: "Parcela de cartão",
     label: item.description,
     search: item.description,
@@ -755,16 +834,24 @@ export function buildCalendarEvents({
 
   const transactionEvents: CalendarEvent[] = transactions
     .filter((t) => t.direction !== "payment")
-    .map((t) => ({
-      amount: t.amount,
-      date: t.transaction_date,
-      detail: sourceTypeLabel(t.source_type),
-      direction: t.direction,
-      kind: t.direction === "credit" ? "Entrada recente" : "Saída recente",
-      label: t.description,
-      search: t.description,
-      tone: t.direction === "credit" ? "positive" : "negative",
-    }));
+    .map((t) => {
+      const cat = t.category ? categoryById.get(t.category.category_id) : undefined;
+      // Sign by direction — the raw amount is unreliable (some debits are positive).
+      const signed = t.direction === "credit" ? Math.abs(Number(t.amount)) : -Math.abs(Number(t.amount));
+      return {
+        amount: signed,
+        category: cat?.name ?? null,
+        categoryColor: cat?.color ?? null,
+        // Placed on the effective payment date (consistent with the date filter).
+        date: t.payment_date ?? t.transaction_date,
+        detail: cat ? cat.name : sourceTypeLabel(t.source_type),
+        direction: t.direction,
+        kind: cat?.name ?? (t.direction === "credit" ? "Entrada recente" : "Saída recente"),
+        label: t.description,
+        search: t.description,
+        tone: t.direction === "credit" ? "positive" : "negative",
+      };
+    });
 
   return [...apiCalendarEvents, ...recurringEvents, ...installmentEvents, ...transactionEvents]
     .filter((item) => item.date)

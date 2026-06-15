@@ -25,6 +25,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 *.log
+backend/.uvicorn.out
 frontend/dist-projection-tests/
 
 # Environment files

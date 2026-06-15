@@ -17,11 +17,16 @@ export type Page =
   | "budgets"
   | "goals"
   | "planning"
+  | "scenarios"
+  | "investments"
+  | "insights"
+  | "wealth"
   | "reports"
   | "imports"
   | "categories"
   | "rules"
   | "review"
+  | "family"
   | "settings";
 
 /**
@@ -52,7 +57,9 @@ export type TransactionDrilldown = {
   dateFrom?: string;
   dateTo?: string;
   direction?: string;
+  fixedQuery?: string;
   importJobId?: string;
+  sourceFileId?: string;
   label?: string;
   periodPreset?: TransactionPeriodPreset;
   search?: string;
@@ -82,6 +89,12 @@ export type RuleFormState = {
   target_direction: string;
   priority: number;
   active: boolean;
+  // amount_recurring fields (stored as strings for the inputs)
+  amount_ref: string;
+  amount_tolerance: string;
+  day_min: string;
+  day_max: string;
+  direction_filter: string;
 };
 
 /**
@@ -177,9 +190,13 @@ export type SubcategorySummary = {
  */
 export type CalendarEvent = {
   amount: string | number;
+  category?: string | null;
+  categoryColor?: string | null;
   date: string;
   detail: string;
   direction?: string;
+  forecast?: boolean;
+  recurring?: boolean;
   kind: string;
   label: string;
   search?: string;

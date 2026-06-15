@@ -289,13 +289,15 @@ export function Drawer({
   onClose: () => void;
 }) {
   return (
-    <aside className="drawer">
-      <div className="drawer-header">
-        <h3>{title}</h3>
-        <button className="icon-button" onClick={onClose}><X size={18} /></button>
-      </div>
-      {children}
-    </aside>
+    <div className="drawer-backdrop" onClick={onClose}>
+      <aside className="drawer" onClick={(e) => e.stopPropagation()}>
+        <div className="drawer-header">
+          <h3>{title}</h3>
+          <button className="icon-button" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="drawer-body">{children}</div>
+      </aside>
+    </div>
   );
 }
 
@@ -334,6 +336,79 @@ export function PageState({
       <Icon className={spin ? "spin" : ""} size={28} />
       <strong>{title}</strong>
       <p>{description}</p>
+    </div>
+  );
+}
+
+export function EmptyState({
+  icon: Icon,
+  title,
+  description,
+  actionLabel,
+  onAction,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <div className="card card-pad" style={{ textAlign: "center", padding: "44px 24px" }}>
+      <div className="state-ic" style={{ margin: "0 auto 14px", width: 52, height: 52 }}><Icon size={24} /></div>
+      <h4 style={{ margin: "0 0 6px", fontSize: 16 }}>{title}</h4>
+      <p className="t-sub" style={{ maxWidth: 440, margin: "0 auto 18px", lineHeight: 1.55 }}>{description}</p>
+      {actionLabel && onAction && (
+        <button className="btn btn-primary btn-sm" onClick={onAction}>{actionLabel}</button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Standard "no data yet" screen shown across pages when the workspace has no
+ * imported transactions. Renders a page header + a centered onboarding card so
+ * every empty page looks consistent (like the Dashboard onboarding).
+ * The primary CTA opens the import flow; an optional secondary action lets
+ * manual-first pages (cards, goals, budgets) create directly.
+ */
+export function NoDataOnboarding({
+  icon,
+  eyebrow,
+  title,
+  description,
+  onImport,
+  secondaryLabel,
+  onSecondary,
+}: {
+  icon: LucideIcon;
+  eyebrow: string;
+  title: string;
+  description: string;
+  onImport?: () => void;
+  secondaryLabel?: string;
+  onSecondary?: () => void;
+}) {
+  const Icon = icon;
+  return (
+    <div className="canvas stg">
+      <div style={{ marginBottom: 18 }}>
+        <div className="eyebrow" style={{ marginBottom: 4 }}>{eyebrow}</div>
+        <h2 className="section-title"><Icon size={18} /> {eyebrow}</h2>
+      </div>
+      <div className="card card-pad" style={{ textAlign: "center", padding: "44px 24px" }}>
+        <div className="state-ic" style={{ margin: "0 auto 14px", width: 52, height: 52 }}><Icon size={24} /></div>
+        <h4 style={{ margin: "0 0 6px", fontSize: 16 }}>{title}</h4>
+        <p className="t-sub" style={{ maxWidth: 460, margin: "0 auto 18px", lineHeight: 1.55 }}>{description}</p>
+        <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+          {onImport && (
+            <button className="btn btn-primary btn-sm" onClick={onImport}>Importar extrato</button>
+          )}
+          {secondaryLabel && onSecondary && (
+            <button className="btn btn-ghost btn-sm" onClick={onSecondary}>{secondaryLabel}</button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

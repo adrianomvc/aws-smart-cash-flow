@@ -1,190 +1,235 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpCircle, CalendarDays, CreditCard, Database, Loader2, Plus, ReceiptText } from "lucide-react";
 
 import {
   createCreditCard,
-  createCreditCardStatement,
   getCreditCardInstallments,
   getCreditCardPaymentMatches,
   getCreditCards,
-  getCreditCardStatements,
-  getRecurringExpenses,
   getTransactions,
   updateCreditCard,
 } from "../lib/api";
 import {
   amountClass,
   apiErrorMessage,
-  cardLabel,
   compactMoneyAbs,
   dateLabel,
   directionLabel,
   installmentSummaryLabel,
-  isoDate,
+  money,
   moneyAbs,
-  monthYearLabel,
-  periodRange,
   withQueryParams,
 } from "../lib/utils";
-import { usePeriod } from "../hooks";
-import {
-  DashboardSectionHeader,
-  EmptyInline,
-  InlineError,
-  MetricCard,
-  PageState,
-  Panel,
-  PeriodFilter,
-  QualityRow,
-} from "../components/ui";
+import { CreditCard } from "lucide-react";
+import { useCategories, useHasTransactions, usePeriod } from "../hooks";
+import { InlineError, NoDataOnboarding } from "../components/ui";
 import type {
   ApiSession,
-  CreditCardInstallmentItem,
+  CategoryRead,
   CreditCardPaymentMatchItem,
+  CreditCardPayload,
   CreditCardRead,
-  CreditCardStatementRead,
   TransactionRead,
 } from "../lib/api";
 import type { PeriodState, TransactionDrilldown } from "../types";
 
 // ---------------------------------------------------------------------------
+// Icons
+// ---------------------------------------------------------------------------
+
+const K_ICONS: Record<string, string> = {
+  card:    "M3 7h18a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z M3 11h18",
+  plus:    "M12 5v14 M5 12h14",
+  edit:    "M11 4H4a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7 M18.5 2.5a2 2 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z",
+  check:   "M5 12l5 5 9-10",
+  chevR:   "M9 18l6-6-6-6",
+  alert:   "M12 9v4 M12 17h.01 M10.3 4l-7 12a2 2 0 0 0 1.7 3h14a2 2 0 0 0 1.7-3l-7-12a2 2 0 0 0-3.4 0z",
+  wallet:  "M3 7h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a2 2 0 0 1 2-2h11 M16 12h.01",
+  list:    "M9 6h10 M9 12h10 M9 18h10 M5 6h.01 M5 12h.01 M5 18h.01",
+  receipt: "M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8l-5-5z M14 3v5h5 M9 12h6 M9 16h4",
+  repeat:  "M17 1l4 4-4 4 M3 11V9a4 4 0 0 1 4-4h14 M7 23l-4-4 4-4 M21 13v2a4 4 0 0 1-4 4H3",
+  star:    "M12 2l3.1 6.3L22 9.3l-5 4.9 1.2 6.8L12 17.7l-6.2 3.3L7 14.2 2 9.3l6.9-1L12 2z",
+};
+
+function KIcon({ name, size = 15 }: { name: string; size?: number }) {
+  const d = K_ICONS[name];
+  if (!d) return null;
+  const segs = d.split(" M");
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round"
+      style={{ flex: "none" }}>
+      {segs.map((seg, i) => <path key={i} d={i === 0 ? seg : "M" + seg} />)}
+    </svg>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-
-function statementStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    closed: "Fechada",
-    open: "Aberta",
-    paid: "Paga",
-    partial: "Parcial",
-  };
-  return labels[status] ?? status;
+const CARD_PALETTE = ["#2a4d8f", "#1f8a5b", "#6a4ba8", "#c98a2b", "#a35a7d", "#2a9d8f"];
+function cardColor(index: number): string {
+  return CARD_PALETTE[index % CARD_PALETTE.length];
 }
-
+function shade(hex: string): string {
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.max(0, (n >> 16) - 36);
+  const g = Math.max(0, ((n >> 8) & 255) - 26);
+  const b = Math.max(0, (n & 255) - 14);
+  return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+}
 function sumTransactions(items: Array<Pick<TransactionRead, "amount">>) {
   return items.reduce((total, t) => total + Math.abs(Number(t.amount)), 0);
+}
+// Best purchase day = day after closing (longest time until the bill is due).
+function bestPurchaseDay(closingDay: number): number {
+  return (closingDay % 31) + 1;
+}
+
+const CAT_PALETTE = [
+  "#3567b8", "#1f8a5b", "#6a52c9", "#c98a2b", "#cf4d43",
+  "#d98234", "#2a9d8f", "#9a6b14", "#7c8696", "#a35a7d",
+];
+
+// ---------------------------------------------------------------------------
+// Donut chart
+// ---------------------------------------------------------------------------
+
+function Donut({ data, size = 150, thickness = 22, center }: {
+  data: { value: number; color: string }[];
+  size?: number;
+  thickness?: number;
+  center?: React.ReactNode;
+}) {
+  const total = data.reduce((s, d) => s + d.value, 0) || 1;
+  const r = (size - thickness) / 2;
+  const cx = size / 2;
+  const circ = 2 * Math.PI * r;
+  let offset = 0;
+  return (
+    <div style={{ position: "relative", width: size, height: size }}>
+      <svg width={size} height={size}>
+        <circle cx={cx} cy={cx} r={r} fill="none" stroke="var(--bg-sunken)" strokeWidth={thickness} />
+        <g transform={`rotate(-90 ${cx} ${cx})`}>
+          {data.map((d, i) => {
+            const dash = (d.value / total) * circ;
+            const seg = (
+              <circle key={i} cx={cx} cy={cx} r={r} fill="none" stroke={d.color} strokeWidth={thickness}
+                strokeDasharray={`${dash} ${circ - dash}`} strokeDashoffset={-offset} strokeLinecap="butt" />
+            );
+            offset += dash;
+            return seg;
+          })}
+        </g>
+      </svg>
+      {center && (
+        <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", textAlign: "center" }}>
+          {center}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function CardTransactionList({
-  emptyMessage,
-  items,
-  loading,
-  onOpenTransaction,
-  showInstallments = false,
-}: {
+function StageCard({ icon, tone, title, desc, amount }: { icon: string; tone: string; title: string; desc: string; amount: string }) {
+  return (
+    <div className="card card-pad">
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <span className="goal-ic" style={{ background: tone + "1e", color: tone }}>
+          <KIcon name={icon} size={15} />
+        </span>
+        <span style={{ fontWeight: 700, fontSize: 13.5 }}>{title}</span>
+      </div>
+      <p style={{ fontSize: 11.5, color: "var(--ink-3)", margin: "0 0 8px", lineHeight: 1.45, minHeight: 48 }}>{desc}</p>
+      <div className="mono" style={{ fontSize: 12.5, fontWeight: 700, color: tone }}>{amount}</div>
+    </div>
+  );
+}
+
+function LoadingRows() {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "16px 0" }}>
+      {[1, 2, 3].map((i) => <div key={i} className="skel" style={{ height: 40, borderRadius: 9 }} />)}
+    </div>
+  );
+}
+
+function EmptyState({ message }: { message: string }) {
+  return (
+    <div className="state">
+      <div className="state-ic"><KIcon name="list" size={20} /></div>
+      <p>{message}</p>
+    </div>
+  );
+}
+
+function CardTransactionList({ emptyMessage, items, loading, onOpenTransaction }: {
   emptyMessage: string;
   items: TransactionRead[];
   loading: boolean;
   onOpenTransaction: (t: TransactionRead) => void;
-  showInstallments?: boolean;
 }) {
-  if (loading) return <PageState icon={Loader2} title="Carregando cartão" description="Aguarde um momento." spin compact />;
-  if (!items.length) return <EmptyInline message={emptyMessage} />;
+  if (loading) return <LoadingRows />;
+  if (!items.length) return <EmptyState message={emptyMessage} />;
   return (
-    <div className="merchant-list">
-      {items.map((t) => (
-        <button className="merchant-row clickable" key={t.id} onClick={() => onOpenTransaction(t)} type="button">
-          <span>
-            <strong>{t.description}</strong>
-            <small>{dateLabel(t.transaction_date)} · {directionLabel(t.direction)}{showInstallments ? ` · ${installmentSummaryLabel(t)}` : ""}</small>
-          </span>
-          <strong className={amountClass(t)}>{moneyAbs(t.amount)}</strong>
-        </button>
-      ))}
+    <div style={{ overflowX: "auto" }}>
+      <table className="tbl">
+        <thead>
+          <tr><th>Data</th><th>Descrição</th><th>Tipo</th><th className="num">Valor</th></tr>
+        </thead>
+        <tbody>
+          {items.map((t) => (
+            <tr key={t.id} style={{ cursor: "pointer" }} onClick={() => onOpenTransaction(t)}>
+              <td className="mono t-sub">{dateLabel(t.transaction_date)}</td>
+              <td>
+                <span className="t-desc">{t.description}</span>
+                {installmentSummaryLabel(t) && (
+                  <span className="badge b-future tag-mono" style={{ marginLeft: 8 }}>{installmentSummaryLabel(t)}</span>
+                )}
+              </td>
+              <td>
+                <span className={`badge ${t.direction === "credit" ? "b-pos" : t.direction === "payment" ? "b-info" : "b-neutral"}`}>
+                  {directionLabel(t.direction)}
+                </span>
+              </td>
+              <td className="num" style={{ fontWeight: 700 }}>
+                <span className={amountClass(t)}>{moneyAbs(t.amount)}</span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
 
-function CardInstallmentList({
-  emptyMessage,
-  error,
-  items,
-  loading,
-  onOpenInstallment,
-}: {
-  emptyMessage: string;
-  error: boolean;
-  items: CreditCardInstallmentItem[];
-  loading: boolean;
-  onOpenInstallment: (item: CreditCardInstallmentItem) => void;
-}) {
-  if (loading) return <PageState icon={Loader2} title="Carregando parcelas" description="Aguarde um momento." spin compact />;
-  if (error) return <EmptyInline message="Não foi possível carregar as parcelas do cartão. Confira se a API local foi reiniciada." />;
-  if (!items.length) return <EmptyInline message={emptyMessage} />;
-  return (
-    <div className="installment-list">
-      {items.map((item) => (
-        <button className="installment-row" key={`${item.description}-${item.amount}-${item.installment_total}`} onClick={() => onOpenInstallment(item)} type="button">
-          <span>
-            <strong>{item.description}</strong>
-            <small>Parcela {item.installment_current}/{item.installment_total} · Compra em {dateLabel(item.last_transaction_date)} · Fatura inicial: {monthYearLabel(item.first_invoice_month)}</small>
-          </span>
-          <strong className={item.remaining_installments ? "warning" : "muted-strong"}>{moneyAbs(item.future_amount)}</strong>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function CreditCardList({ items, loading, onEditCard }: { items: CreditCardRead[]; loading: boolean; onEditCard: (card: CreditCardRead) => void }) {
-  if (loading) return <PageState icon={Loader2} title="Carregando cartões" description="Aguarde um momento." spin compact />;
-  if (!items.length) return <EmptyInline message="Nenhum cartão detectado ainda. Importe uma fatura para começar." />;
-  return (
-    <div className="quality-list">
-      {items.map((card) => (
-        <div className="payment-match-row" key={card.id}>
-          <div>
-            <strong>{cardLabel(card)}</strong>
-            <small>Fecha {card.closing_day} · vence {card.due_day}{card.issuer ? ` · ${card.issuer}` : ""}{card.brand ? ` · ${card.brand}` : ""}</small>
-          </div>
-          <button className="ghost-button compact" onClick={() => onEditCard(card)} type="button">Editar</button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function CreditCardStatementList({ cards, items, loading }: { cards: CreditCardRead[]; items: CreditCardStatementRead[]; loading: boolean }) {
-  if (loading) return <PageState icon={Loader2} title="Carregando faturas" description="Aguarde um momento." spin compact />;
-  if (!items.length) return <EmptyInline message="Nenhuma fatura detectada ainda. Importe uma fatura ou ajuste manualmente se precisar." />;
-  const cardById = new Map(cards.map((c) => [c.id, c]));
-  return (
-    <div className="quality-list">
-      {items.map((statement) => (
-        <QualityRow
-          key={statement.id}
-          label={`${cardById.get(statement.credit_card_id)?.name ?? "Cartão"} · ${monthYearLabel(statement.statement_month)}`}
-          value={`${dateLabel(statement.due_date)} · ${moneyAbs(statement.total_amount ?? 0)} · ${statementStatusLabel(statement.status)}`}
-        />
-      ))}
-    </div>
-  );
-}
-
-function PaymentMatchList({ items, loading, onOpenMatch }: {
+function PaymentMatchListPanel({ items, loading, onOpenMatch }: {
   items: CreditCardPaymentMatchItem[];
   loading: boolean;
   onOpenMatch: (item: CreditCardPaymentMatchItem, side: "bank" | "card") => void;
 }) {
-  if (loading) return <PageState icon={Loader2} title="Buscando pares" description="Aguarde um momento." spin compact />;
-  if (!items.length) return <EmptyInline message="Nenhum pagamento conciliável encontrado no período." />;
+  if (loading) return <LoadingRows />;
+  if (!items.length) return <EmptyState message="Nenhum pagamento conciliável no período." />;
   return (
-    <div className="payment-match-list">
+    <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
       {items.map((item) => (
-        <div className="payment-match-row" key={`${item.bank_transaction_id}-${item.card_transaction_id}`}>
-          <div>
-            <strong>{moneyAbs(item.amount)}</strong>
-            <small>{dateLabel(item.bank_date)} no extrato · {dateLabel(item.card_date)} na fatura{item.date_delta_days ? ` · diferença de ${item.date_delta_days} dia${item.date_delta_days === 1 ? "" : "s"}` : ""}</small>
+        <div key={`${item.bank_transaction_id}-${item.card_transaction_id}`} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 4px", borderBottom: "1px solid var(--line)" }}>
+          <div className="goal-ic" style={{ background: "var(--acc-soft)", color: "var(--acc)" }}>
+            <KIcon name="check" size={15} />
           </div>
-          <div className="payment-match-actions">
-            <button className="ghost-button compact" onClick={() => onOpenMatch(item, "bank")} type="button">Extrato</button>
-            <button className="ghost-button compact" onClick={() => onOpenMatch(item, "card")} type="button">Fatura</button>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 13.5 }}>{moneyAbs(item.amount)}</div>
+            <div className="t-sub">{dateLabel(item.bank_date)} no extrato · {dateLabel(item.card_date)} na fatura</div>
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button className="btn btn-quiet btn-sm" onClick={() => onOpenMatch(item, "bank")} type="button">Extrato</button>
+            <button className="btn btn-quiet btn-sm" onClick={() => onOpenMatch(item, "card")} type="button">Fatura</button>
           </div>
         </div>
       ))}
@@ -197,185 +242,470 @@ function PaymentMatchList({ items, loading, onOpenMatch }: {
 // ---------------------------------------------------------------------------
 
 export function CardsPage({
+  onOpenImports,
   onOpenTransactions,
+  period: cardPeriod,
   session,
+  setPeriod: setCardPeriod,
 }: {
+  onOpenImports?: () => void;
   onOpenTransactions: (drilldown?: TransactionDrilldown) => void;
+  period: PeriodState;
   session: ApiSession;
+  setPeriod: Dispatch<SetStateAction<PeriodState>>;
 }) {
-  const [cardPeriod, setCardPeriod] = useState<PeriodState>(() => {
-    const range = periodRange("current_month");
-    return { ...range, periodPreset: "current_month" };
-  });
-  const [cardForm, setCardForm] = useState({ brand: "", closingDay: "23", dueDay: "20", issuer: "", lastFour: "", limitAmount: "", name: "" });
-  const [editingCardId, setEditingCardId] = useState("");
-  const [statementForm, setStatementForm] = useState(() => {
-    const today = new Date();
-    return { cardId: "", closingDate: "", dueDate: isoDate(today), statementMonth: isoDate(new Date(today.getFullYear(), today.getMonth(), 1)), status: "open", totalAmount: "" };
-  });
+  const hasTransactions = useHasTransactions(session);
   const period = usePeriod(cardPeriod, setCardPeriod);
-  const queryClient = useQueryClient();
+  // active = -1 → all cards (aggregate); 0..n → a specific card.
+  const [active, setActive] = useState(-1);
+  const [showNewCard, setShowNewCard] = useState(false);
+  const [editCard, setEditCard] = useState<CreditCardRead | null>(null);
 
-  const cardQuery = withQueryParams(period.query, { limit: "100", sort_by: "transaction_date", sort_dir: "desc", source_type: "credit_card_statement" });
-  const paymentQuery = withQueryParams(period.query, { direction: "payment", limit: "50", sort_by: "transaction_date", sort_dir: "desc", source_type: "credit_card_statement" });
+  const persistedCards = useQuery({ queryKey: ["credit-cards", session.token], queryFn: () => getCreditCards(session) });
+  const categories = useCategories(session);
+  const cardList = persistedCards.data?.items ?? [];
+  const selectedCard: CreditCardRead | undefined = active >= 0 ? cardList[active] : undefined;
 
+  // Transactions of the selected card (linked via its imported statements/files).
+  const cardQueryParams: Record<string, string> = { limit: "100", sort_by: "transaction_date", sort_dir: "desc", source_type: "credit_card_statement" };
+  if (selectedCard) cardQueryParams.credit_card_id = selectedCard.id;
+  const cardQuery = withQueryParams(period.query, cardQueryParams);
   const cards = useQuery({ queryKey: ["card-transactions", session.token, cardQuery], queryFn: () => getTransactions(session, cardQuery) });
-  const payments = useQuery({ queryKey: ["card-payments", session.token, paymentQuery], queryFn: () => getTransactions(session, paymentQuery) });
-  const recurring = useQuery({ queryKey: ["card-recurring-expenses", session.token, period.recurringQuery], queryFn: () => getRecurringExpenses(session, withQueryParams(period.recurringQuery, { limit: "6", min_months: "3" })) });
-  const futureInstallmentsQuery = useQuery({
+  const installments = useQuery({
     queryKey: ["card-future-installments", session.token, period.dateTo],
     queryFn: () => getCreditCardInstallments(session, period.dateTo ? withQueryParams("", { date_to: period.dateTo, limit: "8" }) : withQueryParams("", { limit: "8" })),
   });
-  const currentInstallments = useQuery({ queryKey: ["card-current-installments", session.token, period.query], queryFn: () => getCreditCardInstallments(session, withQueryParams(period.query, { limit: "20" })) });
   const paymentMatches = useQuery({ queryKey: ["cards-credit-card-payment-matches", session.token, period.query], queryFn: () => getCreditCardPaymentMatches(session, withQueryParams(period.query, { limit: "5", window_days: "7" })) });
-  const persistedCards = useQuery({ queryKey: ["credit-cards", session.token], queryFn: () => getCreditCards(session) });
-  const persistedStatements = useQuery({ queryKey: ["credit-card-statements", session.token, period.query], queryFn: () => getCreditCardStatements(session, period.query) });
-
-  const createCardMutation = useMutation({
-    mutationFn: () => createCreditCard(session, { brand: cardForm.brand || null, closing_day: Number(cardForm.closingDay || 23), due_day: Number(cardForm.dueDay || 20), issuer: cardForm.issuer || null, last_four: cardForm.lastFour || null, limit_amount: cardForm.limitAmount || null, name: cardForm.name }),
-    onSuccess: (card) => {
-      setCardForm((c) => ({ ...c, lastFour: "", limitAmount: "", name: "" }));
-      setStatementForm((c) => ({ ...c, cardId: card.id }));
-      void queryClient.invalidateQueries({ queryKey: ["credit-cards"] });
-    },
-  });
-  const updateCardMutation = useMutation({
-    mutationFn: () => updateCreditCard(session, editingCardId, { brand: cardForm.brand || null, closing_day: Number(cardForm.closingDay || 23), due_day: Number(cardForm.dueDay || 20), issuer: cardForm.issuer || null, last_four: cardForm.lastFour || null, limit_amount: cardForm.limitAmount || null, name: cardForm.name }),
-    onSuccess: () => {
-      setEditingCardId("");
-      setCardForm((c) => ({ ...c, brand: "", issuer: "", lastFour: "", limitAmount: "", name: "" }));
-      void queryClient.invalidateQueries({ queryKey: ["credit-cards"] });
-    },
-  });
-  const createStatementMutation = useMutation({
-    mutationFn: () => createCreditCardStatement(session, { closing_date: statementForm.closingDate || null, credit_card_id: statementForm.cardId, due_date: statementForm.dueDate, statement_month: statementForm.statementMonth, status: statementForm.status, total_amount: statementForm.totalAmount || null }),
-    onSuccess: () => {
-      setStatementForm((c) => ({ ...c, closingDate: "", totalAmount: "" }));
-      void queryClient.invalidateQueries({ queryKey: ["credit-card-statements"] });
-    },
-  });
 
   const cardItems = cards.data?.items ?? [];
-  const paymentItems = payments.data?.items ?? [];
-  const cardExpenses = sumTransactions(cardItems.filter((t) => t.direction === "debit"));
-  const cardCredits = sumTransactions(cardItems.filter((t) => t.direction === "credit"));
-  const cardPayments = sumTransactions(paymentItems);
-  const activeInstallmentCount = futureInstallmentsQuery.data?.active_count ?? 0;
-  const futureInstallments = futureInstallmentsQuery.data?.total_future_amount ?? "0";
+  const cardDebits = cardItems.filter((t) => t.direction === "debit");
 
-  function openCardTransactions(direction?: string, label = "Cartão de crédito") {
+  const cardExpenses = sumTransactions(cardDebits);
+  const futureInstallments = Number(installments.data?.total_future_amount ?? 0);
+  const activeInstallmentCount = installments.data?.active_count ?? 0;
+  const sumLimits = cardList.reduce((s, c) => s + Number(c.limit_amount ?? 0), 0);
+  const limitForUsage = selectedCard ? Number(selectedCard.limit_amount ?? 0) : sumLimits;
+  const util = limitForUsage > 0 ? Math.round((cardExpenses / limitForUsage) * 100) : 0;
+  const available = limitForUsage - cardExpenses;
+
+  // Gastos por categoria-pai (subcategorias são somadas na categoria-pai).
+  const catById = useMemo(() => {
+    const m = new Map<string, CategoryRead>();
+    (categories.data?.items ?? []).forEach((c) => m.set(c.id, c));
+    return m;
+  }, [categories.data?.items]);
+  // índice de paleta estável por categoria-pai (para fallback de cor)
+  const parentPaletteIndex = useMemo(() => {
+    const m = new Map<string, number>();
+    (categories.data?.items ?? []).filter((c) => !c.parent_category_id).forEach((c, i) => m.set(c.id, i));
+    return m;
+  }, [categories.data?.items]);
+  const gastosPorCategoria = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const t of cardDebits) {
+      const assigned = t.category?.category_id;
+      const cat = assigned ? catById.get(assigned) : undefined;
+      // sobe para a categoria-pai (se for subcategoria); top-level usa a si mesmo
+      const rootId = cat ? (cat.parent_category_id ?? cat.id) : "__none__";
+      map.set(rootId, (map.get(rootId) ?? 0) + Math.abs(Number(t.amount)));
+    }
+    return [...map.entries()]
+      .map(([id, value]) => {
+        const cat = catById.get(id);
+        const color = cat?.color ?? CAT_PALETTE[(parentPaletteIndex.get(id) ?? 0) % CAT_PALETTE.length];
+        return { id, name: cat?.name ?? "Sem categoria", color, value };
+      })
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 7);
+  }, [cardDebits, catById, parentPaletteIndex]);
+
+  function openCardTransactions(direction: string | undefined, label: string) {
     onOpenTransactions({ dateFrom: period.dateFrom, dateTo: period.dateTo, direction, label, periodPreset: period.periodPreset, sourceType: "credit_card_statement" });
   }
   function openTransaction(t: TransactionRead) {
     onOpenTransactions({ dateFrom: t.transaction_date, dateTo: t.transaction_date, direction: t.direction, label: t.description, periodPreset: "custom", search: t.description, sourceType: "credit_card_statement" });
   }
-  function editCard(card: CreditCardRead) {
-    setEditingCardId(card.id);
-    setCardForm({ brand: card.brand ?? "", closingDay: String(card.closing_day), dueDay: String(card.due_day), issuer: card.issuer ?? "", lastFour: card.last_four ?? "", limitAmount: card.limit_amount ?? "", name: card.name });
+
+  if (hasTransactions === false && cardList.length === 0 && !showNewCard) {
+    return (
+      <NoDataOnboarding
+        icon={CreditCard}
+        eyebrow="Cartões"
+        title="Cadastre seu primeiro cartão"
+        description="Acompanhe faturas, limites, vencimentos e parcelados. Cadastre um cartão manualmente ou importe a fatura (OFX/CSV) para o SmartCashFlow montar tudo automaticamente."
+        onImport={onOpenImports}
+        secondaryLabel="Cadastrar cartão"
+        onSecondary={() => setShowNewCard(true)}
+      />
+    );
   }
 
   return (
-    <section className="page-stack">
-      <div className="page-header-bar">
-        <span className="page-header-spacer" />
-        <PeriodFilter dateFrom={period.dateFrom} dateTo={period.dateTo} periodPreset={period.periodPreset} onPreset={period.setPeriodPreset} onDateFrom={period.setDateFrom} onDateTo={period.setDateTo} />
+    <div className="canvas stg">
+
+      {/* ── Header ── */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 20 }}>
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>Planejamento</div>
+          <h2 className="section-title"><KIcon name="card" size={18} /> Cartões de Crédito</h2>
+          <p className="section-sub">
+            Faturas, limites, vencimentos e parcelados. Compra, fatura e pagamento são tratados separadamente para evitar dupla contagem.
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: 8, flex: "none" }}>
+          {selectedCard && (
+            <button className="btn btn-ghost btn-sm" type="button" onClick={() => setEditCard(selectedCard)}>
+              <KIcon name="edit" size={14} /> Editar cartão
+            </button>
+          )}
+          <button className="btn btn-ghost btn-sm" type="button" onClick={() => setShowNewCard(true)}>
+            <KIcon name="plus" size={14} /> Adicionar cartão
+          </button>
+        </div>
       </div>
 
-      <section className="dashboard-section">
-        <DashboardSectionHeader eyebrow="Cartão de crédito" title="Fatura e compras" description="Separe compras, créditos, pagamentos e parcelas para não misturar fatura com gasto do mês." />
-        <div className="metric-grid executive">
-          <MetricCard icon={CreditCard} label="Compras" title={moneyAbs(cardExpenses)} value={compactMoneyAbs(cardExpenses)} helper="Despesas em faturas" tone="negative" onClick={() => openCardTransactions("debit", "Compras no cartão")} />
-          <MetricCard icon={ArrowUpCircle} label="Créditos" title={moneyAbs(cardCredits)} value={compactMoneyAbs(cardCredits)} helper="Estornos e devoluções" tone="positive" onClick={() => openCardTransactions("credit", "Créditos no cartão")} />
-          <MetricCard icon={ReceiptText} label="Fatura" title={moneyAbs(cardPayments)} value={compactMoneyAbs(cardPayments)} helper="Pagamentos na fatura" tone="info" onClick={() => openCardTransactions("payment", "Pagamentos da fatura")} />
-          <MetricCard icon={CalendarDays} label="Parcelado futuro" title={moneyAbs(futureInstallments)} value={compactMoneyAbs(futureInstallments)} helper={`${activeInstallmentCount} parcela${activeInstallmentCount === 1 ? "" : "s"} no próximo mês`} tone="warning" onClick={() => openCardTransactions("debit", "Parcelas identificadas")} />
-          <MetricCard icon={Database} label="Lançamentos" title={String(cards.data?.total ?? cardItems.length)} value={String(cards.data?.total ?? cardItems.length)} helper="No período filtrado" onClick={() => openCardTransactions(undefined, "Lançamentos do cartão")} />
+      {/* ── Seletor de cartões ── */}
+      {cardList.length === 0 ? (
+        <div className="card card-pad" style={{ marginBottom: 16, display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+          <EmptyState message="Nenhum cartão cadastrado. Adicione um cartão ou importe uma fatura para começar." />
+          <button className="btn btn-primary btn-sm" type="button" onClick={() => setShowNewCard(true)}>
+            <KIcon name="plus" size={14} /> Adicionar cartão
+          </button>
         </div>
-      </section>
-
-      <section className="dashboard-section">
-        <DashboardSectionHeader eyebrow="Importação primeiro" title="Cartões e faturas detectados" description="O sistema deve aproveitar os arquivos importados para descobrir cartão, vencimento, fechamento e status. Ajuste manual fica como exceção." />
-        <div className="dashboard-grid operations-grid">
-          <Panel title="Cartões detectados" description="Base identificada ou ajustada a partir das faturas importadas.">
-            <CreditCardList items={persistedCards.data?.items ?? []} loading={persistedCards.isLoading} onEditCard={editCard} />
-          </Panel>
-          <Panel title="Faturas detectadas" description="Competências, vencimentos e status usados nos indicadores.">
-            <CreditCardStatementList cards={persistedCards.data?.items ?? []} items={persistedStatements.data?.items ?? []} loading={persistedStatements.isLoading} />
-          </Panel>
-        </div>
-        <div className="dashboard-grid operations-grid">
-          <Panel title={editingCardId ? "Editar cartão detectado" : "Ajustar cartão manualmente"} description="Use apenas quando a importação não conseguiu identificar ou você precisa corrigir dados.">
-            <form className="inline-form form-grid two-columns" onSubmit={(e) => { e.preventDefault(); if (editingCardId) { updateCardMutation.mutate(); } else { createCardMutation.mutate(); } }}>
-              <label>Nome<input required value={cardForm.name} onChange={(e) => setCardForm((c) => ({ ...c, name: e.target.value }))} /></label>
-              <label>Banco/emissor<input value={cardForm.issuer} onChange={(e) => setCardForm((c) => ({ ...c, issuer: e.target.value }))} /></label>
-              <label>Bandeira<input value={cardForm.brand} onChange={(e) => setCardForm((c) => ({ ...c, brand: e.target.value }))} /></label>
-              <label>Final<input inputMode="numeric" maxLength={4} pattern="[0-9]{4}" value={cardForm.lastFour} onChange={(e) => setCardForm((c) => ({ ...c, lastFour: e.target.value }))} /></label>
-              <label>Fechamento<input max="31" min="1" required type="number" value={cardForm.closingDay} onChange={(e) => setCardForm((c) => ({ ...c, closingDay: e.target.value }))} /></label>
-              <label>Vencimento<input max="31" min="1" required type="number" value={cardForm.dueDay} onChange={(e) => setCardForm((c) => ({ ...c, dueDay: e.target.value }))} /></label>
-              <label>Limite<input min="0.01" step="0.01" type="number" value={cardForm.limitAmount} onChange={(e) => setCardForm((c) => ({ ...c, limitAmount: e.target.value }))} /></label>
-              <button className="primary-button" disabled={createCardMutation.isPending || updateCardMutation.isPending} type="submit">
-                <Plus size={16} />{editingCardId ? "Salvar edição" : "Salvar cartão"}
-              </button>
-              {editingCardId ? (
-                <button className="ghost-button" disabled={updateCardMutation.isPending} onClick={() => { setEditingCardId(""); setCardForm((c) => ({ ...c, brand: "", issuer: "", lastFour: "", limitAmount: "", name: "" })); }} type="button">Cancelar edição</button>
-              ) : null}
-            </form>
-            {createCardMutation.isError ? <InlineError message={apiErrorMessage(createCardMutation.error, "Falha ao salvar cartão.")} /> : null}
-            {updateCardMutation.isError ? <InlineError message={apiErrorMessage(updateCardMutation.error, "Falha ao editar cartão.")} /> : null}
-          </Panel>
-          <Panel title="Ajustar fatura manualmente" description="Use como correção quando vencimento, total ou status não vieram do arquivo.">
-            <form className="inline-form form-grid two-columns" onSubmit={(e) => { e.preventDefault(); createStatementMutation.mutate(); }}>
-              <label>
-                Cartão
-                <select required value={statementForm.cardId} onChange={(e) => setStatementForm((c) => ({ ...c, cardId: e.target.value }))}>
-                  <option value="">Selecione</option>
-                  {(persistedCards.data?.items ?? []).map((card) => <option key={card.id} value={card.id}>{cardLabel(card)}</option>)}
-                </select>
-              </label>
-              <label>Mês<input required type="date" value={statementForm.statementMonth} onChange={(e) => setStatementForm((c) => ({ ...c, statementMonth: e.target.value }))} /></label>
-              <label>Fechamento<input type="date" value={statementForm.closingDate} onChange={(e) => setStatementForm((c) => ({ ...c, closingDate: e.target.value }))} /></label>
-              <label>Vencimento<input required type="date" value={statementForm.dueDate} onChange={(e) => setStatementForm((c) => ({ ...c, dueDate: e.target.value }))} /></label>
-              <label>Valor total<input min="0" step="0.01" type="number" value={statementForm.totalAmount} onChange={(e) => setStatementForm((c) => ({ ...c, totalAmount: e.target.value }))} /></label>
-              <label>
-                Status
-                <select value={statementForm.status} onChange={(e) => setStatementForm((c) => ({ ...c, status: e.target.value }))}>
-                  <option value="open">Aberta</option><option value="closed">Fechada</option><option value="partial">Parcial</option><option value="paid">Paga</option>
-                </select>
-              </label>
-              <button className="primary-button" disabled={createStatementMutation.isPending || !persistedCards.data?.items.length} type="submit">
-                <Plus size={16} />Salvar fatura
-              </button>
-            </form>
-            {createStatementMutation.isError ? <InlineError message={apiErrorMessage(createStatementMutation.error, "Falha ao salvar fatura.")} /> : null}
-          </Panel>
-        </div>
-      </section>
-
-      <section className="dashboard-section">
-        <DashboardSectionHeader eyebrow="Controle" title="Detalhes do cartão" description="Revise compras recentes, parcelas e pagamentos conciliáveis antes de tomar decisão." />
-        <div className="dashboard-grid operations-grid">
-          <Panel title="Compras recentes" description="Últimos lançamentos importados de faturas.">
-            <CardTransactionList emptyMessage="Nenhuma compra de cartão encontrada no período." items={cardItems.filter((t) => t.direction !== "payment").slice(0, 8)} loading={cards.isLoading} onOpenTransaction={openTransaction} />
-          </Panel>
-          <Panel title="Parcelas identificadas" description="Compras com parcela atual/total detectada na fatura.">
-            <div className="panel-summary-line">
-              <strong>{currentInstallments.data?.active_count ?? 0} parcela{currentInstallments.data?.active_count === 1 ? "" : "s"} no período</strong>
-              <span>{moneyAbs(currentInstallments.data?.total_future_amount ?? 0)}</span>
+      ) : (
+        <div style={{ display: "flex", gap: 14, marginBottom: 16, flexWrap: "wrap", alignItems: "stretch" }}>
+          {/* Todos os cartões (agregado) */}
+          <button
+            type="button"
+            onClick={() => setActive(-1)}
+            className={"cc" + (active === -1 ? " on" : "")}
+            style={{ background: "linear-gradient(135deg, var(--ink-3), var(--ink-faint))", minWidth: 150 }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <span style={{ fontWeight: 700, fontSize: 15 }}>Todos os cartões</span>
+              <KIcon name="card" size={16} />
             </div>
-            {currentInstallments.data ? <p className="panel-note">Cálculo usando fechamento dia {currentInstallments.data.closing_day} e vencimento dia {currentInstallments.data.due_day} até o cadastro de cartões ficar disponível.</p> : null}
-            <CardInstallmentList emptyMessage="Nenhuma parcela identificada no período." error={currentInstallments.isError} items={currentInstallments.data?.items ?? []} loading={currentInstallments.isLoading} onOpenInstallment={(item) => onOpenTransactions({ dateTo: period.dateTo, label: item.description, periodPreset: "custom", search: item.description, sourceType: "credit_card_statement" })} />
-          </Panel>
-          <Panel title="Conciliação de fatura" description="Pagamentos parecidos entre extrato e fatura.">
-            <PaymentMatchList items={paymentMatches.data?.items ?? []} loading={paymentMatches.isLoading} onOpenMatch={(item, side) => onOpenTransactions({ dateFrom: side === "bank" ? item.bank_date : item.card_date, dateTo: side === "bank" ? item.bank_date : item.card_date, direction: "payment", label: side === "bank" ? "Pagamento no extrato" : "Pagamento na fatura", periodPreset: "custom", search: side === "bank" ? item.bank_description : item.card_description, sourceType: side === "card" ? "credit_card_statement" : "bank_statement" })} />
-          </Panel>
-          <Panel title="Recorrências" description="Assinaturas e cobranças repetidas detectadas no histórico.">
-            <div className="quality-list">
-              {recurring.isLoading ? <PageState icon={Loader2} title="Carregando recorrências" description="Aguarde um momento." spin compact /> : null}
-              {!recurring.isLoading && !recurring.data?.items.length ? <EmptyInline message="Nenhuma recorrência detectada." /> : null}
-              {recurring.data?.items.map((item) => <QualityRow key={item.description} label={item.description} onClick={() => onOpenTransactions({ dateFrom: period.dateFrom, dateTo: period.dateTo, label: item.description, periodPreset: period.periodPreset, search: item.description })} value={compactMoneyAbs(item.average_amount)} />)}
+            <div style={{ fontSize: 11, opacity: .85, marginTop: 18 }}>{cardList.length} cartões</div>
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 9.5, opacity: .75, textTransform: "uppercase", letterSpacing: .5 }}>Limite total</div>
+              <div style={{ fontWeight: 700, fontSize: 17, fontVariantNumeric: "tabular-nums" }}>{money(sumLimits)}</div>
             </div>
-          </Panel>
+          </button>
+          {cardList.map((c, i) => {
+            const col = c.color || cardColor(i);
+            return (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => setActive(i)}
+                className={"cc" + (active === i ? " on" : "")}
+                style={{ background: `linear-gradient(135deg, ${col}, ${shade(col)})` }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <span style={{ fontWeight: 700, fontSize: 15 }}>{c.name}</span>
+                  <span style={{ fontSize: 11, opacity: .8, fontFamily: "var(--font-mono)" }}>{c.brand ?? ""}</span>
+                </div>
+                <div style={{ fontFamily: "var(--font-mono)", fontSize: 14, letterSpacing: 2, marginTop: 18 }}>
+                  •••• {c.last_four ?? "----"}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginTop: 14 }}>
+                  <div>
+                    <div style={{ fontSize: 9.5, opacity: .75, textTransform: "uppercase", letterSpacing: .5 }}>Limite</div>
+                    <div style={{ fontWeight: 700, fontSize: 17, fontVariantNumeric: "tabular-nums" }}>{money(c.limit_amount)}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 9.5, opacity: .75, textTransform: "uppercase", letterSpacing: .5 }}>Vence</div>
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>dia {c.due_day}</div>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+          {/* Tile: adicionar cartão */}
+          <button
+            type="button"
+            onClick={() => setShowNewCard(true)}
+            className="cc cc-add"
+            title="Adicionar cartão"
+          >
+            <KIcon name="plus" size={22} />
+            <span style={{ fontWeight: 600, fontSize: 13, marginTop: 8 }}>Adicionar cartão</span>
+          </button>
         </div>
-      </section>
-    </section>
+      )}
+
+      {/* ── KPIs do cartão / período ── */}
+      <div className="grid cols-4" style={{ marginBottom: 16 }}>
+        <button className="kpi" style={{ textAlign: "left" }} type="button" onClick={() => openCardTransactions("debit", "Compras no cartão")}>
+          <div className="kpi-top"><div className="kpi-ic"><KIcon name="receipt" size={15} /></div><span className="kpi-label">Fatura / compras</span></div>
+          <div className="kpi-val"><span className="cur">R$</span>{compactMoneyAbs(cardExpenses)}</div>
+          <div className="kpi-sub">{selectedCard ? `fecha dia ${selectedCard.closing_day}` : "no período"}</div>
+        </button>
+        <div className="kpi">
+          <div className="kpi-top"><div className="kpi-ic" style={{ background: "var(--pos-soft)", color: "var(--pos)" }}><KIcon name="wallet" size={15} /></div><span className="kpi-label">Limite disponível</span></div>
+          <div className="kpi-val"><span className="cur">R$</span>{compactMoneyAbs(Math.max(0, available))}</div>
+          <div className="kpi-sub">de {moneyAbs(limitForUsage)}</div>
+        </div>
+        <button className="kpi" style={{ textAlign: "left" }} type="button" onClick={() => openCardTransactions("debit", "Parcelas identificadas")}>
+          <div className="kpi-top"><div className="kpi-ic" style={{ background: "var(--warn-soft)", color: "var(--warn)" }}><KIcon name="repeat" size={15} /></div><span className="kpi-label">Parcelado futuro</span></div>
+          <div className="kpi-val"><span className="cur">R$</span>{compactMoneyAbs(futureInstallments)}</div>
+          <div className="kpi-sub">{activeInstallmentCount} parcela{activeInstallmentCount === 1 ? "" : "s"} no próximo mês</div>
+        </button>
+        <div className="kpi">
+          <div className="kpi-top"><div className="kpi-ic" style={{ background: "var(--ai-soft)", color: "var(--ai)" }}><KIcon name="star" size={15} /></div><span className="kpi-label">Melhor dia de compra</span></div>
+          <div className="kpi-val">{selectedCard ? `Dia ${bestPurchaseDay(selectedCard.closing_day)}` : "—"}</div>
+          <div className="kpi-sub">maior prazo até o pagamento</div>
+        </div>
+      </div>
+
+      {/* ── Uso do limite ── */}
+      <div className="card card-pad" style={{ marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <span className="eyebrow">Uso do limite · {selectedCard ? selectedCard.name : "todos os cartões"}</span>
+          <span className="mono" style={{ fontSize: 12.5, color: "var(--ink-3)" }}>
+            {moneyAbs(cardExpenses)} de {moneyAbs(limitForUsage)} · {util}%
+          </span>
+        </div>
+        <div className="track" style={{ height: 12 }}>
+          <div className="fill" style={{ width: `${Math.min(100, util)}%`, background: util > 70 ? "var(--neg)" : util > 55 ? "var(--warn)" : "var(--acc)" }} />
+        </div>
+        {util > 55 && (
+          <div className="alert warn" style={{ marginTop: 12 }}>
+            <div className="alert-ic"><KIcon name="alert" size={15} /></div>
+            <div>
+              <div className="a-ttl">Comprometimento do limite em {util}%</div>
+              <div className="a-txt">Acima de 70% o score de crédito pode ser afetado. Considere antecipar parte da fatura ou reduzir novas compras parceladas.</div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── 4 estágios ── */}
+      <div className="grid cols-4" style={{ marginBottom: 20 }}>
+        <StageCard icon="card"    tone="var(--info)"      title="Compra"         desc="Lançamento no cartão. Ainda não é despesa de caixa." amount={`R$ ${compactMoneyAbs(cardExpenses)} no ciclo`} />
+        <StageCard icon="receipt" tone="var(--warn)"      title="Fatura"         desc="Soma das compras do ciclo. Vence conforme o cartão." amount={moneyAbs(cardExpenses)} />
+        <StageCard icon="check"   tone="var(--acc)"       title="Pagamento"      desc="Saída de caixa real. Concilia a fatura — sem dupla contagem." amount="a conciliar" />
+        <StageCard icon="repeat"  tone="var(--st-future)" title="Parcela futura" desc="Compromete as próximas faturas." amount={moneyAbs(futureInstallments)} />
+      </div>
+
+      {/* ── Lançamentos + Gastos por categoria + Conciliação ── */}
+      <div className="dash-main" style={{ marginBottom: 20 }}>
+        <div className="card">
+          <div className="card-head">
+            <div className="goal-ic" style={{ background: "var(--info-soft)", color: "var(--info)" }}><KIcon name="list" size={15} /></div>
+            <div>
+              <div className="ttl">Lançamentos da fatura</div>
+              <div className="sub">{selectedCard ? selectedCard.name : "todos os cartões"} · ciclo atual</div>
+            </div>
+            <div className="spacer" />
+            <button className="btn btn-quiet btn-sm" type="button" onClick={() => openCardTransactions(undefined, "Lançamentos do cartão")}>
+              Ver todos <KIcon name="chevR" size={13} />
+            </button>
+          </div>
+          <div className="card-body">
+            <CardTransactionList
+              emptyMessage="Nenhuma compra de cartão encontrada no período."
+              items={cardItems.filter((t) => t.direction !== "payment").slice(0, 12)}
+              loading={cards.isLoading}
+              onOpenTransaction={openTransaction}
+            />
+          </div>
+        </div>
+
+        <div className="vstack" style={{ gap: 16 }}>
+          {/* Gastos por categoria */}
+          <div className="card card-pad" style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+            <div className="eyebrow" style={{ alignSelf: "flex-start", marginBottom: 12 }}>Gastos por categoria</div>
+            {gastosPorCategoria.length === 0 ? (
+              <EmptyState message="Sem gastos de cartão no período." />
+            ) : (
+              <>
+                <Donut
+                  data={gastosPorCategoria.map((c) => ({ value: c.value, color: c.color }))}
+                  size={150}
+                  thickness={22}
+                  center={
+                    <div>
+                      <div style={{ fontFamily: "var(--font-display)", fontSize: 16, fontWeight: 700 }}>{compactMoneyAbs(cardExpenses)}</div>
+                      <div className="t-sub">gasto</div>
+                    </div>
+                  }
+                />
+                <div style={{ marginTop: 14, width: "100%", display: "grid", gap: 8 }}>
+                  {gastosPorCategoria.map((c) => (
+                    <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12 }}>
+                      <span className="catdot" style={{ background: c.color }} />
+                      <span style={{ flex: 1, color: "var(--ink-2)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.name}</span>
+                      <span className="mono" style={{ fontWeight: 600 }}>{moneyAbs(c.value)}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Conciliação */}
+          <div className="card card-pad">
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <span className="goal-ic" style={{ background: "var(--acc-soft)", color: "var(--acc)" }}><KIcon name="check" size={15} /></span>
+              <span style={{ fontWeight: 700, fontSize: 14 }}>Conciliação de pagamento</span>
+            </div>
+            <p style={{ fontSize: 12.5, color: "var(--ink-3)", margin: "0 0 12px", lineHeight: 1.5 }}>
+              Pagamentos parecidos entre extrato e fatura no período — registrados como saída de caixa uma única vez.
+            </p>
+            <PaymentMatchListPanel
+              items={paymentMatches.data?.items ?? []}
+              loading={paymentMatches.isLoading}
+              onOpenMatch={(item, side) => onOpenTransactions({
+                dateFrom: side === "bank" ? item.bank_date : item.card_date,
+                dateTo: side === "bank" ? item.bank_date : item.card_date,
+                direction: "payment",
+                label: side === "bank" ? "Pagamento no extrato" : "Pagamento na fatura",
+                periodPreset: "custom",
+                search: side === "bank" ? item.bank_description : item.card_description,
+                sourceType: side === "card" ? "credit_card_statement" : "bank_statement",
+              })}
+            />
+          </div>
+        </div>
+      </div>
+
+      {showNewCard && <CardModal session={session} onClose={() => setShowNewCard(false)} />}
+      {editCard && <CardModal session={session} card={editCard} onClose={() => setEditCard(null)} />}
+    </div>
+  );
+}
+
+const CARD_COLOR_CHOICES = ["#2a4d8f", "#1f8a5b", "#6a4ba8", "#c98a2b", "#a35a7d", "#2a9d8f", "#c0392b", "#2c3e50", "#16a085", "#34495e"];
+
+function CardModal({ session, card, onClose }: { session: ApiSession; card?: CreditCardRead | null; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const editing = Boolean(card);
+  const [name, setName] = useState(card?.name ?? "");
+  const [brand, setBrand] = useState(card?.brand ?? "");
+  const [lastFour, setLastFour] = useState(card?.last_four ?? "");
+  const [color, setColor] = useState(card?.color ?? "");
+  const [limit, setLimit] = useState((card?.limit_amount ?? "").replace(".", ","));
+  const [closingDay, setClosingDay] = useState(card ? String(card.closing_day) : "23");
+  const [dueDay, setDueDay] = useState(card ? String(card.due_day) : "30");
+  const [formError, setFormError] = useState("");
+
+  const save = useMutation({
+    mutationFn: () => {
+      const payload: CreditCardPayload = {
+        name: name.trim(),
+        brand: brand.trim() || null,
+        last_four: lastFour.trim() || null,
+        color: color || null,
+        limit_amount: limit.trim() ? limit.replace(/\./g, "").replace(",", ".") : null,
+        closing_day: Number(closingDay),
+        due_day: Number(dueDay),
+      };
+      return card ? updateCreditCard(session, card.id, payload) : createCreditCard(session, payload);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["credit-cards"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      onClose();
+    },
+  });
+
+  function submit() {
+    if (!name.trim()) { setFormError("Informe o nome do cartão."); return; }
+    const cd = Number(closingDay), dd = Number(dueDay);
+    if (!cd || cd < 1 || cd > 31) { setFormError("Dia de fechamento inválido (1–31)."); return; }
+    if (!dd || dd < 1 || dd > 31) { setFormError("Dia de vencimento inválido (1–31)."); return; }
+    if (lastFour && !/^\d{1,4}$/.test(lastFour.trim())) { setFormError("Final do cartão deve ter até 4 dígitos."); return; }
+    setFormError("");
+    save.mutate();
+  }
+
+  const previewColor = color || CARD_COLOR_CHOICES[0];
+
+  return (
+    <div className="mdl-backdrop" onClick={onClose}>
+      <div className="mdl" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
+        <div className="mdl-head">
+          <div className="mh-ic" style={{ background: `linear-gradient(135deg, ${previewColor}, ${shade(previewColor)})`, color: "#fff" }}><KIcon name="card" size={17} /></div>
+          <div>
+            <div className="mh-ttl">{editing ? "Editar cartão" : "Novo cartão de crédito"}</div>
+            <div className="mh-sub">{editing ? "Altere dados, limite, datas e cor" : "Cadastre limites, datas e cor do cartão"}</div>
+          </div>
+          <button className="btn btn-quiet btn-sm mh-close" type="button" onClick={onClose}>✕</button>
+        </div>
+        <div className="mdl-body">
+          <label className="fld">
+            <span className="fld-label">Nome / Apelido</span>
+            <input className="fld-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex.: Visa Infinite, Nubank Roxinho" autoFocus />
+          </label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <label className="fld">
+              <span className="fld-label">Bandeira</span>
+              <select className="fld-select" value={brand} onChange={(e) => setBrand(e.target.value)}>
+                <option value="">—</option>
+                <option>Visa</option>
+                <option>Mastercard</option>
+                <option>Elo</option>
+                <option>American Express</option>
+                <option>Hipercard</option>
+              </select>
+            </label>
+            <label className="fld">
+              <span className="fld-label">Final (4 dígitos)</span>
+              <input className="fld-input" value={lastFour} onChange={(e) => setLastFour(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="1234" inputMode="numeric" />
+            </label>
+          </div>
+          <div className="fld">
+            <span className="fld-label">Cor do cartão</span>
+            <div className="swatch-row">
+              {CARD_COLOR_CHOICES.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  className={"swatch" + (color === c ? " on" : "")}
+                  style={{ background: `linear-gradient(135deg, ${c}, ${shade(c)})` }}
+                  onClick={() => setColor(c)}
+                  title={c}
+                >
+                  {color === c ? <KIcon name="check" size={14} /> : null}
+                </button>
+              ))}
+              <button
+                type="button"
+                className={"swatch" + (color === "" ? " on" : "")}
+                style={{ background: "var(--bg-sunken)", color: "var(--ink-3)", display: "grid", placeItems: "center", fontSize: 10, fontWeight: 700 }}
+                onClick={() => setColor("")}
+                title="Automática"
+              >
+                Auto
+              </button>
+            </div>
+          </div>
+          <label className="fld">
+            <span className="fld-label">Limite (R$)</span>
+            <input className="fld-input" value={limit} onChange={(e) => setLimit(e.target.value)} placeholder="0,00" inputMode="decimal" />
+          </label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <label className="fld">
+              <span className="fld-label">Dia de fechamento</span>
+              <input className="fld-input" value={closingDay} onChange={(e) => setClosingDay(e.target.value.replace(/\D/g, "").slice(0, 2))} inputMode="numeric" />
+            </label>
+            <label className="fld">
+              <span className="fld-label">Dia de vencimento</span>
+              <input className="fld-input" value={dueDay} onChange={(e) => setDueDay(e.target.value.replace(/\D/g, "").slice(0, 2))} inputMode="numeric" />
+            </label>
+          </div>
+          {formError && <div className="fld-error">{formError}</div>}
+          {save.isError && <div style={{ marginTop: 4 }}><InlineError message={apiErrorMessage(save.error, "Falha ao salvar cartão.")} /></div>}
+        </div>
+        <div className="mdl-foot">
+          <span className="spacer" />
+          <button className="btn btn-ghost btn-sm" type="button" onClick={onClose} disabled={save.isPending}>Cancelar</button>
+          <button className="btn btn-primary btn-sm" type="button" onClick={submit} disabled={save.isPending}>
+            {save.isPending ? "Salvando…" : editing ? "Salvar alterações" : "Cadastrar cartão"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

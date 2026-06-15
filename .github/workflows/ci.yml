@@ -244,6 +244,15 @@ jobs:
           BACKEND_ALLOW_LOCAL_AUTH: ${{ vars.BACKEND_ALLOW_LOCAL_AUTH || 'true' }}
           BACKEND_DATABASE_URL: ${{ secrets.BACKEND_DATABASE_URL }}
           BACKEND_LAMBDA_FUNCTION_NAME: ${{ vars.BACKEND_LAMBDA_FUNCTION_NAME }}
+          # LLM (copilot + AI categorization). GROQ_API_KEY is a repo secret.
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
+          GROQ_MODEL: ${{ vars.GROQ_MODEL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # Cognito auth (optional)
+          COGNITO_REGION: ${{ vars.COGNITO_REGION }}
+          COGNITO_USER_POOL_ID: ${{ vars.COGNITO_USER_POOL_ID }}
+          COGNITO_APP_CLIENT_ID: ${{ vars.COGNITO_APP_CLIENT_ID }}
         run: |
           set -euo pipefail
 
@@ -275,6 +284,13 @@ jobs:
                   "SUPABASE_SERVICE_ROLE_KEY": "",
                   "SUPABASE_STORAGE_BUCKET": "financial-files",
                   "SUPABASE_URL": "",
+                  "GROQ_API_KEY": os.environ.get("GROQ_API_KEY", ""),
+                  "GROQ_MODEL": os.environ.get("GROQ_MODEL", "") or "llama-3.3-70b-versatile",
+                  "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""),
+                  "LLM_PROVIDER": os.environ.get("LLM_PROVIDER", ""),
+                  "COGNITO_REGION": os.environ.get("COGNITO_REGION", ""),
+                  "COGNITO_USER_POOL_ID": os.environ.get("COGNITO_USER_POOL_ID", ""),
+                  "COGNITO_APP_CLIENT_ID": os.environ.get("COGNITO_APP_CLIENT_ID", ""),
               }
           }
 

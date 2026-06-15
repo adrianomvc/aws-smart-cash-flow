@@ -9,7 +9,10 @@ from sqlalchemy.orm import Session
 from app.db.models import CategorizationRule, Transaction, TransactionCategoryAssignment
 from app.services.parsers import normalize_transaction_description
 
-_TRGM_THRESHOLD = 0.45  # minimum trigram similarity to accept a suggestion
+_TRGM_THRESHOLD = 0.45  # piso: abaixo disso nem sugere
+# Tier de auto-aplicação. Medido por leave-one-out na base real: >=0.65 deu
+# ~100% de precisão; 0.45–0.65 ~94% (vai como sugestão p/ revisão).
+_TRGM_AUTO_THRESHOLD = 0.65
 
 
 class CategorizationService:
@@ -111,6 +114,12 @@ class CategorizationService:
         self.db.flush()
         return applied
 
+    def matches(self, rule: CategorizationRule, transaction: Transaction) -> bool:
+        """Public wrapper so callers (e.g. rule preview) share the exact same
+        matching logic as the apply engine — including regex and
+        amount_recurring."""
+        return self._matches(rule, transaction)
+
     def _matches(self, rule: CategorizationRule, transaction: Transaction) -> bool:
         raw_value = getattr(transaction, rule.field) or ""
         value = self._normalize_for_match(str(raw_value), field=rule.field)
@@ -194,6 +203,7 @@ class CategorizationService:
             ).first()
             if row is None:
                 continue
+            auto = row.sim >= _TRGM_AUTO_THRESHOLD
             self.db.add(
                 TransactionCategoryAssignment(
                     id=str(uuid4()),
@@ -202,8 +212,9 @@ class CategorizationService:
                     category_id=row.category_id,
                     source="embedding",
                     confidence=Decimal(str(round(row.sim, 4))),
-                    reason=f"Similaridade de texto ({row.sim:.0%})",
-                    review_status="pending",
+                    reason=f"Similaridade de texto ({row.sim:.0%})"
+                    + ("" if auto else " — revisar"),
+                    review_status="accepted" if auto else "pending",
                 )
             )
             applied += 1
@@ -225,4 +236,13 @@ class CategorizationService:
             return False
         if rule.direction_filter and transaction.direction != rule.direction_filter:
             return False
+        # Optional text constraint: when a pattern is set, the chosen field must
+        # contain it. This disambiguates same-value charges that share a day
+        # window (e.g. "TIT" for a school boleto vs. a card bill).
+        if rule.pattern:
+            raw_value = getattr(transaction, rule.field) or ""
+            value = self._normalize_for_match(str(raw_value), field=rule.field)
+            pattern = self._normalize_pattern(rule.pattern)
+            if pattern and pattern not in value:
+                return False
         return True

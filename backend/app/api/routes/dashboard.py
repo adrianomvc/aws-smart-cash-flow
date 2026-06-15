@@ -38,6 +38,12 @@ class DashboardSummaryResponse(BaseModel):
     current_balance: Decimal | None
     current_balance_date: date | None
     current_balance_account: str | None
+    commitment_limit: Decimal
+    commitment_over_limit: bool
+    savings_target: Decimal
+    savings_on_target: bool
+    protected_reserve: Decimal
+    burn_rate_window_months: int
 
 
 class MonthlyCashflowItem(BaseModel):
@@ -75,10 +81,13 @@ class DailyCashflowResponse(BaseModel):
 class CategoryRankingItem(BaseModel):
     category_id: str | None
     category_name: str
+    color: str | None = None
+    icon: str | None = None
     amount: Decimal
     count: int
     share_ratio: Decimal | None
     average_amount: Decimal
+    last_transaction_date: date | None = None
 
 
 class CategoryRankingResponse(BaseModel):
@@ -89,6 +98,7 @@ class CategoryRankingResponse(BaseModel):
 class SubcategoryRankingItem(BaseModel):
     category_id: str | None
     subcategory_name: str
+    color: str | None = None
     amount: Decimal
     count: int
     share_ratio: Decimal | None
@@ -113,6 +123,53 @@ class ExpenseSizeProfileItem(BaseModel):
 class ExpenseSizeProfileResponse(BaseModel):
     workspace_id: str
     items: list[ExpenseSizeProfileItem]
+
+
+class SizeBucketItem(BaseModel):
+    key: str
+    label: str
+    helper: str
+    count: int
+    total: Decimal
+    average: Decimal
+    share_ratio: Decimal
+
+
+class CostTypeStat(BaseModel):
+    count: int
+    total: Decimal
+
+
+class FixedCostItem(BaseModel):
+    description: str
+    category_name: str | None
+    total: Decimal
+    count: int
+    monthly_amount: Decimal
+
+
+class SpendingBreakdownResponse(BaseModel):
+    workspace_id: str
+    total_expense: Decimal
+    size_buckets: list[SizeBucketItem]
+    fixed: CostTypeStat
+    variable: CostTypeStat
+    fixed_items: list[FixedCostItem]
+
+
+class CategoryTrendSeries(BaseModel):
+    category_id: str | None
+    category_name: str
+    color: str | None = None
+    total: Decimal
+    points: list[Decimal]
+
+
+class CategoryTrendsResponse(BaseModel):
+    workspace_id: str
+    months: list[str]
+    granularity: str = "month"
+    series: list[CategoryTrendSeries]
 
 
 class MerchantRankingItem(BaseModel):
@@ -368,6 +425,38 @@ def get_expense_size_profile(
         date_to=date_to,
     )
     return ExpenseSizeProfileResponse(workspace_id=auth.workspace_id, items=items)
+
+
+@router.get("/spending-breakdown")
+def get_spending_breakdown(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> SpendingBreakdownResponse:
+    data = DashboardService(db).spending_breakdown(
+        workspace_id=auth.workspace_id,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    return SpendingBreakdownResponse(workspace_id=auth.workspace_id, **data)
+
+
+@router.get("/category-trends")
+def get_category_trends(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    limit: int = Query(default=12, ge=1, le=40),
+) -> CategoryTrendsResponse:
+    data = DashboardService(db).category_trends(
+        workspace_id=auth.workspace_id,
+        date_from=date_from,
+        date_to=date_to,
+        limit=limit,
+    )
+    return CategoryTrendsResponse(workspace_id=auth.workspace_id, **data)
 
 
 @router.get("/merchant-ranking")

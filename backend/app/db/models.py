@@ -34,7 +34,7 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
     supabase_user_id: Mapped[str | None] = mapped_column(UUID_TYPE, unique=True, nullable=True)
-    email: Mapped[str] = mapped_column(Text, nullable=False)
+    email: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     display_name: Mapped[str | None] = mapped_column(Text)
     # Local auth only - dev only.
     password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -57,7 +57,10 @@ class WorkspaceMember(Base):
     __tablename__ = "workspace_members"
     __table_args__ = (
         UniqueConstraint("workspace_id", "user_id", name="uq_workspace_member"),
-        CheckConstraint("role in ('owner', 'admin', 'member')", name="ck_workspace_member_role"),
+        CheckConstraint(
+            "role in ('owner', 'admin', 'member', 'viewer')",
+            name="ck_workspace_member_role",
+        ),
     )
 
     id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
@@ -66,6 +69,31 @@ class WorkspaceMember(Base):
     )
     user_id: Mapped[str] = mapped_column(UUID_TYPE, ForeignKey("users.id"), nullable=False)
     role: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class WorkspaceInvite(Base):
+    """A pending invitation for someone to join a workspace with a given role."""
+
+    __tablename__ = "workspace_invites"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "email", name="uq_workspace_invite"),
+        CheckConstraint(
+            "role in ('admin', 'member', 'viewer')", name="ck_workspace_invite_role"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), nullable=False
+    )
+    email: Mapped[str] = mapped_column(Text, nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending", server_default="pending"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -201,6 +229,8 @@ class Transaction(Base):
     source_name: Mapped[str | None] = mapped_column(Text)
     account_or_card: Mapped[str | None] = mapped_column(Text)
     transaction_date: Mapped[date] = mapped_column(Date, nullable=False)
+    # Effective cash-out date (credit-card invoice due date for card purchases).
+    payment_date: Mapped[date | None] = mapped_column(Date)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     raw_description: Mapped[str] = mapped_column(Text, nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
@@ -214,6 +244,10 @@ class Transaction(Base):
     dedupe_key: Mapped[str] = mapped_column(String(64), nullable=False)
     natural_dedupe_key: Mapped[str | None] = mapped_column(String(64))
     duplicate_group_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # Optional link to a goal: tags this transaction as a contribution/aporte.
+    goal_id: Mapped[str | None] = mapped_column(
+        UUID_TYPE, ForeignKey("goals.id", ondelete="SET NULL"), index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -273,6 +307,7 @@ class CreditCard(Base):
     issuer: Mapped[str | None] = mapped_column(Text)
     brand: Mapped[str | None] = mapped_column(Text)
     last_four: Mapped[str | None] = mapped_column(String(4))
+    color: Mapped[str | None] = mapped_column(Text)
     closing_day: Mapped[int] = mapped_column(Integer, nullable=False)
     due_day: Mapped[int] = mapped_column(Integer, nullable=False)
     limit_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
@@ -351,6 +386,8 @@ class Category(Base):
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     parent_category_id: Mapped[str | None] = mapped_column(UUID_TYPE, ForeignKey("categories.id"))
+    color: Mapped[str | None] = mapped_column(Text)
+    icon: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -513,7 +550,10 @@ class Budget(Base):
     category_id: Mapped[str | None] = mapped_column(UUID_TYPE, ForeignKey("categories.id"))
     name: Mapped[str] = mapped_column(Text, nullable=False)
     period_start: Mapped[date] = mapped_column(Date, nullable=False)
-    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date | None] = mapped_column(Date)
+    recurring: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     limit_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     alert_threshold: Mapped[Decimal] = mapped_column(
         Numeric(5, 4), nullable=False, default=Decimal("0.8500"), server_default="0.8500"
@@ -548,12 +588,233 @@ class Goal(Base):
         Numeric(14, 2), nullable=False, default=Decimal("0"), server_default="0"
     )
     target_date: Mapped[date | None] = mapped_column(Date)
+    tracking_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="manual", server_default="manual"
+    )
+    linked_account: Mapped[str | None] = mapped_column(Text)
+    # Auto-link rule (contributions mode): description match + optional value range.
+    aporte_match_text: Mapped[str | None] = mapped_column(Text)
+    aporte_min: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    aporte_max: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    color: Mapped[str | None] = mapped_column(Text)
+    icon: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="active", server_default="active"
     )
     priority: Mapped[int] = mapped_column(
         Integer, nullable=False, default=100, server_default="100"
     )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class WorkspacePreferences(Base):
+    __tablename__ = "workspace_preferences"
+
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), primary_key=True
+    )
+    currency: Mapped[str] = mapped_column(
+        String(8), nullable=False, default="BRL", server_default="BRL"
+    )
+    savings_target_pct: Mapped[Decimal] = mapped_column(
+        Numeric(5, 4), nullable=False, default=Decimal("0.2000"), server_default="0.2000"
+    )
+    commitment_limit_pct: Mapped[Decimal] = mapped_column(
+        Numeric(5, 4), nullable=False, default=Decimal("0.3500"), server_default="0.3500"
+    )
+    risk_profile: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="moderate", server_default="moderate"
+    )
+    burn_rate_window_months: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=12, server_default="12"
+    )
+    protected_reserve: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2), nullable=False, default=Decimal("0"), server_default="0"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class InvestmentCustody(Base):
+    """A place where investments are held: brokerage, pension, exchange,
+    self-custody wallet or a reserve account. Position view, not trades."""
+
+    __tablename__ = "investment_custodies"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "name", name="uq_investment_custody_workspace_name"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str | None] = mapped_column(Text)
+    account_type: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="broker", server_default="broker"
+    )
+    brand: Mapped[str | None] = mapped_column(String(8))
+    color: Mapped[str | None] = mapped_column(Text)
+    sync_mode: Mapped[str | None] = mapped_column(Text)
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class InvestmentAsset(Base):
+    """A position held inside a custody (not an operation/trade)."""
+
+    __tablename__ = "investment_assets"
+    __table_args__ = (
+        CheckConstraint("current_value >= 0", name="ck_investment_asset_value_non_negative"),
+        CheckConstraint(
+            "contributed >= 0", name="ck_investment_asset_contributed_non_negative"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), nullable=False
+    )
+    custody_id: Mapped[str] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("investment_custodies.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    asset_class: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="other", server_default="other"
+    )
+    risk: Mapped[str | None] = mapped_column(Text)
+    detail: Mapped[str | None] = mapped_column(Text)
+    current_value: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2), nullable=False, default=Decimal("0"), server_default="0"
+    )
+    contributed: Mapped[Decimal] = mapped_column(
+        Numeric(14, 2), nullable=False, default=Decimal("0"), server_default="0"
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class InvestmentSnapshot(Base):
+    """Historical value of a single position on a given date. Returns and the
+    12-month wealth evolution are derived from the variation between snapshots."""
+
+    __tablename__ = "investment_snapshots"
+    __table_args__ = (
+        UniqueConstraint("asset_id", "as_of", name="uq_investment_snapshot_asset_date"),
+        Index("ix_investment_snapshot_asset_date", "asset_id", "as_of"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), nullable=False
+    )
+    asset_id: Mapped[str] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("investment_assets.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    as_of: Mapped[date] = mapped_column(Date, nullable=False)
+    value: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    contributed: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class WealthItem(Base):
+    """A manually maintained net-worth line: an asset (property, vehicle,
+    account) or a liability (loan, debt). The investment portfolio is added
+    automatically and is not stored here."""
+
+    __tablename__ = "wealth_items"
+    __table_args__ = (
+        CheckConstraint("kind in ('asset', 'liability')", name="ck_wealth_item_kind"),
+        CheckConstraint("value >= 0", name="ck_wealth_item_value_non_negative"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str | None] = mapped_column(String(24))
+    value: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class WealthSnapshot(Base):
+    """Historical value of a net-worth item on a given date. Feeds the real
+    12-month evolution of net worth."""
+
+    __tablename__ = "wealth_snapshots"
+    __table_args__ = (
+        UniqueConstraint("item_id", "as_of", name="uq_wealth_snapshot_item_date"),
+        Index("ix_wealth_snapshot_item_date", "item_id", "as_of"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), nullable=False
+    )
+    item_id: Mapped[str] = mapped_column(
+        UUID_TYPE,
+        ForeignKey("wealth_items.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    as_of: Mapped[date] = mapped_column(Date, nullable=False)
+    value: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class LlmCategorizationCache(Base):
+    """Caches the LLM's categorization per normalized description, so the LLM is
+    called at most once per unique description (per workspace) and reused across
+    runs and across all transactions that share the description."""
+
+    __tablename__ = "llm_categorization_cache"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "description_key", name="uq_llm_cache_ws_desc"),
+        Index("ix_llm_cache_ws_desc", "workspace_id", "description_key"),
+    )
+
+    id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), nullable=False
+    )
+    description_key: Mapped[str] = mapped_column(Text, nullable=False)
+    category_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("categories.id", ondelete="CASCADE"), nullable=False
+    )
+    confidence: Mapped[Decimal | None] = mapped_column(Numeric(6, 4))
+    regex_suggestion: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

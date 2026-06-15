@@ -1,6 +1,6 @@
 import re
 from calendar import monthrange
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -17,10 +17,26 @@ from app.db.models import (
     SourceFile,
     Transaction,
     TransactionCategoryAssignment,
+    WorkspacePreferences,
 )
 from app.services.parsers import extract_installment, normalize_transaction_description
 
 ZERO = Decimal("0.00")
+ONE = Decimal("1")
+NEG_ONE = Decimal("-1")
+
+# Spending breakdown: transaction-size buckets (P/M/G/GG) in BRL. Tweak freely.
+_SIZE_BUCKETS = [
+    ("P", "Pequeno", "Até R$ 50", ZERO, Decimal("50")),
+    ("M", "Médio", "R$ 50–250", Decimal("50"), Decimal("250")),
+    ("G", "Grande", "R$ 250–1.000", Decimal("250"), Decimal("1000")),
+    ("GG", "Gigante", "Acima de R$ 1.000", Decimal("1000"), None),
+]
+# "Fixed" cost = same description recurring in >= N distinct months with a
+# stable amount (coefficient of variation <= threshold). Everything else is
+# "variable". Detection runs over a trailing 6-month window.
+_FIXED_MIN_MONTHS = 3
+_FIXED_MAX_CV = 0.20
 WEEKDAY_NAMES = [
     "Segunda",
     "Terca",
@@ -53,17 +69,29 @@ class DashboardService:
         balance = income - expenses
         savings_rate = (balance / income).quantize(Decimal("0.0001")) if income > ZERO else None
         commitment_rate = (expenses / income).quantize(Decimal("0.0001")) if income > ZERO else None
+        prefs = self._preferences(workspace_id)
+        window_months = prefs.burn_rate_window_months if prefs else 12
+        commitment_limit = prefs.commitment_limit_pct if prefs else Decimal("0.3500")
+        savings_target = prefs.savings_target_pct if prefs else Decimal("0.2000")
+        protected_reserve = prefs.protected_reserve if prefs else ZERO
+
         burn_rate, burn_rate_months = self._burn_rate(workspace_id=workspace_id, date_to=date_to)
         burn_rate_90_days, burn_rate_90_days_window = self._burn_rate_90_days(
             workspace_id=workspace_id,
             date_to=date_to,
         )
+        # Preference-driven burn rate (window) is the headline figure.
+        burn_rate_effective = self._burn_rate_window(
+            workspace_id=workspace_id, date_to=date_to, months=window_months
+        )
         current_balance = self._current_account_balance(workspace_id=workspace_id, date_to=date_to)
+        # The protected reserve (preference) overrides the default 90-day reserve.
+        reserve = protected_reserve if protected_reserve > ZERO else burn_rate_90_days
         safe_spend, safe_spend_reserve = self._safe_spend(
             workspace_id=workspace_id,
             date_to=date_to,
             current_balance=current_balance.balance_amount if current_balance else None,
-            reserve_minimum=burn_rate_90_days,
+            reserve_minimum=reserve,
         )
         financial_health_score = self._financial_health_score(
             commitment_rate=commitment_rate,
@@ -84,21 +112,35 @@ class DashboardService:
             "balance": balance,
             "savings_rate": savings_rate,
             "commitment_rate": commitment_rate,
-            "burn_rate": burn_rate,
-            "burn_rate_months": burn_rate_months,
-            "burn_rate_basis": "trailing_12_month_average",
+            "burn_rate": burn_rate_effective if burn_rate_effective > ZERO else burn_rate,
+            "burn_rate_months": window_months,
+            "burn_rate_basis": f"trailing_{window_months}_month_monthly_equivalent",
             "burn_rate_90_days": burn_rate_90_days,
             "burn_rate_90_days_window": burn_rate_90_days_window,
             "burn_rate_90_days_basis": "trailing_90_days_monthly_equivalent",
             "safe_spend": safe_spend,
             "safe_spend_reserve_minimum": safe_spend_reserve,
-            "safe_spend_basis": "next_30_days_with_90_day_burn_rate_reserve",
+            "safe_spend_basis": (
+                "next_30_days_with_protected_reserve"
+                if protected_reserve > ZERO
+                else "next_30_days_with_90_day_burn_rate_reserve"
+            ),
             "financial_health_score": financial_health_score,
             "financial_health_basis": "runway_saving_commitment_safe_spend_balance",
             "transaction_count": len(transactions),
             "current_balance": current_balance.balance_amount if current_balance else None,
             "current_balance_date": current_balance.balance_date if current_balance else None,
             "current_balance_account": current_balance.account_name if current_balance else None,
+            "commitment_limit": commitment_limit,
+            "commitment_over_limit": bool(
+                commitment_rate is not None and commitment_rate > commitment_limit
+            ),
+            "savings_target": savings_target,
+            "savings_on_target": bool(
+                savings_rate is not None and savings_rate >= savings_target
+            ),
+            "protected_reserve": protected_reserve,
+            "burn_rate_window_months": window_months,
         }
 
     def monthly_cashflow(
@@ -293,8 +335,11 @@ class DashboardService:
         empty_category = {
             "category_id": None,
             "category_name": "Sem categoria",
+            "color": None,
+            "icon": None,
             "amount": ZERO,
             "count": 0,
+            "last_transaction_date": None,
         }
         totals: dict[tuple[str | None, str], dict[str, object]] = defaultdict(
             lambda: empty_category.copy()
@@ -311,8 +356,13 @@ class DashboardService:
             )
             totals[key]["category_id"] = key[0]
             totals[key]["category_name"] = key[1]
+            totals[key]["color"] = display_category.color if display_category is not None else None
+            totals[key]["icon"] = display_category.icon if display_category is not None else None
             totals[key]["amount"] = Decimal(totals[key]["amount"]) + abs(transaction.amount)
             totals[key]["count"] = int(totals[key]["count"]) + 1
+            last = totals[key]["last_transaction_date"]
+            if last is None or transaction.transaction_date > last:
+                totals[key]["last_transaction_date"] = transaction.transaction_date
 
         ranked = sorted(
             totals.values(),
@@ -374,6 +424,7 @@ class DashboardService:
             lambda: {
                 "category_id": None,
                 "subcategory_name": "Sem subcategoria",
+                "color": None,
                 "amount": ZERO,
                 "count": 0,
             }
@@ -393,8 +444,9 @@ class DashboardService:
                 key = (category.id, "Sem subcategoria")
             else:
                 key = (category.id, category.name)
-            totals[key]["category_id"] = key[0]
+            totals[key]["category_id"] = parent_id
             totals[key]["subcategory_name"] = key[1]
+            totals[key]["color"] = parent_category.color if parent_category is not None else None
             totals[key]["amount"] = Decimal(totals[key]["amount"]) + abs(transaction.amount)
             totals[key]["count"] = int(totals[key]["count"]) + 1
 
@@ -468,6 +520,269 @@ class DashboardService:
                 }
             )
         return items
+
+    def spending_breakdown(
+        self,
+        workspace_id: str,
+        date_from: date | None,
+        date_to: date | None,
+    ) -> dict[str, object]:
+        """Two expense views for the period: size buckets (P/M/G/GG) and
+        fixed vs variable costs (fixed = recurring with a stable amount)."""
+        # --- 1) Detect "fixed" descriptions over a trailing 6-month window. ----
+        if date_to is not None:
+            detect_from = _add_months(date(date_to.year, date_to.month, 1), -5)
+            if date_from is not None and date_from < detect_from:
+                detect_from = date_from
+        else:
+            detect_from = date_from
+        detect_amounts: dict[str, list[Decimal]] = {}
+        detect_months: dict[str, set[str]] = {}
+        for t in self._transactions(workspace_id, detect_from, date_to):
+            if t.direction != "debit":
+                continue
+            detect_amounts.setdefault(t.description, []).append(abs(t.amount))
+            detect_months.setdefault(t.description, set()).add(t.transaction_date.strftime("%Y-%m"))
+        fixed_descriptions: set[str] = set()
+        monthly_amount: dict[str, Decimal] = {}
+        for descr, amounts in detect_amounts.items():
+            if len(detect_months[descr]) < _FIXED_MIN_MONTHS or len(amounts) < 2:
+                continue
+            vals = [float(a) for a in amounts]
+            mean = sum(vals) / len(vals)
+            if mean <= 0:
+                continue
+            variance = sum((v - mean) ** 2 for v in vals) / len(vals)
+            if (variance ** 0.5) / mean <= _FIXED_MAX_CV:
+                fixed_descriptions.add(descr)
+                ordered = sorted(amounts)
+                monthly_amount[descr] = ordered[len(ordered) // 2]
+
+        # --- 2) Classify the period's expenses. --------------------------------
+        rows = self.db.execute(
+            select(Transaction, Category)
+            .outerjoin(
+                TransactionCategoryAssignment,
+                and_(
+                    TransactionCategoryAssignment.transaction_id == Transaction.id,
+                    TransactionCategoryAssignment.workspace_id == workspace_id,
+                ),
+            )
+            .outerjoin(
+                Category,
+                and_(
+                    Category.id == TransactionCategoryAssignment.category_id,
+                    Category.workspace_id == workspace_id,
+                ),
+            )
+            .where(
+                *self._transaction_filters(workspace_id, date_from, date_to),
+                Transaction.direction == "debit",
+            )
+        ).all()
+        cats_by_id = {c.id: c for _, c in rows if c is not None}
+
+        size_acc = {key: {"count": 0, "total": ZERO} for key, *_ in _SIZE_BUCKETS}
+        fixed_total = ZERO
+        fixed_count = 0
+        variable_total = ZERO
+        variable_count = 0
+        total_expense = ZERO
+        fixed_items_acc: dict[str, dict[str, object]] = {}
+        for transaction, category in rows:
+            amount = abs(transaction.amount)
+            total_expense += amount
+            for key, _label, _helper, low, high in _SIZE_BUCKETS:
+                if amount > low and (high is None or amount <= high):
+                    size_acc[key]["count"] += 1
+                    size_acc[key]["total"] += amount
+                    break
+            if transaction.description in fixed_descriptions:
+                fixed_total += amount
+                fixed_count += 1
+                display = (
+                    cats_by_id.get(category.parent_category_id)
+                    if category is not None and category.parent_category_id is not None
+                    else category
+                )
+                item = fixed_items_acc.setdefault(
+                    transaction.description,
+                    {
+                        "description": transaction.description,
+                        "category_name": display.name if display is not None else None,
+                        "total": ZERO,
+                        "count": 0,
+                    },
+                )
+                item["total"] = Decimal(item["total"]) + amount
+                item["count"] = int(item["count"]) + 1
+            else:
+                variable_total += amount
+                variable_count += 1
+
+        size_buckets: list[dict[str, object]] = []
+        for key, label, helper, _low, _high in _SIZE_BUCKETS:
+            total = Decimal(size_acc[key]["total"]).quantize(Decimal("0.01"))
+            count = int(size_acc[key]["count"])
+            size_buckets.append(
+                {
+                    "key": key,
+                    "label": label,
+                    "helper": helper,
+                    "count": count,
+                    "total": total,
+                    "average": (total / count).quantize(Decimal("0.01")) if count else ZERO,
+                    "share_ratio": (
+                        (total / total_expense).quantize(Decimal("0.0001"))
+                        if total_expense > ZERO
+                        else ZERO
+                    ),
+                }
+            )
+
+        fixed_items = sorted(
+            fixed_items_acc.values(), key=lambda i: Decimal(i["total"]), reverse=True
+        )[:15]
+        for item in fixed_items:
+            item_total = Decimal(item["total"]).quantize(Decimal("0.01"))
+            item["total"] = item_total
+            item["monthly_amount"] = monthly_amount.get(
+                str(item["description"]), item_total
+            ).quantize(Decimal("0.01"))
+
+        return {
+            "total_expense": total_expense.quantize(Decimal("0.01")),
+            "size_buckets": size_buckets,
+            "fixed": {
+                "count": fixed_count,
+                "total": fixed_total.quantize(Decimal("0.01")),
+            },
+            "variable": {
+                "count": variable_count,
+                "total": variable_total.quantize(Decimal("0.01")),
+            },
+            "fixed_items": fixed_items,
+        }
+
+    def category_trends(
+        self,
+        workspace_id: str,
+        date_from: date | None,
+        date_to: date | None,
+        limit: int,
+    ) -> dict[str, object]:
+        """Expense totals per top-level category over the selected period, for an
+        evolution line chart (by category, not subcategory). Granularity adapts:
+        monthly for spans up to 24 months, yearly for longer ranges so every
+        category that has data shows up without an unreadable number of points."""
+        end = date_to or self._latest_transaction_date(workspace_id)
+        if end is None:
+            return {"months": [], "series": [], "granularity": "month"}
+        end_month = date(end.year, end.month, 1)
+        if date_from is not None:
+            start_month = date(date_from.year, date_from.month, 1)
+        else:
+            earliest = self.db.scalar(
+                select(func.min(Transaction.transaction_date)).where(
+                    Transaction.workspace_id == workspace_id
+                )
+            )
+            start_month = (
+                date(earliest.year, earliest.month, 1)
+                if earliest is not None
+                else _add_months(end_month, -5)
+            )
+        span = (end_month.year - start_month.year) * 12 + (end_month.month - start_month.month) + 1
+        granularity = "month" if span <= 24 else "year"
+        if granularity == "month" and span < 6:
+            start_month = _add_months(end_month, -5)
+
+        labels: list[str] = []
+        if granularity == "month":
+            cur = start_month
+            while cur <= end_month:
+                labels.append(cur.strftime("%Y-%m"))
+                cur = _add_months(cur, 1)
+
+            def bucket_of(d: date) -> str:
+                return d.strftime("%Y-%m")
+        else:
+            for year in range(start_month.year, end_month.year + 1):
+                labels.append(str(year))
+
+            def bucket_of(d: date) -> str:
+                return str(d.year)
+
+        month_index = {m: i for i, m in enumerate(labels)}
+        month_labels = labels
+
+        rows = self.db.execute(
+            select(Transaction, Category)
+            .outerjoin(
+                TransactionCategoryAssignment,
+                and_(
+                    TransactionCategoryAssignment.transaction_id == Transaction.id,
+                    TransactionCategoryAssignment.workspace_id == workspace_id,
+                ),
+            )
+            .outerjoin(
+                Category,
+                and_(
+                    Category.id == TransactionCategoryAssignment.category_id,
+                    Category.workspace_id == workspace_id,
+                ),
+            )
+            .where(
+                *self._transaction_filters(workspace_id, start_month, end),
+                Transaction.direction == "debit",
+            )
+        ).all()
+        cats_by_id = {
+            category.id: category
+            for category in self.db.scalars(
+                select(Category).where(Category.workspace_id == workspace_id)
+            ).all()
+        }
+
+        acc: dict[str | None, dict[str, object]] = {}
+        for transaction, category in rows:
+            month = bucket_of(transaction.transaction_date)
+            if month not in month_index:
+                continue
+            display = (
+                cats_by_id.get(category.parent_category_id)
+                if category is not None and category.parent_category_id is not None
+                else category
+            )
+            cid = display.id if display is not None else None
+            entry = acc.setdefault(
+                cid,
+                {
+                    "category_id": cid,
+                    "category_name": display.name if display is not None else "Sem categoria",
+                    "color": display.color if display is not None else None,
+                    "total": ZERO,
+                    "points": [ZERO] * len(month_labels),
+                },
+            )
+            amount = abs(transaction.amount)
+            entry["total"] = Decimal(entry["total"]) + amount
+            points = entry["points"]
+            assert isinstance(points, list)
+            points[month_index[month]] += amount
+
+        ranked = sorted(acc.values(), key=lambda e: Decimal(e["total"]), reverse=True)[:limit]
+        series = [
+            {
+                "category_id": e["category_id"],
+                "category_name": e["category_name"],
+                "color": e["color"],
+                "total": Decimal(e["total"]).quantize(Decimal("0.01")),
+                "points": [Decimal(p).quantize(Decimal("0.01")) for p in e["points"]],  # type: ignore[union-attr]
+            }
+            for e in ranked
+        ]
+        return {"months": month_labels, "series": series, "granularity": granularity}
 
     def merchant_ranking(
         self,
@@ -1079,6 +1394,261 @@ class DashboardService:
             "variable_categories": variable_categories,
         }
 
+    def projection(self, workspace_id: str, horizon_days: int) -> dict[str, object]:
+        """Single source of truth for the balance projection.
+
+        Starts from the real account balance and rolls forward the recurring net
+        (income - expenses - variable), dated credit-card installments and
+        planned calendar events. Three scenarios differ by variable spend
+        volatility (from each category's history) and a small income haircut on
+        the worst case. Honours the protected-reserve preference for risk.
+        """
+        horizon_days = max(30, min(horizon_days, 366))
+        feed = self.projection_feed(workspace_id, horizon_days, lookback_months=6)
+        prefs = self._preferences(workspace_id)
+        protected_reserve = prefs.protected_reserve if prefs else ZERO
+
+        start = feed["current_balance"] or ZERO
+        if not isinstance(start, Decimal):
+            start = Decimal(str(start))
+
+        recurring = feed["recurring_items"]
+        rec_income = sum(
+            (Decimal(str(r["average_amount"])) for r in recurring if r["type"] == "income"),
+            ZERO,
+        )
+        rec_expense = sum(
+            (Decimal(str(r["average_amount"])) for r in recurring if r["type"] == "expense"),
+            ZERO,
+        )
+
+        # Variable spend: exclude the uncategorized bucket; derive best/worst from
+        # each category's historical volatility (1 std dev), fallback to +-30%.
+        var_avg = var_best = var_worst = ZERO
+        uncategorized = ZERO
+        for v in feed["variable_categories"]:
+            avg = Decimal(str(v["monthly_average"]))
+            if not v["category_id"]:
+                uncategorized += avg
+                continue
+            hist = [Decimal(str(x)) for x in v["historical_monthly_amounts"]]
+            if len(hist) >= 2:
+                mean = sum(hist, ZERO) / Decimal(len(hist))
+                variance = sum(((x - mean) ** 2 for x in hist), ZERO) / Decimal(len(hist))
+                std = variance.sqrt()
+                best_c = max(min(hist), (avg - std))
+                worst_c = avg + std
+            else:
+                best_c = (avg * Decimal("0.70")).quantize(Decimal("0.01"))
+                worst_c = (avg * Decimal("1.30")).quantize(Decimal("0.01"))
+            var_avg += avg
+            var_best += max(best_c, ZERO)
+            var_worst += worst_c
+
+        net_best = rec_income - rec_expense - var_best
+        net_prob = rec_income - rec_expense - var_avg
+        net_worst = (rec_income * Decimal("0.95")) - rec_expense - var_worst
+
+        today = date.today()
+        n_months = max(1, round(horizon_days / 30))
+        horizon_end = _add_months(today, n_months)
+
+        recurring_descriptions = {
+            normalize_transaction_description(str(r["description"])) for r in recurring
+        }
+        seasonal = self._seasonal_items(
+            workspace_id, today, horizon_end, recurring_descriptions
+        )
+
+        # Unified dated one-off events: card installments, planned calendar
+        # events and detected seasonal items (13o/ferias/PLR, IPVA/IPTU/...).
+        oneoffs: list[dict[str, object]] = []
+        for inst in feed["credit_card_installments"]:
+            oneoffs.append(
+                {
+                    "date": inst["due_date"], "title": "Parcela de cartão",
+                    "kind": "Parcela de cartão", "amount": Decimal(str(inst["amount"])),
+                    "income": False, "monthly": False,
+                }
+            )
+        for e in feed["known_events"]:
+            is_income = e["type"] == "income"
+            oneoffs.append(
+                {
+                    "date": e["date"], "title": e["description"],
+                    "kind": "Receita prevista" if is_income else "Despesa prevista",
+                    "amount": Decimal(str(e["amount"])), "income": is_income, "monthly": False,
+                }
+            )
+        for s in seasonal:
+            is_income = s["type"] == "income"
+            oneoffs.append(
+                {
+                    "date": s["date"], "title": s["description"],
+                    "kind": "Recebimento anual" if is_income else "Despesa anual",
+                    "amount": Decimal(str(s["amount"])), "income": is_income, "monthly": False,
+                }
+            )
+
+        def dated_delta(upto: date) -> Decimal:
+            total = ZERO
+            for o in oneoffs:
+                if o["date"] and date.fromisoformat(str(o["date"])) <= upto:
+                    total += o["amount"] if o["income"] else -o["amount"]
+            return total
+
+        points: list[dict[str, object]] = []
+        for i in range(n_months + 1):
+            point_date = _add_months(today, i)
+            delta = dated_delta(point_date)
+            months = Decimal(i)
+            points.append(
+                {
+                    "month": point_date.strftime("%Y-%m"),
+                    "probable": (start + net_prob * months + delta).quantize(Decimal("0.01")),
+                    "best": (start + net_best * months + delta).quantize(Decimal("0.01")),
+                    "worst": (start + net_worst * months + delta).quantize(Decimal("0.01")),
+                }
+            )
+
+        prob_values = [p["probable"] for p in points]
+        worst_values = [p["worst"] for p in points]
+        end_balance = prob_values[-1]
+        min_balance = min(prob_values)
+        worst_min = min(worst_values)
+        variation = end_balance - start
+        variation_pct = (
+            (variation / abs(start) * Decimal("100")).quantize(Decimal("0.1"))
+            if start != ZERO
+            else ZERO
+        )
+
+        if worst_min < ZERO:
+            risk_level = "risk"
+            risk_reason = f"No pior cenário o saldo fica negativo (mín. {worst_min})."
+        elif min_balance < protected_reserve or worst_min < protected_reserve:
+            risk_level = "attention"
+            risk_reason = "O saldo fica abaixo da reserva protegida em algum momento."
+        else:
+            risk_level = "healthy"
+            risk_reason = "O saldo se mantém confortável no período."
+
+        commitments = sorted(
+            (o for o in oneoffs if o["date"]), key=lambda c: str(c["date"])
+        )
+        for r in sorted(
+            recurring, key=lambda r: Decimal(str(r["average_amount"])), reverse=True
+        )[:5]:
+            is_income = r["type"] == "income"
+            commitments.append(
+                {
+                    "date": "", "title": r["description"],
+                    "kind": "Receita mensal" if is_income else "Despesa mensal",
+                    "amount": Decimal(str(r["average_amount"])), "income": is_income,
+                    "monthly": True,
+                }
+            )
+
+        var_note = "(cenários por volatilidade histórica)"
+        assumptions = [
+            f"Saldo inicial real: {start} ({feed.get('current_balance_account') or 'conta'}).",
+            f"Receitas recorrentes ≈ {rec_income.quantize(Decimal('0.01'))}/mês.",
+            f"Despesas recorrentes ≈ {rec_expense.quantize(Decimal('0.01'))}/mês.",
+            f"Despesas variáveis ≈ {var_avg.quantize(Decimal('0.01'))}/mês {var_note}.",
+            f"Fluxo recorrente líquido ≈ {net_prob.quantize(Decimal('0.01'))}/mês.",
+        ]
+        if seasonal:
+            assumptions.append(
+                f"{len(seasonal)} evento(s) anual(is) detectado(s) (13º/IPVA/etc.) "
+                "incluídos no período."
+            )
+        if uncategorized > ZERO:
+            assumptions.append(
+                f"Lançamentos sem categoria ({uncategorized.quantize(Decimal('0.01'))}/mês) "
+                "ficam fora — categorize-os para refinar."
+            )
+
+        return {
+            "workspace_id": workspace_id,
+            "horizon_days": horizon_days,
+            "start_balance": start.quantize(Decimal("0.01")),
+            "recurring_income": rec_income.quantize(Decimal("0.01")),
+            "recurring_expense": rec_expense.quantize(Decimal("0.01")),
+            "variable_average": var_avg.quantize(Decimal("0.01")),
+            "monthly_net": net_prob.quantize(Decimal("0.01")),
+            "points": points,
+            "end_best": points[-1]["best"],
+            "end_probable": end_balance,
+            "end_worst": points[-1]["worst"],
+            "min_balance": min_balance,
+            "variation": variation.quantize(Decimal("0.01")),
+            "variation_pct": variation_pct,
+            "risk_level": risk_level,
+            "risk_reason": risk_reason,
+            "commitments": commitments[:50],
+            "assumptions": assumptions,
+        }
+
+    def _seasonal_items(
+        self,
+        workspace_id: str,
+        today: date,
+        horizon_end: date,
+        exclude_descriptions: set[str],
+    ) -> list[dict[str, object]]:
+        """Detect annual/seasonal items from history (13o, ferias, PLR, IPVA,
+        IPTU, licenciamento, ...) and schedule their next occurrence within the
+        horizon. An item is considered annual when the same normalized
+        description recurs in the same calendar month across >= 2 different
+        years. Monthly-recurring descriptions are excluded to avoid double
+        counting."""
+        lookback = _add_months(today, -24)
+        txns = self._transactions(workspace_id, date_from=lookback, date_to=today)
+        groups: dict[tuple[str, str], list[Transaction]] = defaultdict(list)
+        for t in txns:
+            if t.source_type == "credit_card_statement" or t.direction not in ("debit", "credit"):
+                continue
+            key = normalize_transaction_description(t.description)
+            if key in exclude_descriptions:
+                continue
+            groups[(key, t.direction)].append(t)
+
+        items: list[dict[str, object]] = []
+        for (_key, direction), txs in groups.items():
+            by_month: dict[int, list[Transaction]] = defaultdict(list)
+            for t in txs:
+                by_month[t.transaction_date.month].append(t)
+            # Pick the month whose occurrences span the most distinct years (>= 2).
+            best_month: int | None = None
+            best_years = 1
+            best_list: list[Transaction] = []
+            for month, lst in by_month.items():
+                years = {t.transaction_date.year for t in lst}
+                if len(years) >= 2 and len(years) > best_years - 1 and len(lst) >= len(best_list):
+                    best_years = len(years)
+                    best_month = month
+                    best_list = lst
+            if best_month is None:
+                continue
+            amounts = sorted(abs(t.amount) for t in best_list)
+            amount = amounts[len(amounts) // 2]
+            if amount < Decimal("300"):
+                continue
+            day = Counter(t.transaction_date.day for t in best_list).most_common(1)[0][0]
+            for year in (today.year, today.year + 1):
+                occ = _day_in_month(year, best_month, day)
+                if today < occ <= horizon_end:
+                    items.append(
+                        {
+                            "date": occ.isoformat(),
+                            "description": best_list[-1].description,
+                            "amount": amount,
+                            "type": "income" if direction == "credit" else "expense",
+                        }
+                    )
+                    break
+        return items
+
     def _projection_known_events(
         self,
         workspace_id: str,
@@ -1478,6 +2048,28 @@ class DashboardService:
         months = min(12, _inclusive_months(first_month, anchor))
         burn_rate = (expenses / Decimal(months)).quantize(Decimal("0.01")) if months else ZERO
         return burn_rate, months
+
+    def _preferences(self, workspace_id: str) -> WorkspacePreferences | None:
+        return self.db.get(WorkspacePreferences, workspace_id)
+
+    def _burn_rate_window(
+        self, workspace_id: str, date_to: date | None, months: int
+    ) -> Decimal:
+        """Monthly-equivalent burn rate over the trailing `months` months."""
+        anchor = date_to or self._latest_transaction_date(workspace_id)
+        if anchor is None:
+            return ZERO
+        window_start = anchor - timedelta(days=months * 30 - 1)
+        debits = self._transactions(
+            workspace_id=workspace_id, date_from=window_start, date_to=anchor
+        )
+        debit_dates = [t.transaction_date for t in debits if t.direction == "debit"]
+        if not debit_dates:
+            return ZERO
+        first = max(min(debit_dates), window_start)
+        window_days = max((anchor - first).days + 1, 1)
+        expenses = self._sum(debits, "debit")
+        return (expenses / Decimal(window_days) * Decimal(30)).quantize(Decimal("0.01"))
 
     def _burn_rate_90_days(self, workspace_id: str, date_to: date | None) -> tuple[Decimal, int]:
         anchor = date_to or self._latest_transaction_date(workspace_id)

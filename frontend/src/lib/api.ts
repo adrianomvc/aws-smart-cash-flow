@@ -1,6 +1,6 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/v1";
 
-export type SessionMode = "local" | "supabase";
+export type SessionMode = "local" | "supabase" | "cognito";
 
 export type ApiSession = {
   token: string;
@@ -9,9 +9,11 @@ export type ApiSession = {
 
 export type WorkspaceCurrent = {
   user_id: string;
+  user_name: string;
   workspace_id: string;
   workspace_name: string;
   role: string;
+  has_transactions: boolean;
   created_at: string;
 };
 
@@ -55,6 +57,8 @@ export type CategoryRead = {
   id: string;
   name: string;
   parent_category_id: string | null;
+  color: string | null;
+  icon: string | null;
   created_at: string;
 };
 
@@ -73,6 +77,7 @@ export type TransactionRead = {
   source_name: string | null;
   account_or_card: string | null;
   transaction_date: string;
+  payment_date: string | null;
   description: string;
   raw_description: string;
   amount: string;
@@ -104,7 +109,25 @@ export type CategorizationRuleRead = {
   target_direction: string | null;
   priority: number;
   active: boolean;
+  amount_ref?: string | null;
+  amount_tolerance?: string | null;
+  day_min?: number | null;
+  day_max?: number | null;
+  direction_filter?: string | null;
   created_at: string;
+};
+
+export type RuleSuggestion = {
+  match_type: string;
+  field: string;
+  pattern: string;
+  amount_ref: string | null;
+  amount_tolerance: string | null;
+  day_min: number | null;
+  day_max: number | null;
+  direction_filter: string | null;
+  suggested_name: string;
+  affected_count: number;
 };
 
 export type ImportPreviewItem = {
@@ -184,6 +207,31 @@ export type DashboardSummary = {
   current_balance: string | null;
   current_balance_date: string | null;
   current_balance_account: string | null;
+  commitment_limit: string;
+  commitment_over_limit: boolean;
+  savings_target: string;
+  savings_on_target: boolean;
+  protected_reserve: string;
+  burn_rate_window_months: number;
+};
+
+export type WorkspacePreferences = {
+  workspace_id: string;
+  currency: string;
+  savings_target_pct: string;
+  commitment_limit_pct: string;
+  risk_profile: string;
+  burn_rate_window_months: number;
+  protected_reserve: string;
+};
+
+export type PreferencesPayload = {
+  currency?: string;
+  savings_target_pct?: string;
+  commitment_limit_pct?: string;
+  risk_profile?: string;
+  burn_rate_window_months?: number;
+  protected_reserve?: string;
 };
 
 export type MonthlyCashflowItem = {
@@ -220,15 +268,19 @@ export type WeekdaySpendingItem = {
 export type CategoryRankingItem = {
   category_id: string | null;
   category_name: string;
+  color: string | null;
+  icon: string | null;
   amount: string;
   count: number;
   share_ratio: string | null;
   average_amount: string;
+  last_transaction_date: string | null;
 };
 
 export type SubcategoryRankingItem = {
   category_id: string | null;
   subcategory_name: string;
+  color: string | null;
   amount: string;
   count: number;
   share_ratio: string | null;
@@ -243,6 +295,35 @@ export type ExpenseSizeProfileItem = {
   count: number;
   share_ratio: string;
   average_amount: string;
+};
+
+export type SizeBucketItem = {
+  key: string;
+  label: string;
+  helper: string;
+  count: number;
+  total: string;
+  average: string;
+  share_ratio: string;
+};
+
+export type CostTypeStat = { count: number; total: string };
+
+export type FixedCostItem = {
+  description: string;
+  category_name: string | null;
+  total: string;
+  count: number;
+  monthly_amount: string;
+};
+
+export type SpendingBreakdown = {
+  workspace_id: string;
+  total_expense: string;
+  size_buckets: SizeBucketItem[];
+  fixed: CostTypeStat;
+  variable: CostTypeStat;
+  fixed_items: FixedCostItem[];
 };
 
 export type MerchantRankingItem = {
@@ -316,6 +397,7 @@ export type CreditCardRead = {
   issuer: string | null;
   brand: string | null;
   last_four: string | null;
+  color: string | null;
   closing_day: number;
   due_day: number;
   limit_amount: string | null;
@@ -328,6 +410,7 @@ export type CreditCardStatementRead = {
   workspace_id: string;
   credit_card_id: string;
   source_file_id: string | null;
+  source_file_name: string | null;
   statement_month: string;
   closing_date: string | null;
   due_date: string;
@@ -405,7 +488,8 @@ export type BudgetRead = {
   name: string;
   category_id: string | null;
   period_start: string;
-  period_end: string;
+  period_end: string | null;
+  recurring: boolean;
   limit_amount: string;
   alert_threshold: string;
   active: boolean;
@@ -420,44 +504,58 @@ export type GoalRead = {
   target_amount: string;
   current_amount: string;
   target_date: string | null;
+  tracking_mode: string;
+  linked_account: string | null;
+  aporte_match_text: string | null;
+  aporte_min: string | null;
+  aporte_max: string | null;
+  color: string | null;
+  icon: string | null;
   status: string;
   priority: number;
   created_at: string;
 };
 
-export type ProjectionHorizonRead = {
-  days: number;
-  date_to: string;
-  projected_income: string;
-  projected_expenses: string;
-  projected_balance: string;
-  event_count: number;
-  risk_level: string;
-  risk_reason: string;
+export type AccountItem = {
+  account_name: string;
+  balance: string;
+  balance_date: string;
 };
 
-export type ProjectionEventRead = {
+export type ProjectionPoint = {
+  month: string;
+  probable: string;
+  best: string;
+  worst: string;
+};
+
+export type ProjectionCommitment = {
+  date: string;
   title: string;
-  event_type: string;
+  kind: string;
   amount: string;
-  due_date: string;
-  recurrence: string;
-};
-
-export type ProjectionGoalRead = {
-  name: string;
-  target_amount: string;
-  current_amount: string;
-  remaining_amount: string;
-  target_date: string | null;
+  income: boolean;
+  monthly: boolean;
 };
 
 export type PlanningProjection = {
   workspace_id: string;
-  date_from: string;
-  horizons: ProjectionHorizonRead[];
-  upcoming_events: ProjectionEventRead[];
-  goals_due: ProjectionGoalRead[];
+  horizon_days: number;
+  start_balance: string;
+  recurring_income: string;
+  recurring_expense: string;
+  variable_average: string;
+  monthly_net: string;
+  points: ProjectionPoint[];
+  end_best: string;
+  end_probable: string;
+  end_worst: string;
+  min_balance: string;
+  variation: string;
+  variation_pct: string;
+  risk_level: string;
+  risk_reason: string;
+  commitments: ProjectionCommitment[];
   assumptions: string[];
 };
 
@@ -499,13 +597,20 @@ export type ProjectionFeed = {
 };
 
 export type ActiveAccountItem = {
+  id: string;
   kind: "bank" | "credit_card";
-  account_name: string;
-  current_balance?: number | null;
-  balance_date?: string | null;
-  limit_amount?: number | null;
-  used_amount?: number | null;
-  available_amount?: number | null;
+  name: string;
+  current_balance: string | null;
+  balance_date: string | null;
+  limit_amount: string | null;
+  used_amount: string | null;
+  available_amount: string | null;
+  issuer: string | null;
+  brand: string | null;
+  last_four: string | null;
+  closing_day: number | null;
+  due_day: number | null;
+  active: boolean;
 };
 
 export type ReportCardRead = {
@@ -540,10 +645,18 @@ export type BudgetPayload = {
   name: string;
   category_id: string | null;
   period_start: string;
-  period_end: string;
+  period_end: string | null;
+  recurring?: boolean;
   limit_amount: string;
   alert_threshold?: string;
   active?: boolean;
+};
+
+export type BudgetRecommendation = {
+  category_id: string | null;
+  months: number;
+  total: string;
+  average: string;
 };
 
 export type CreditCardPayload = {
@@ -551,6 +664,7 @@ export type CreditCardPayload = {
   issuer?: string | null;
   brand?: string | null;
   last_four?: string | null;
+  color?: string | null;
   closing_day?: number | null;
   due_day?: number | null;
   limit_amount?: string | null;
@@ -573,6 +687,13 @@ export type GoalPayload = {
   target_amount: string;
   current_amount: string;
   target_date?: string | null;
+  tracking_mode?: string;
+  linked_account?: string | null;
+  aporte_match_text?: string | null;
+  aporte_min?: string | null;
+  aporte_max?: string | null;
+  color?: string | null;
+  icon?: string | null;
   status?: string;
   priority?: number;
 };
@@ -591,9 +712,21 @@ type ApiOptions = {
   headers?: HeadersInit;
 };
 
+// The Cognito layer registers a provider that returns a fresh (auto-refreshed)
+// ID token, so requests never carry an expired token.
+let cognitoTokenProvider: (() => Promise<string | null>) | null = null;
+export function setCognitoTokenProvider(fn: () => Promise<string | null>) {
+  cognitoTokenProvider = fn;
+}
+
 async function apiRequest<T>(path: string, session: ApiSession, options: ApiOptions = {}): Promise<T> {
   const headers = new Headers(options.headers);
-  headers.set("Authorization", `Bearer ${session.token}`);
+  let token = session.token;
+  if (session.mode === "cognito" && cognitoTokenProvider) {
+    const fresh = await cognitoTokenProvider();
+    if (fresh) token = fresh;
+  }
+  headers.set("Authorization", `Bearer ${token}`);
 
   let body: BodyInit | undefined;
   if (options.body instanceof FormData) {
@@ -655,6 +788,29 @@ export function getExpenseSizeProfile(session: ApiSession, query: string) {
   return apiRequest<ListResponse<ExpenseSizeProfileItem>>(`/dashboard/expense-size-profile${query}`, session);
 }
 
+export function getSpendingBreakdown(session: ApiSession, query: string) {
+  return apiRequest<SpendingBreakdown>(`/dashboard/spending-breakdown${query}`, session);
+}
+
+export type CategoryTrendSeries = {
+  category_id: string | null;
+  category_name: string;
+  color: string | null;
+  total: string;
+  points: string[];
+};
+
+export type CategoryTrends = {
+  workspace_id: string;
+  months: string[];
+  granularity: "month" | "year";
+  series: CategoryTrendSeries[];
+};
+
+export function getCategoryTrends(session: ApiSession, query: string) {
+  return apiRequest<CategoryTrends>(`/dashboard/category-trends${query}`, session);
+}
+
 export function getMerchantRanking(session: ApiSession, query: string) {
   return apiRequest<ListResponse<MerchantRankingItem>>(`/dashboard/merchant-ranking${query}`, session);
 }
@@ -688,6 +844,28 @@ export function getProjectionFeed(session: ApiSession, horizonDays = 90, lookbac
 
 export function getCreditCards(session: ApiSession) {
   return apiRequest<ListResponse<CreditCardRead>>("/credit-cards", session);
+}
+
+export function autoAssociateCreditCardFiles(session: ApiSession) {
+  return apiRequest<{ linked: number }>("/credit-cards/auto-associate", session, { method: "POST" });
+}
+
+export type StatementReportItem = {
+  statement_id: string;
+  credit_card_id: string;
+  card_name: string;
+  source_file_id: string | null;
+  source_file_name: string | null;
+  statement_month: string;
+  due_date: string;
+  status: string;
+  file_total: string | null;
+  paid_amount: string | null;
+  paid_date: string | null;
+};
+
+export function getCreditCardStatementReport(session: ApiSession) {
+  return apiRequest<{ workspace_id: string; items: StatementReportItem[] }>("/credit-card-statement-report", session);
 }
 
 export function createCreditCard(session: ApiSession, payload: CreditCardPayload) {
@@ -728,6 +906,30 @@ export function associateCreditCardSourceFile(session: ApiSession, cardId: strin
   });
 }
 
+export function unlinkCreditCardSourceFile(session: ApiSession, sourceFileId: string) {
+  return apiRequest<void>(`/credit-card-source-files/${sourceFileId}/link`, session, {
+    method: "DELETE",
+  });
+}
+
+export type CreditCardSourceFileItem = {
+  source_file_id: string;
+  original_filename: string;
+  received_at: string;
+  total: string | null;
+  reference_month: string | null;
+  linked_credit_card_id: string | null;
+  linked_card_name: string | null;
+  due_date: string | null;
+  status: string | null;
+  paid_amount: string | null;
+  paid_date: string | null;
+};
+
+export function getCreditCardSourceFiles(session: ApiSession) {
+  return apiRequest<{ workspace_id: string; items: CreditCardSourceFileItem[] }>("/credit-card-source-files", session);
+}
+
 export function getDataQuality(session: ApiSession, query: string) {
   return apiRequest<DataQuality>(`/dashboard/data-quality${query}`, session);
 }
@@ -754,12 +956,29 @@ export function createBudget(session: ApiSession, payload: BudgetPayload) {
   });
 }
 
+export function updateBudget(session: ApiSession, budgetId: string, payload: Partial<BudgetPayload>) {
+  return apiRequest<BudgetRead>(`/budgets/${budgetId}`, session, {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
+export function deleteBudget(session: ApiSession, budgetId: string) {
+  return apiRequest<void>(`/budgets/${budgetId}`, session, {
+    method: "DELETE",
+  });
+}
+
+export function getBudgetRecommendation(session: ApiSession, categoryId: string, months = 3) {
+  return apiRequest<BudgetRecommendation>(`/budgets/recommendation?category_id=${categoryId}&months=${months}`, session);
+}
+
 export function getGoals(session: ApiSession) {
   return apiRequest<ListResponse<GoalRead>>("/goals", session);
 }
 
-export function getPlanningProjection(session: ApiSession, query = "?horizons=30,60,90") {
-  return apiRequest<PlanningProjection>(`/planning/projection${query}`, session);
+export function getPlanningProjection(session: ApiSession, horizonDays = 365) {
+  return apiRequest<PlanningProjection>(`/planning/projection?horizon_days=${horizonDays}`, session);
 }
 
 export function getReports(session: ApiSession, query: string) {
@@ -771,6 +990,58 @@ export function createGoal(session: ApiSession, payload: GoalPayload) {
     method: "POST",
     body: payload,
   });
+}
+
+export function updateGoal(session: ApiSession, goalId: string, payload: Partial<GoalPayload>) {
+  return apiRequest<GoalRead>(`/goals/${goalId}`, session, {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
+export function deleteGoal(session: ApiSession, goalId: string) {
+  return apiRequest<void>(`/goals/${goalId}`, session, {
+    method: "DELETE",
+  });
+}
+
+export function getAccounts(session: ApiSession) {
+  return apiRequest<{ workspace_id: string; items: AccountItem[] }>("/accounts", session);
+}
+
+export function getPreferences(session: ApiSession) {
+  return apiRequest<WorkspacePreferences>("/preferences", session);
+}
+
+export function updatePreferences(session: ApiSession, payload: PreferencesPayload) {
+  return apiRequest<WorkspacePreferences>("/preferences", session, { method: "PATCH", body: payload });
+}
+
+export type ContributionItem = {
+  id: string;
+  transaction_date: string;
+  description: string;
+  amount: string;
+  direction: string;
+};
+
+type ContributionList = { goal_id: string; items: ContributionItem[]; total: string };
+
+export function getGoalContributions(session: ApiSession, goalId: string) {
+  return apiRequest<ContributionList>(`/goals/${goalId}/contributions`, session);
+}
+
+export function getContributionCandidates(session: ApiSession, goalId: string, q = "") {
+  const query = q ? `?q=${encodeURIComponent(q)}` : "";
+  return apiRequest<ContributionList>(`/goals/${goalId}/contribution-candidates${query}`, session);
+}
+
+export function addGoalContribution(session: ApiSession, goalId: string, transactionId: string) {
+  return apiRequest<void>(`/goals/${goalId}/contributions/${transactionId}`, session, { method: "POST" });
+}
+
+export function removeGoalContribution(session: ApiSession, goalId: string, transactionId: string) {
+  return apiRequest<void>(`/goals/${goalId}/contributions/${transactionId}`, session, { method: "DELETE" });
 }
 
 export function getImports(session: ApiSession, query = "?limit=20") {
@@ -808,8 +1079,15 @@ export function uploadImport(session: ApiSession, file: File, sourceKind = "auto
   }>("/imports", session, { method: "POST", body: data });
 }
 
+export type TransactionListResponse = ListResponse<TransactionRead> & {
+  // Aggregates over the full filtered set (decimals serialized as strings).
+  total_income?: string;
+  total_expense?: string;
+  total_net?: string;
+};
+
 export function getTransactions(session: ApiSession, query: string) {
-  return apiRequest<ListResponse<TransactionRead>>(`/transactions${query}`, session);
+  return apiRequest<TransactionListResponse>(`/transactions${query}`, session);
 }
 
 export function getTransactionDuplicates(session: ApiSession, query = "?limit=20") {
@@ -855,17 +1133,27 @@ export function getCategories(session: ApiSession) {
   return apiRequest<ListResponse<CategoryRead>>("/categories", session);
 }
 
-export function createCategory(session: ApiSession, name: string, parentCategoryId: string | null) {
+export function createCategory(
+  session: ApiSession,
+  name: string,
+  parentCategoryId: string | null,
+  options: { color?: string | null; icon?: string | null } = {},
+) {
   return apiRequest<CategoryRead>("/categories", session, {
     method: "POST",
-    body: { name, parent_category_id: parentCategoryId },
+    body: { name, parent_category_id: parentCategoryId, color: options.color, icon: options.icon },
   });
 }
 
 export function updateCategory(
   session: ApiSession,
   categoryId: string,
-  payload: { name: string; parent_category_id: string | null },
+  payload: {
+    name?: string;
+    parent_category_id?: string | null;
+    color?: string | null;
+    icon?: string | null;
+  },
 ) {
   return apiRequest<CategoryRead>(`/categories/${categoryId}`, session, {
     method: "PATCH",
@@ -881,19 +1169,23 @@ export function getRules(session: ApiSession) {
   return apiRequest<ListResponse<CategorizationRuleRead>>("/categorization-rules", session);
 }
 
-export function createRule(
-  session: ApiSession,
-  payload: {
-    name: string;
-    field: string;
-    match_type: string;
-    pattern: string;
-    category_id: string | null;
-    target_direction: string | null;
-    priority: number;
-    active: boolean;
-  },
-) {
+export type CategorizationRulePayload = {
+  name: string;
+  field: string;
+  match_type: string;
+  pattern: string;
+  category_id: string | null;
+  target_direction: string | null;
+  priority: number;
+  active: boolean;
+  amount_ref?: string | null;
+  amount_tolerance?: string | null;
+  day_min?: number | null;
+  day_max?: number | null;
+  direction_filter?: string | null;
+};
+
+export function createRule(session: ApiSession, payload: CategorizationRulePayload) {
   return apiRequest<CategorizationRuleRead>("/categorization-rules", session, {
     method: "POST",
     body: payload,
@@ -903,21 +1195,19 @@ export function createRule(
 export function updateRule(
   session: ApiSession,
   ruleId: string,
-  payload: Partial<{
-    name: string;
-    field: string;
-    match_type: string;
-    pattern: string;
-    category_id: string | null;
-    target_direction: string | null;
-    priority: number;
-    active: boolean;
-  }>,
+  payload: Partial<CategorizationRulePayload>,
 ) {
   return apiRequest<CategorizationRuleRead>(`/categorization-rules/${ruleId}`, session, {
     method: "PATCH",
     body: payload,
   });
+}
+
+export function getRuleSuggestion(session: ApiSession, transactionId: string) {
+  return apiRequest<{ suggestion: RuleSuggestion | null }>(
+    `/transactions/${transactionId}/rule-suggestion`,
+    session,
+  );
 }
 
 export function deleteRule(session: ApiSession, ruleId: string) {
@@ -932,6 +1222,15 @@ export function applyRules(session: ApiSession) {
     direction_applied_count: number;
     skipped_manual_count: number;
   }>("/categorization-rules/apply", session, { method: "POST" });
+}
+
+export function categorizePending(session: ApiSession) {
+  return apiRequest<{
+    workspace_id: string;
+    trgm_applied: number;
+    llm_applied: number;
+    total_applied: number;
+  }>("/categorize-pending", session, { method: "POST" });
 }
 
 export function getRulePreview(session: ApiSession, ruleId: string) {
@@ -1016,4 +1315,431 @@ export async function resetPassword(email: string) {
 
 export function getActiveAccounts(session: ApiSession) {
   return apiRequest<{ items: ActiveAccountItem[]; total: number }>("/accounts/active", session);
+}
+
+// --------------------------------------------------------------------------- //
+// Insights (explainable, rule-based)
+// --------------------------------------------------------------------------- //
+export type InsightItem = {
+  type: "pos" | "neg" | "warn" | "info";
+  title: string;
+  impact: string;
+  impact_label?: string;
+  saving: string;
+  confidence: "Alta" | "Média" | "Baixa";
+  reason: string;
+  data: string;
+  action: string;
+  action_target: string;
+  action_param: string | null;
+};
+
+export type InsightsResponse = {
+  workspace_id: string;
+  date_from: string | null;
+  date_to: string | null;
+  kpis: {
+    insights_count: number;
+    potential_savings: string;
+    risk_alerts: number;
+    data_quality_pct: number | null;
+  };
+  items: InsightItem[];
+};
+
+export function getInsights(session: ApiSession, query = "") {
+  return apiRequest<InsightsResponse>(`/insights${query}`, session);
+}
+
+export type CopilotTurn = { role: "user" | "assistant"; content: string };
+
+export function getCopilotStatus(session: ApiSession) {
+  return apiRequest<{ available: boolean }>("/copilot/status", session);
+}
+
+export function copilotChat(
+  session: ApiSession,
+  body: { message: string; history: CopilotTurn[] },
+) {
+  return apiRequest<{ reply: string | null; available: boolean }>("/copilot/chat", session, {
+    method: "POST",
+    body,
+  });
+}
+
+// --------------------------------------------------------------------------- //
+// Investments (position view)
+// --------------------------------------------------------------------------- //
+export type InvestmentClassRef = { id: string; label: string; color: string };
+
+export type InvestmentCustodyRead = {
+  id: string;
+  workspace_id: string;
+  name: string;
+  kind: string | null;
+  account_type: string;
+  brand: string | null;
+  color: string | null;
+  sync_mode: string | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type InvestmentCustodyPayload = {
+  name?: string;
+  kind?: string | null;
+  account_type?: string;
+  brand?: string | null;
+  color?: string | null;
+  sync_mode?: string | null;
+  active?: boolean;
+};
+
+export type InvestmentAssetRead = {
+  id: string;
+  workspace_id: string;
+  custody_id: string;
+  name: string;
+  asset_class: string;
+  risk: string | null;
+  detail: string | null;
+  current_value: string;
+  contributed: string;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type InvestmentAssetPayload = {
+  custody_id?: string;
+  name?: string;
+  asset_class?: string;
+  risk?: string | null;
+  detail?: string | null;
+  current_value?: number | string;
+  contributed?: number | string;
+  active?: boolean;
+};
+
+export type InvestmentSnapshotRead = {
+  id: string;
+  asset_id: string;
+  as_of: string;
+  value: string;
+  contributed: string | null;
+  created_at: string;
+};
+
+export type InvestmentSnapshotPayload = {
+  value: number | string;
+  contributed?: number | string | null;
+  as_of?: string | null;
+};
+
+// Money fields are serialized as strings (Decimal); returns/pct are numbers (float).
+export type InvestmentPositionClass = {
+  id: string;
+  label: string;
+  color: string;
+  value: string;
+  pct: number;
+  contributed: string;
+  month_return: number;
+  year_return: number;
+};
+
+export type InvestmentPositionAccount = {
+  id: string;
+  name: string;
+  kind: string | null;
+  account_type: string;
+  brand: string | null;
+  color: string | null;
+  value: string;
+  prev: string;
+  contrib: string;
+  classes: { id: string; value: string }[];
+  sync_mode: string | null;
+  updated_at: string;
+};
+
+export type InvestmentPositionAsset = {
+  id: string;
+  name: string;
+  asset_class: string;
+  custody_id: string;
+  account: string;
+  value: string;
+  contributed: string;
+  risk: string | null;
+  detail: string | null;
+  month_return: number;
+  ytd_return: number;
+  updated_at: string | null;
+};
+
+export type InvestmentPosition = {
+  workspace_id: string;
+  total: string;
+  total_contributed: string;
+  total_gain: string;
+  month_return: number;
+  year_return: number;
+  ytd_return: number;
+  custody_count: number;
+  asset_count: number;
+  has_snapshots: boolean;
+  classes: InvestmentPositionClass[];
+  accounts: InvestmentPositionAccount[];
+  assets: InvestmentPositionAsset[];
+  history: { label: string; value: string }[];
+};
+
+export function getInvestmentClasses(session: ApiSession) {
+  return apiRequest<{ items: InvestmentClassRef[] }>("/investment-classes", session);
+}
+
+export function getInvestmentPosition(session: ApiSession, asOf?: string) {
+  const qs = asOf ? `?as_of=${asOf}` : "";
+  return apiRequest<InvestmentPosition>(`/investments/position${qs}`, session);
+}
+
+export function getInvestmentCustodies(session: ApiSession) {
+  return apiRequest<ListResponse<InvestmentCustodyRead>>("/investment-custodies", session);
+}
+
+export function createInvestmentCustody(session: ApiSession, payload: InvestmentCustodyPayload) {
+  return apiRequest<InvestmentCustodyRead>("/investment-custodies", session, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function updateInvestmentCustody(
+  session: ApiSession,
+  custodyId: string,
+  payload: InvestmentCustodyPayload,
+) {
+  return apiRequest<InvestmentCustodyRead>(`/investment-custodies/${custodyId}`, session, {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
+export function deleteInvestmentCustody(session: ApiSession, custodyId: string) {
+  return apiRequest<void>(`/investment-custodies/${custodyId}`, session, { method: "DELETE" });
+}
+
+export function getInvestmentAssets(session: ApiSession, custodyId?: string) {
+  const qs = custodyId ? `?custody_id=${custodyId}` : "";
+  return apiRequest<ListResponse<InvestmentAssetRead>>(`/investment-assets${qs}`, session);
+}
+
+export function createInvestmentAsset(session: ApiSession, payload: InvestmentAssetPayload) {
+  return apiRequest<InvestmentAssetRead>("/investment-assets", session, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function updateInvestmentAsset(
+  session: ApiSession,
+  assetId: string,
+  payload: InvestmentAssetPayload,
+) {
+  return apiRequest<InvestmentAssetRead>(`/investment-assets/${assetId}`, session, {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
+export function deleteInvestmentAsset(session: ApiSession, assetId: string) {
+  return apiRequest<void>(`/investment-assets/${assetId}`, session, { method: "DELETE" });
+}
+
+export function getInvestmentSnapshots(session: ApiSession, assetId: string) {
+  return apiRequest<{ asset_id: string; items: InvestmentSnapshotRead[]; total: number }>(
+    `/investment-assets/${assetId}/snapshots`,
+    session,
+  );
+}
+
+export function createInvestmentSnapshot(
+  session: ApiSession,
+  assetId: string,
+  payload: InvestmentSnapshotPayload,
+) {
+  return apiRequest<InvestmentSnapshotRead>(`/investment-assets/${assetId}/snapshots`, session, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function deleteInvestmentSnapshot(session: ApiSession, snapshotId: string) {
+  return apiRequest<void>(`/investment-snapshots/${snapshotId}`, session, { method: "DELETE" });
+}
+
+// --------------------------------------------------------------------------- //
+// Wealth (net worth)
+// --------------------------------------------------------------------------- //
+export type WealthItemRead = {
+  id: string;
+  workspace_id: string;
+  kind: "asset" | "liability";
+  label: string;
+  category: string | null;
+  value: string;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WealthItemPayload = {
+  kind?: string;
+  label?: string;
+  value?: number | string;
+  category?: string | null;
+  note?: string | null;
+  as_of?: string | null;
+};
+
+export type WealthRow = {
+  id: string | null;
+  label: string;
+  value: string;
+  category: string | null;
+  note: string | null;
+  source: "auto" | "manual";
+  updated_at: string | null;
+};
+
+export type WealthSummary = {
+  workspace_id: string;
+  net_worth: string;
+  total_assets: string;
+  total_liabilities: string;
+  delta: string;
+  delta_pct: number;
+  assets: WealthRow[];
+  liabilities: WealthRow[];
+  history: { label: string; value: string }[];
+};
+
+export function getWealth(session: ApiSession) {
+  return apiRequest<WealthSummary>("/wealth", session);
+}
+
+export function createWealthItem(session: ApiSession, payload: WealthItemPayload) {
+  return apiRequest<WealthItemRead>("/wealth-items", session, { method: "POST", body: payload });
+}
+
+export function updateWealthItem(session: ApiSession, itemId: string, payload: WealthItemPayload) {
+  return apiRequest<WealthItemRead>(`/wealth-items/${itemId}`, session, {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
+export function deleteWealthItem(session: ApiSession, itemId: string) {
+  return apiRequest<void>(`/wealth-items/${itemId}`, session, { method: "DELETE" });
+}
+
+export type WealthSnapshotRead = {
+  id: string;
+  item_id: string;
+  as_of: string;
+  value: string;
+  created_at: string;
+};
+
+export function getWealthSnapshots(session: ApiSession, itemId: string) {
+  return apiRequest<{ item_id: string; items: WealthSnapshotRead[]; total: number }>(
+    `/wealth-items/${itemId}/snapshots`,
+    session,
+  );
+}
+
+export function createWealthSnapshot(
+  session: ApiSession,
+  itemId: string,
+  payload: { value: number | string; as_of?: string | null },
+) {
+  return apiRequest<WealthSnapshotRead>(`/wealth-items/${itemId}/snapshots`, session, {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export function deleteWealthSnapshot(session: ApiSession, snapshotId: string) {
+  return apiRequest<void>(`/wealth-snapshots/${snapshotId}`, session, { method: "DELETE" });
+}
+
+// --------------------------------------------------------------------------- //
+// Family / members
+// --------------------------------------------------------------------------- //
+export type MemberRead = {
+  id: string;
+  user_id: string;
+  name: string;
+  email: string;
+  role: string;
+  is_self: boolean;
+  created_at: string;
+};
+
+export type InviteRead = {
+  id: string;
+  email: string;
+  role: string;
+  status: string;
+  created_at: string;
+};
+
+export type ProfileRead = {
+  user_id: string;
+  name: string;
+  email: string;
+  role: string;
+  workspace_name: string;
+};
+
+export function getProfile(session: ApiSession) {
+  return apiRequest<ProfileRead>("/workspaces/profile", session);
+}
+
+export function updateProfile(session: ApiSession, payload: { display_name?: string; email?: string }) {
+  return apiRequest<ProfileRead>("/workspaces/profile", session, { method: "PATCH", body: payload });
+}
+
+export function updateWorkspaceName(session: ApiSession, name: string) {
+  return apiRequest<WorkspaceCurrent>("/workspaces/current", session, { method: "PATCH", body: { name } });
+}
+
+export function getMembers(session: ApiSession) {
+  return apiRequest<{ workspace_id: string; items: MemberRead[]; total: number }>("/workspaces/members", session);
+}
+
+export function getInvites(session: ApiSession) {
+  return apiRequest<{ workspace_id: string; items: InviteRead[]; total: number }>("/workspaces/invites", session);
+}
+
+export function inviteMember(session: ApiSession, payload: { email: string; role: string }) {
+  return apiRequest<InviteRead>("/workspaces/members/invite", session, { method: "POST", body: payload });
+}
+
+export function acceptInvite(session: ApiSession, inviteId: string) {
+  return apiRequest<MemberRead>(`/workspaces/invites/${inviteId}/accept`, session, { method: "POST" });
+}
+
+export function cancelInvite(session: ApiSession, inviteId: string) {
+  return apiRequest<void>(`/workspaces/invites/${inviteId}`, session, { method: "DELETE" });
+}
+
+export function updateMemberRole(session: ApiSession, memberId: string, role: string) {
+  return apiRequest<MemberRead>(`/workspaces/members/${memberId}`, session, { method: "PATCH", body: { role } });
+}
+
+export function removeMember(session: ApiSession, memberId: string) {
+  return apiRequest<void>(`/workspaces/members/${memberId}`, session, { method: "DELETE" });
 }

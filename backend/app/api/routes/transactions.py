@@ -6,12 +6,14 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import and_, asc, delete, desc, func, or_, select
+from sqlalchemy import and_, asc, case, delete, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import AuthContext, AuthDependency
 from app.db.models import (
     Category,
+    CreditCard,
+    CreditCardStatement,
     ImportJob,
     SourceFile,
     Transaction,
@@ -57,6 +59,7 @@ class TransactionRead(BaseModel):
     source_name: str | None
     account_or_card: str | None
     transaction_date: date
+    payment_date: date | None = None
     description: str
     raw_description: str
     amount: Decimal
@@ -78,6 +81,10 @@ class TransactionListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+    # Aggregates over the FULL filtered set (not just the current page).
+    total_income: Decimal = Decimal("0")
+    total_expense: Decimal = Decimal("0")
+    total_net: Decimal = Decimal("0")
 
 
 class DescriptionNormalizationResponse(BaseModel):
@@ -266,6 +273,9 @@ async def list_transactions(
     date_to: date | None = None,
     category_ids: list[str] | None = Query(default=None),  # noqa: B008
     import_job_id: str | None = None,
+    source_file_id: str | None = None,
+    credit_card_id: str | None = None,
+    card_brand: str | None = None,
     ids: str | None = None,
     source_type: str | None = None,
     direction: str | None = None,
@@ -276,7 +286,9 @@ async def list_transactions(
     amount_min: float | None = None,
     amount_max: float | None = None,
     tx_status: str | None = Query(default=None, alias="status"),
-    limit: int = Query(default=50, ge=1, le=100),
+    category_source: str | None = None,
+    category_review_status: str | None = None,
+    limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> TransactionListResponse:
     sort_columns = {
@@ -313,12 +325,45 @@ async def list_transactions(
         filters.append(Transaction.id.in_(transaction_ids))
     else:
         filters.append(Transaction.natural_dedupe_key.is_not(None))
+    # Date filters always use the effective payment date (credit-card purchases
+    # are filtered by the month they are actually charged), falling back to the
+    # transaction date for rows without a computed payment date.
+    payment_date_expr = func.coalesce(Transaction.payment_date, Transaction.transaction_date)
     if date_from is not None:
-        filters.append(Transaction.transaction_date >= date_from)
+        filters.append(payment_date_expr >= date_from)
     if date_to is not None:
-        filters.append(Transaction.transaction_date <= date_to)
+        filters.append(payment_date_expr <= date_to)
     if import_job_id is not None:
         filters.append(Transaction.import_job_id == import_job_id)
+    if source_file_id is not None:
+        filters.append(Transaction.source_file_id == source_file_id)
+    if credit_card_id is not None:
+        # Attribute transactions to a card via the statement that imported their file.
+        filters.append(
+            Transaction.source_file_id.in_(
+                select(CreditCardStatement.source_file_id).where(
+                    CreditCardStatement.workspace_id == auth.workspace_id,
+                    CreditCardStatement.credit_card_id == credit_card_id,
+                    CreditCardStatement.source_file_id.is_not(None),
+                )
+            )
+        )
+    if card_brand is not None:
+        # Transactions of any card with this brand (via the statements' files).
+        filters.append(
+            Transaction.source_file_id.in_(
+                select(CreditCardStatement.source_file_id).where(
+                    CreditCardStatement.workspace_id == auth.workspace_id,
+                    CreditCardStatement.source_file_id.is_not(None),
+                    CreditCardStatement.credit_card_id.in_(
+                        select(CreditCard.id).where(
+                            CreditCard.workspace_id == auth.workspace_id,
+                            CreditCard.brand == card_brand,
+                        )
+                    ),
+                )
+            )
+        )
     if source_type is not None:
         filters.append(Transaction.source_type == source_type)
     if direction is not None:
@@ -372,6 +417,52 @@ async def list_transactions(
                 )
             )
         )
+    # Filter by how the transaction was categorized.
+    if category_source == "__none__":
+        filters.append(
+            Transaction.id.not_in(
+                select(TransactionCategoryAssignment.transaction_id).where(
+                    TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+                    TransactionCategoryAssignment.category_id.is_not(None),
+                )
+            )
+        )
+    elif category_source in ("manual", "rule", "embedding", "llm"):
+        filters.append(
+            Transaction.id.in_(
+                select(TransactionCategoryAssignment.transaction_id).where(
+                    TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+                    TransactionCategoryAssignment.source == category_source,
+                )
+            )
+        )
+    if category_review_status == "queue":
+        # Unified "to review" queue: uncategorized OR a pending machine suggestion.
+        filters.append(
+            or_(
+                Transaction.id.not_in(
+                    select(TransactionCategoryAssignment.transaction_id).where(
+                        TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+                        TransactionCategoryAssignment.category_id.is_not(None),
+                    )
+                ),
+                Transaction.id.in_(
+                    select(TransactionCategoryAssignment.transaction_id).where(
+                        TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+                        TransactionCategoryAssignment.review_status == "pending",
+                    )
+                ),
+            )
+        )
+    elif category_review_status in ("pending", "accepted"):
+        filters.append(
+            Transaction.id.in_(
+                select(TransactionCategoryAssignment.transaction_id).where(
+                    TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+                    TransactionCategoryAssignment.review_status == category_review_status,
+                )
+            )
+        )
 
     query = (
         select(Transaction, TransactionCategoryAssignment)
@@ -385,6 +476,21 @@ async def list_transactions(
         .where(*filters)
     )
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
+    # Sums over the full filtered set (credit = income, debit = expense; payments
+    # are settlements and count as neither). Reuses the same WHERE filters.
+    abs_amount = func.abs(Transaction.amount)
+    income_sum, expense_sum = db.execute(
+        select(
+            func.coalesce(
+                func.sum(case((Transaction.direction == "credit", abs_amount), else_=0)), 0
+            ),
+            func.coalesce(
+                func.sum(case((Transaction.direction == "debit", abs_amount), else_=0)), 0
+            ),
+        ).where(*filters)
+    ).one()
+    income_sum = Decimal(income_sum)
+    expense_sum = Decimal(expense_sum)
     rows = db.execute(
         query
         .order_by(
@@ -404,6 +510,9 @@ async def list_transactions(
         total=total,
         limit=limit,
         offset=offset,
+        total_income=income_sum,
+        total_expense=expense_sum,
+        total_net=income_sum - expense_sum,
     )
 
 
@@ -777,6 +886,7 @@ def _transaction_read(
         source_name=transaction.source_name,
         account_or_card=transaction.account_or_card,
         transaction_date=transaction.transaction_date,
+        payment_date=transaction.payment_date,
         description=transaction.description,
         raw_description=transaction.raw_description,
         amount=transaction.amount,
