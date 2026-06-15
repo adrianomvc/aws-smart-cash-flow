@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Send, Sparkles, User } from "lucide-react";
+import { Send, Sparkles, Trash2, User } from "lucide-react";
 
 import { copilotChat, getCopilotStatus } from "../lib/api";
 import type { ApiSession, CopilotTurn } from "../lib/api";
@@ -14,9 +14,27 @@ const SUGGESTIONS = [
 ];
 
 export function CopilotChat({ session, period }: { session: ApiSession; period?: PeriodState }) {
-  const [messages, setMessages] = useState<CopilotTurn[]>([]);
+  // History is persisted (per session) so it survives tab switches, navigation
+  // and reloads — the component unmounts when you leave the Copiloto tab.
+  const storageKey = `scf_copilot_${session.token.slice(0, 16)}`;
+  const [messages, setMessages] = useState<CopilotTurn[]>(() => {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      return raw ? (JSON.parse(raw) as CopilotTurn[]) : [];
+    } catch {
+      return [];
+    }
+  });
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(messages.slice(-50)));
+    } catch {
+      // ignore quota/serialization errors
+    }
+  }, [messages, storageKey]);
 
   const statusQ = useQuery({
     queryKey: ["copilot-status", session.token],
@@ -120,6 +138,16 @@ export function CopilotChat({ session, period }: { session: ApiSession; period?:
         onSubmit={(e) => { e.preventDefault(); submit(input); }}
         style={{ display: "flex", gap: 8, padding: "12px 14px", borderTop: "1px solid var(--line)" }}
       >
+        {messages.length > 0 && (
+          <button
+            className="btn btn-ghost btn-sm"
+            type="button"
+            title="Limpar conversa"
+            onClick={() => { setMessages([]); try { localStorage.removeItem(storageKey); } catch { /* ignore */ } }}
+          >
+            <Trash2 size={15} />
+          </button>
+        )}
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
