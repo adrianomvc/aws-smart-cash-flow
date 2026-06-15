@@ -114,7 +114,7 @@ function EvolutionLine({ session, query }: { session: ApiSession; query: string 
   if (!d || d.series.length === 0) return <p className="t-sub" style={{ fontSize: 12, padding: "30px 0", textAlign: "center" }}>Sem dados de evolução.</p>;
 
   return (
-    <div style={{ height: 250 }}>
+    <div style={{ flex: 1, minHeight: 240 }}>
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={rows} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
           <CartesianGrid stroke="var(--line)" strokeDasharray="3 3" vertical={false} />
@@ -143,7 +143,7 @@ export function CategoryCharts({ session, trendsQuery, rankingItems }: {
         <h3 style={{ margin: "0 0 12px", fontSize: 14.5, fontWeight: 700 }}>Distribuição por categoria</h3>
         <DistributionDonut items={rankingItems} />
       </div>
-      <div className="card card-pad">
+      <div className="card card-pad" style={{ display: "flex", flexDirection: "column" }}>
         <h3 style={{ margin: "0 0 4px", fontSize: 14.5, fontWeight: 700 }}>Evolução por categoria</h3>
         <p className="t-sub" style={{ margin: "0 0 10px", fontSize: 12 }}>Gasto mensal das principais categorias (não subcategorias).</p>
         <EvolutionLine session={session} query={trendsQuery} />
