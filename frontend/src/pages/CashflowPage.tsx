@@ -685,12 +685,14 @@ function CatImpactAccordion({
   loading,
   onOpenCategory,
   onOpenTransactions,
+  onManageCategories,
 }: {
   items: CategoryRankingItem[];
   subcategoryItems: SubcategoryRankingItem[];
   loading: boolean;
   onOpenCategory: (item: CategoryRankingItem) => void;
   onOpenTransactions: () => void;
+  onManageCategories: () => void;
 }) {
   const [open, setOpen] = useState<string | null>(null);
   if (loading) return <PageState icon={Loader2} title="Carregando categorias" description="Aguarde." spin compact />;
@@ -785,7 +787,7 @@ function CatImpactAccordion({
                   </button>
                   <button
                     className="btn btn-quiet btn-sm"
-                    onClick={onOpenTransactions}
+                    onClick={onManageCategories}
                     type="button"
                   >
                     Editar subcategorias
@@ -1281,6 +1283,7 @@ export function CashflowPage({
               loading={ranking.isLoading}
               onOpenCategory={openCategoryTransactions}
               onOpenTransactions={() => onOpenTransactions({ dateFrom: period.dateFrom, dateTo: period.dateTo, periodPreset: period.periodPreset, label: "Todas as saídas" })}
+              onManageCategories={() => onNavigate("categories")}
             />
           </div>
         </div>
