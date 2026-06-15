@@ -244,6 +244,9 @@ jobs:
           BACKEND_ALLOW_LOCAL_AUTH: ${{ vars.BACKEND_ALLOW_LOCAL_AUTH || 'true' }}
           BACKEND_DATABASE_URL: ${{ secrets.BACKEND_DATABASE_URL }}
           BACKEND_LAMBDA_FUNCTION_NAME: ${{ vars.BACKEND_LAMBDA_FUNCTION_NAME }}
+          # Auth mode in prod. Set repo var BACKEND_APP_ENV=local to keep the
+          # local-dev bypass working until Cognito is wired; else uses the ref name.
+          BACKEND_APP_ENV: ${{ vars.BACKEND_APP_ENV }}
           # LLM (copilot + AI categorization). GROQ_API_KEY is a repo secret.
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
@@ -272,7 +275,7 @@ jobs:
 
           payload = {
               "Variables": {
-                  "APP_ENV": os.environ["GITHUB_REF_NAME"],
+                  "APP_ENV": os.environ.get("BACKEND_APP_ENV") or os.environ["GITHUB_REF_NAME"],
                   "ALLOW_LOCAL_AUTH": os.environ["BACKEND_ALLOW_LOCAL_AUTH"],
                   "CORS_ORIGINS": os.environ["BACKEND_CORS_ORIGINS"],
                   "DATABASE_MAX_OVERFLOW": "2",
