@@ -215,6 +215,11 @@ const emptyRuleForm: RuleFormState = {
   target_direction: "",
   priority: 100,
   active: true,
+  amount_ref: "",
+  amount_tolerance: "",
+  day_min: "",
+  day_max: "",
+  direction_filter: "",
 };
 
 // ---------------------------------------------------------------------------
@@ -1436,6 +1441,8 @@ function RuleFormModal({
     return () => window.removeEventListener("keydown", h);
   }, [onClose]);
 
+  const isRecurring = form.match_type === "amount_recurring";
+
   return (
     <div className="mdl-backdrop" onClick={onClose}>
       <div className="mdl" style={{ maxWidth: 560 }} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
@@ -1460,34 +1467,110 @@ function RuleFormModal({
             />
           </label>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <label className="fld">
-              <span className="fld-label">Campo</span>
-              <select className="fld-select" value={form.field} onChange={(e) => setForm({ ...form, field: e.target.value })}>
-                <option value="description">Descrição normalizada</option>
-                <option value="raw_description">Descrição original</option>
-                <option value="source_name">Origem</option>
-              </select>
-            </label>
+          <div style={{ display: "grid", gridTemplateColumns: isRecurring ? "1fr" : "1fr 1fr", gap: 12 }}>
+            {!isRecurring && (
+              <label className="fld">
+                <span className="fld-label">Campo</span>
+                <select className="fld-select" value={form.field} onChange={(e) => setForm({ ...form, field: e.target.value })}>
+                  <option value="description">Descrição normalizada</option>
+                  <option value="raw_description">Descrição original</option>
+                  <option value="source_name">Origem</option>
+                </select>
+              </label>
+            )}
             <label className="fld">
               <span className="fld-label">Tipo de match</span>
               <select className="fld-select" value={form.match_type} onChange={(e) => setForm({ ...form, match_type: e.target.value })}>
                 <option value="contains">Contém</option>
                 <option value="starts_with">Começa com</option>
                 <option value="equals">Igual</option>
+                <option value="regex">Regex (avançado)</option>
+                <option value="amount_recurring">Valor recorrente</option>
               </select>
             </label>
           </div>
 
-          <label className="fld">
-            <span className="fld-label">Padrão</span>
-            <input
-              className="fld-input"
-              placeholder="Ex: IFOOD"
-              value={form.pattern}
-              onChange={(e) => setForm({ ...form, pattern: e.target.value })}
-            />
-          </label>
+          {isRecurring ? (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <label className="fld">
+                  <span className="fld-label">Valor de referência</span>
+                  <input
+                    className="fld-input"
+                    type="number"
+                    step="0.01"
+                    placeholder="Ex: 49.90"
+                    value={form.amount_ref}
+                    onChange={(e) => setForm({ ...form, amount_ref: e.target.value })}
+                  />
+                </label>
+                <label className="fld">
+                  <span className="fld-label">Tolerância (±)</span>
+                  <input
+                    className="fld-input"
+                    type="number"
+                    step="0.01"
+                    placeholder="Ex: 1.00"
+                    value={form.amount_tolerance}
+                    onChange={(e) => setForm({ ...form, amount_tolerance: e.target.value })}
+                  />
+                </label>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                <label className="fld">
+                  <span className="fld-label">Dia do mês (de)</span>
+                  <input
+                    className="fld-input"
+                    type="number"
+                    min={1}
+                    max={31}
+                    placeholder="1"
+                    value={form.day_min}
+                    onChange={(e) => setForm({ ...form, day_min: e.target.value })}
+                  />
+                </label>
+                <label className="fld">
+                  <span className="fld-label">Dia do mês (até)</span>
+                  <input
+                    className="fld-input"
+                    type="number"
+                    min={1}
+                    max={31}
+                    placeholder="31"
+                    value={form.day_max}
+                    onChange={(e) => setForm({ ...form, day_max: e.target.value })}
+                  />
+                </label>
+                <label className="fld">
+                  <span className="fld-label">Só esta direção</span>
+                  <select className="fld-select" value={form.direction_filter} onChange={(e) => setForm({ ...form, direction_filter: e.target.value })}>
+                    <option value="">Qualquer</option>
+                    <option value="debit">Despesa</option>
+                    <option value="credit">Receita</option>
+                    <option value="payment">Pagamento de fatura</option>
+                  </select>
+                </label>
+              </div>
+              <p className="t-sub" style={{ margin: "-2px 0 0", fontSize: 12, lineHeight: 1.5 }}>
+                Casa lançamentos com valor próximo ao de referência (dentro da tolerância) que caem na janela de dias do mês — ideal para assinaturas e parcelas fixas.
+              </p>
+            </>
+          ) : (
+            <label className="fld">
+              <span className="fld-label">Padrão</span>
+              <input
+                className="fld-input"
+                placeholder={form.match_type === "regex" ? "Ex: ^uber\\s" : "Ex: IFOOD"}
+                value={form.pattern}
+                onChange={(e) => setForm({ ...form, pattern: e.target.value })}
+              />
+              {form.match_type === "regex" && (
+                <span className="t-sub" style={{ fontSize: 11.5, marginTop: 4 }}>
+                  Expressão regular aplicada sobre o campo escolhido (case-insensitive).
+                </span>
+              )}
+            </label>
+          )}
 
           <label className="fld">
             <span className="fld-label">Categoria</span>
@@ -1575,15 +1658,22 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
     enabled: Boolean(previewRule),
   });
 
+  const isRecurring = form.match_type === "amount_recurring";
   const rulePayload = {
     name: form.name,
     field: form.field,
     match_type: form.match_type,
-    pattern: form.pattern,
+    pattern: isRecurring ? "" : form.pattern,
     category_id: form.category_id || null,
     target_direction: form.target_direction || null,
     priority: form.priority,
     active: form.active,
+    // amount_recurring fields — only meaningful for that match type
+    amount_ref: isRecurring && form.amount_ref !== "" ? form.amount_ref : null,
+    amount_tolerance: isRecurring && form.amount_tolerance !== "" ? form.amount_tolerance : null,
+    day_min: isRecurring && form.day_min !== "" ? Number(form.day_min) : null,
+    day_max: isRecurring && form.day_max !== "" ? Number(form.day_max) : null,
+    direction_filter: isRecurring && form.direction_filter ? form.direction_filter : null,
   };
 
   const create = useMutation({
@@ -1642,9 +1732,11 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
   const ruleTo = safeRulePage * rulePageSize + pagedRules.length;
 
   function validateRuleForm() {
+    const recurring = form.match_type === "amount_recurring";
     const missing = [
       !form.name.trim() ? "nome" : "",
-      !form.pattern.trim() ? "padrão" : "",
+      !recurring && !form.pattern.trim() ? "padrão" : "",
+      recurring && form.amount_ref.trim() === "" ? "valor de referência" : "",
       !form.category_id && !form.target_direction ? "ação da regra" : "",
       !form.priority || form.priority < 1 ? "prioridade" : "",
     ].filter(Boolean);
@@ -1667,6 +1759,11 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
       target_direction: rule.target_direction ?? "",
       priority: rule.priority,
       active: rule.active,
+      amount_ref: rule.amount_ref != null ? String(rule.amount_ref) : "",
+      amount_tolerance: rule.amount_tolerance != null ? String(rule.amount_tolerance) : "",
+      day_min: rule.day_min != null ? String(rule.day_min) : "",
+      day_max: rule.day_max != null ? String(rule.day_max) : "",
+      direction_filter: rule.direction_filter ?? "",
     });
     setRuleFormError("");
     setShowModal(true);

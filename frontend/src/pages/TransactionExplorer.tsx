@@ -3,11 +3,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  applyRules,
   createManualTransaction,
+  createRule,
   deleteTransaction,
   getActiveAccounts,
   getCreditCards,
   getDashboardSummary,
+  getRuleSuggestion,
   getTransactionDuplicates,
   getTransactions,
   normalizeTransactionDescriptions,
@@ -322,6 +325,7 @@ function TransactionDetail({ transaction, categories, categoryGroups, deleting =
   const category = categories.find((item) => item.id === transaction.category?.category_id);
   const normalizedChanged = transaction.description !== transaction.raw_description;
   const isCredit = transaction.direction === "credit";
+  const [showRule, setShowRule] = useState(false);
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>
       <QRow label="Descrição normalizada" value={<span style={normalizedChanged ? { color: "var(--acc)", fontWeight: 600 } : {}}>{transaction.description}</span>} />
@@ -347,6 +351,23 @@ function TransactionDetail({ transaction, categories, categoryGroups, deleting =
         <div style={{ fontSize: 10.5, color: "var(--ink-3)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".4px", fontFamily: "var(--font-mono)", marginBottom: 4 }}>Alterar categoria</div>
         <CategoryPicker categoryGroups={categoryGroups} onCategorized={onCategorized} session={session} transaction={transaction} />
       </div>
+      <div style={{ padding: "12px 0", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 13.5, color: "var(--ink)" }}>Criar regra desta transação</div>
+          <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 2 }}>Aplique a mesma categoria automaticamente a lançamentos parecidos.</div>
+        </div>
+        <button className="btn btn-sm btn-ghost" type="button" onClick={() => setShowRule(true)}>
+          <TIcon name="tag" size={13} /> Criar regra
+        </button>
+      </div>
+      {showRule && (
+        <RuleFromTxModal
+          transaction={transaction}
+          categories={categories}
+          session={session}
+          onClose={() => setShowRule(false)}
+        />
+      )}
       {onDelete ? (
         <div style={{ marginTop: 24, padding: "16px", background: "var(--neg-soft)", borderRadius: 10, border: "1px solid color-mix(in oklab, var(--neg) 28%, transparent)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <div>
@@ -358,6 +379,156 @@ function TransactionDetail({ transaction, categories, categoryGroups, deleting =
           </button>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function RuleFromTxModal({ transaction, categories, session, onClose }: {
+  transaction: TransactionRead;
+  categories: CategoryRead[];
+  session: ApiSession;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const categoryOptions = useMemo(() => orderedCategoryOptions(categories), [categories]);
+
+  // Friendly "contains" default derived from the normalized description.
+  const containsDefault = useMemo(
+    () => (transaction.description || "").split(/\s+/).filter((t) => t.length > 1).slice(0, 3).join(" "),
+    [transaction.description],
+  );
+
+  const suggestionQ = useQuery({
+    queryKey: ["rule-suggestion", session.token, transaction.id],
+    queryFn: () => getRuleSuggestion(session, transaction.id),
+  });
+  const suggestion = suggestionQ.data?.suggestion ?? null;
+
+  const [name, setName] = useState("");
+  const [touchedName, setTouchedName] = useState(false);
+  const [matchType, setMatchType] = useState("contains");
+  const [pattern, setPattern] = useState(containsDefault);
+  const [touchedPattern, setTouchedPattern] = useState(false);
+  const [categoryId, setCategoryId] = useState(transaction.category?.category_id ?? "");
+  const [applyNow, setApplyNow] = useState(true);
+  const [error, setError] = useState("");
+
+  // Prefill the name from the backend suggestion once it loads (unless edited).
+  useEffect(() => {
+    if (!touchedName && suggestion?.suggested_name) setName(suggestion.suggested_name);
+  }, [suggestion, touchedName]);
+
+  function changeMatchType(next: string) {
+    setMatchType(next);
+    if (!touchedPattern) setPattern(next === "regex" ? (suggestion?.pattern ?? containsDefault) : containsDefault);
+  }
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
+  const create = useMutation({
+    mutationFn: async () => {
+      const rule = await createRule(session, {
+        name: name.trim() || `Auto: ${containsDefault}`,
+        field: "description",
+        match_type: matchType,
+        pattern: pattern.trim(),
+        category_id: categoryId || null,
+        target_direction: null,
+        priority: 100,
+        active: true,
+      });
+      if (applyNow) await applyRules(session);
+      return rule;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["rules"] });
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      onClose();
+    },
+    onError: (e) => setError(apiErrorMessage(e, "Falha ao criar a regra.")),
+  });
+
+  function submit() {
+    if (!categoryId) { setError("Escolha a categoria que a regra vai aplicar."); return; }
+    if (!pattern.trim()) { setError("Informe o padrão de texto."); return; }
+    setError("");
+    create.mutate();
+  }
+
+  return (
+    <div className="mdl-backdrop" style={{ zIndex: 300 }} onClick={onClose}>
+      <div className="mdl" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <div className="mdl-head">
+          <span className="mh-ic"><TIcon name="zap" size={17} /></span>
+          <div style={{ minWidth: 0 }}>
+            <div className="mh-ttl">Criar regra desta transação</div>
+            <div className="mh-sub">Lançamentos parecidos receberão a categoria automaticamente.</div>
+          </div>
+          <button className="mh-close" onClick={onClose} type="button"><TIcon name="x" size={18} /></button>
+        </div>
+
+        <div className="mdl-body">
+          <label className="fld">
+            <span className="fld-label">Nome</span>
+            <input className="fld-input" value={name} placeholder={`Auto: ${containsDefault}`}
+              onChange={(e) => { setName(e.target.value); setTouchedName(true); }} />
+          </label>
+
+          <label className="fld">
+            <span className="fld-label">Quando a descrição</span>
+            <select className="fld-select" value={matchType} onChange={(e) => changeMatchType(e.target.value)}>
+              <option value="contains">Contém</option>
+              <option value="starts_with">Começa com</option>
+              <option value="equals">É igual a</option>
+              <option value="regex">Casa a regex</option>
+            </select>
+          </label>
+
+          <label className="fld">
+            <span className="fld-label">Padrão</span>
+            <input className="fld-input" value={pattern} placeholder="Ex: IFOOD"
+              onChange={(e) => { setPattern(e.target.value); setTouchedPattern(true); }} />
+          </label>
+
+          <label className="fld">
+            <span className="fld-label">Aplicar a categoria</span>
+            <select className="fld-select" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+              <option value="">Selecione…</option>
+              {categoryOptions.map((c) => (
+                <option key={c.id} value={c.id}>{c.label}</option>
+              ))}
+            </select>
+          </label>
+
+          {suggestion != null && suggestion.affected_count > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: "var(--ink-3)", marginTop: 2 }}>
+              <TIcon name="info" size={14} />
+              <span>Aproximadamente <strong style={{ color: "var(--ink-1)" }}>{suggestion.affected_count}</strong> lançamento(s) parecido(s) no histórico.</span>
+            </div>
+          )}
+
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginTop: 10 }}>
+            <input type="checkbox" checked={applyNow} onChange={(e) => setApplyNow(e.target.checked)} />
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Aplicar agora às transações existentes</span>
+          </label>
+
+          <InlineError message={error} />
+        </div>
+
+        <div className="mdl-foot">
+          <span style={{ flex: 1 }} />
+          <button className="btn btn-quiet" onClick={onClose} type="button">Cancelar</button>
+          <button className="btn btn-primary" disabled={create.isPending} onClick={submit} type="button">
+            <TIcon name="check" size={14} />
+            {create.isPending ? "Criando…" : "Criar regra"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -109,7 +109,25 @@ export type CategorizationRuleRead = {
   target_direction: string | null;
   priority: number;
   active: boolean;
+  amount_ref?: string | null;
+  amount_tolerance?: string | null;
+  day_min?: number | null;
+  day_max?: number | null;
+  direction_filter?: string | null;
   created_at: string;
+};
+
+export type RuleSuggestion = {
+  match_type: string;
+  field: string;
+  pattern: string;
+  amount_ref: string | null;
+  amount_tolerance: string | null;
+  day_min: number | null;
+  day_max: number | null;
+  direction_filter: string | null;
+  suggested_name: string;
+  affected_count: number;
 };
 
 export type ImportPreviewItem = {
@@ -1092,19 +1110,23 @@ export function getRules(session: ApiSession) {
   return apiRequest<ListResponse<CategorizationRuleRead>>("/categorization-rules", session);
 }
 
-export function createRule(
-  session: ApiSession,
-  payload: {
-    name: string;
-    field: string;
-    match_type: string;
-    pattern: string;
-    category_id: string | null;
-    target_direction: string | null;
-    priority: number;
-    active: boolean;
-  },
-) {
+export type CategorizationRulePayload = {
+  name: string;
+  field: string;
+  match_type: string;
+  pattern: string;
+  category_id: string | null;
+  target_direction: string | null;
+  priority: number;
+  active: boolean;
+  amount_ref?: string | null;
+  amount_tolerance?: string | null;
+  day_min?: number | null;
+  day_max?: number | null;
+  direction_filter?: string | null;
+};
+
+export function createRule(session: ApiSession, payload: CategorizationRulePayload) {
   return apiRequest<CategorizationRuleRead>("/categorization-rules", session, {
     method: "POST",
     body: payload,
@@ -1114,21 +1136,19 @@ export function createRule(
 export function updateRule(
   session: ApiSession,
   ruleId: string,
-  payload: Partial<{
-    name: string;
-    field: string;
-    match_type: string;
-    pattern: string;
-    category_id: string | null;
-    target_direction: string | null;
-    priority: number;
-    active: boolean;
-  }>,
+  payload: Partial<CategorizationRulePayload>,
 ) {
   return apiRequest<CategorizationRuleRead>(`/categorization-rules/${ruleId}`, session, {
     method: "PATCH",
     body: payload,
   });
+}
+
+export function getRuleSuggestion(session: ApiSession, transactionId: string) {
+  return apiRequest<{ suggestion: RuleSuggestion | null }>(
+    `/transactions/${transactionId}/rule-suggestion`,
+    session,
+  );
 }
 
 export function deleteRule(session: ApiSession, ruleId: string) {

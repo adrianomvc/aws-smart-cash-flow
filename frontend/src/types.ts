@@ -89,6 +89,12 @@ export type RuleFormState = {
   target_direction: string;
   priority: number;
   active: boolean;
+  // amount_recurring fields (stored as strings for the inputs)
+  amount_ref: string;
+  amount_tolerance: string;
+  day_min: string;
+  day_max: string;
+  direction_filter: string;
 };
 
 /**
