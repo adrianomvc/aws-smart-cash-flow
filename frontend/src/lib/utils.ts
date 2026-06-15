@@ -86,6 +86,32 @@ export const PERIOD_PRESETS: { label: string; value: TransactionPeriodPreset }[]
 ];
 
 // ---------------------------------------------------------------------------
+// Category colors (shared by the Categorias page, charts, etc.)
+// ---------------------------------------------------------------------------
+
+export const CATEGORY_HEX_PALETTE = [
+  "#3567b8", "#1f8a5b", "#6a52c9", "#c98a2b", "#cf4d43",
+  "#d98234", "#2a9d8f", "#9a6b14", "#7c8696", "#a35a7d", "#3d7d63", "#5a7dc9",
+];
+export const CATEGORY_GREY = "#94a3b8";
+
+/**
+ * Resolves a category's solid hex color consistently everywhere (cadastro cards
+ * + charts):
+ * - "Sem categoria" (category_id === null, or that name) → always grey;
+ * - otherwise the registered color from the cadastro;
+ * - otherwise a stable palette color derived from the name (same formula the
+ *   Categorias cards use), so a category looks identical across all views.
+ */
+export function categoryChartColor(name?: string | null, registered?: string | null, categoryId?: string | null): string {
+  if (categoryId === null || (name ?? "").trim().toLowerCase() === "sem categoria") return CATEGORY_GREY;
+  if (registered) return registered;
+  const n = name ?? "";
+  if (!n) return CATEGORY_GREY;
+  return CATEGORY_HEX_PALETTE[Math.abs(n.charCodeAt(0) + n.length) % CATEGORY_HEX_PALETTE.length];
+}
+
+// ---------------------------------------------------------------------------
 // Money formatters
 // ---------------------------------------------------------------------------
 

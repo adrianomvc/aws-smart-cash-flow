@@ -7,12 +7,8 @@ import {
 
 import { getCategoryTrends } from "../lib/api";
 import type { ApiSession, CategoryRankingItem } from "../lib/api";
-import { compactMoneyAbs, money } from "../lib/utils";
+import { CATEGORY_GREY, categoryChartColor, compactMoneyAbs, money } from "../lib/utils";
 
-const COLORS = [
-  "#6366f1", "#ef4444", "#f59e0b", "#22c55e", "#06b6d4",
-  "#a855f7", "#ec4899", "#14b8a6", "#64748b", "#84cc16",
-];
 const MONTHS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 // "2024" → "2024" (yearly); "2024-03" → "mar/24" (monthly)
 const bucketLabel = (b: string) => (b.length === 4 ? b : `${MONTHS[Number(b.slice(5, 7)) - 1] ?? b}/${b.slice(2, 4)}`);
@@ -23,16 +19,19 @@ const bucketLabel = (b: string) => (b.length === 4 ? b : `${MONTHS[Number(b.slic
 function DistributionDonut({ items }: { items: CategoryRankingItem[] }) {
   const data = useMemo(() => {
     const sorted = [...items]
-      .map((i) => ({ name: i.category_name ?? "Sem categoria", value: Math.abs(Number(i.amount ?? 0)), color: i.color }))
+      .map((i) => ({
+        name: i.category_name ?? "Sem categoria",
+        value: Math.abs(Number(i.amount ?? 0)),
+        fill: categoryChartColor(i.category_name, i.color, i.category_id),
+      }))
       .filter((i) => i.value > 0)
       .sort((a, b) => b.value - a.value);
-    const top: { name: string; value: number; color: string | null }[] = sorted.slice(0, 7);
+    const top = sorted.slice(0, 7);
     const restValue = sorted.slice(7).reduce((s, i) => s + i.value, 0);
-    if (restValue > 0) top.push({ name: "Outras", value: restValue, color: "#94a3b8" });
+    if (restValue > 0) top.push({ name: "Outras", value: restValue, fill: CATEGORY_GREY });
     return top;
   }, [items]);
   const total = data.reduce((s, i) => s + i.value, 0);
-  const colorOf = (d: { color: string | null }, i: number) => d.color || COLORS[i % COLORS.length];
 
   if (total === 0) {
     return <p className="t-sub" style={{ fontSize: 12, padding: "30px 0", textAlign: "center" }}>Sem despesas para distribuir.</p>;
@@ -43,7 +42,7 @@ function DistributionDonut({ items }: { items: CategoryRankingItem[] }) {
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie data={data} dataKey="value" nameKey="name" innerRadius={55} outerRadius={88} paddingAngle={2} stroke="none">
-              {data.map((d, i) => <Cell key={i} fill={colorOf(d, i)} />)}
+              {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
             </Pie>
             <Tooltip
               formatter={(v: number) => money(v)}
@@ -55,9 +54,9 @@ function DistributionDonut({ items }: { items: CategoryRankingItem[] }) {
         </ResponsiveContainer>
       </div>
       <div style={{ flex: 1, minWidth: 160, display: "flex", flexDirection: "column", gap: 6 }}>
-        {data.map((d, i) => (
+        {data.map((d) => (
           <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
-            <span style={{ width: 9, height: 9, borderRadius: 3, background: colorOf(d, i), flex: "none" }} />
+            <span style={{ width: 9, height: 9, borderRadius: 3, background: d.fill, flex: "none" }} />
             <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--ink-2)" }}>{d.name}</span>
             <span className="t-sub" style={{ fontSize: 11 }}>{((d.value / total) * 100).toFixed(0)}%</span>
             <span className="mono" style={{ fontWeight: 700, minWidth: 72, textAlign: "right" }}>{compactMoneyAbs(d.value)}</span>
@@ -123,8 +122,8 @@ function EvolutionLine({ session, query }: { session: ApiSession; query: string 
           <YAxis tickFormatter={(v: number) => compactMoneyAbs(v)} tickLine={false} axisLine={false} width={52} tick={{ fontSize: 11, fill: "var(--ink-3)" }} />
           <Tooltip content={<LineTooltip />} />
           <Legend wrapperStyle={{ fontSize: 11.5, color: "var(--ink-2)" }} />
-          {d.series.map((s, i) => (
-            <Line key={s.category_name} type="monotone" dataKey={s.category_name} stroke={s.color || COLORS[i % COLORS.length]} strokeWidth={2} dot={false} isAnimationActive={false} />
+          {d.series.map((s) => (
+            <Line key={s.category_name} type="monotone" dataKey={s.category_name} stroke={categoryChartColor(s.category_name, s.color, s.category_id)} strokeWidth={2} dot={false} isAnimationActive={false} />
           ))}
         </LineChart>
       </ResponsiveContainer>

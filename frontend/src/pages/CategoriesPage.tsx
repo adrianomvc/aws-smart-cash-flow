@@ -18,6 +18,8 @@ import {
 } from "../lib/api";
 import {
   apiErrorMessage,
+  categoryChartColor,
+  CATEGORY_HEX_PALETTE,
   categoryPath,
   dateLabel,
   directionLabel,
@@ -105,10 +107,7 @@ function CIcon({ name, size = 15 }: { name: string; size?: number }) {
 // Constants
 // ---------------------------------------------------------------------------
 
-const CAT_PALETTE = [
-  "#3567b8", "#1f8a5b", "#6a52c9", "#c98a2b", "#cf4d43",
-  "#d98234", "#2a9d8f", "#9a6b14", "#7c8696", "#a35a7d", "#3d7d63", "#5a7dc9",
-];
+const CAT_PALETTE = CATEGORY_HEX_PALETTE;
 
 const CAT_ICON_OPTIONS = [
   "home", "wallet", "coins", "car", "cap", "shield", "plane", "spark",
@@ -171,7 +170,7 @@ function DeltaPill({ value, invert }: { value: number; invert?: boolean }) {
 // Resolve the display color for a category: prefer the saved color, fall back to
 // a deterministic palette color derived from the name.
 function catColor(cat: CategoryRead): string {
-  return cat.color ?? CAT_PALETTE[Math.abs(cat.name.charCodeAt(0) + cat.name.length) % CAT_PALETTE.length];
+  return categoryChartColor(cat.name, cat.color);
 }
 
 // Categories don't carry a stored direction, so classify income by name. Matches
