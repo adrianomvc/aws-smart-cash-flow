@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     default_credit_card_closing_day: int = Field(default=23, ge=1, le=31)
     default_credit_card_due_day: int = Field(default=30, ge=1, le=31)
     gemini_api_key: str = ""
+    # LLM categorization provider. "" → auto-detect (groq if GROQ_API_KEY set,
+    # else gemini if GEMINI_API_KEY set). Otherwise force "groq" or "gemini".
+    llm_provider: str = Field(default="", alias="LLM_PROVIDER")
+    groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
+    groq_model: str = Field(default="llama-3.3-70b-versatile", alias="GROQ_MODEL")
     cors_origins_raw: str = Field(
         default=(
             "http://localhost:5173,http://127.0.0.1:5173,"

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import ssl
 from collections import defaultdict
 from decimal import Decimal
 from uuid import uuid4
@@ -33,6 +34,39 @@ _GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     "gemini-1.5-flash:generateContent"
 )
+_GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+# Use the OS trust store (Windows/Linux) so corporate CAs are honored — httpx's
+# default certifi bundle fails behind a corporate TLS-inspecting proxy.
+_SSL_CONTEXT = ssl.create_default_context()
+
+
+def _resolve_provider() -> tuple[str, str]:
+    """Returns (provider, api_key). Provider is LLM_PROVIDER, or auto-detected:
+    groq if GROQ_API_KEY is set, else gemini if GEMINI_API_KEY is set."""
+    provider = (getattr(settings, "llm_provider", "") or "").lower()
+    if not provider:
+        if getattr(settings, "groq_api_key", ""):
+            provider = "groq"
+        elif getattr(settings, "gemini_api_key", ""):
+            provider = "gemini"
+    if provider == "groq":
+        return "groq", getattr(settings, "groq_api_key", "")
+    if provider == "gemini":
+        return "gemini", getattr(settings, "gemini_api_key", "")
+    return provider, ""
+
+
+def _parse_results(text: str) -> list[dict]:
+    """Parses the model's JSON output, accepting either a bare array or an object
+    wrapping a list (e.g. {"results": [...]})."""
+    data = json.loads(text)
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for value in data.values():
+            if isinstance(value, list):
+                return value
+    return []
 
 
 class LLMCategorizationService:
@@ -91,11 +125,12 @@ class LLMCategorizationService:
 
         # One representative transaction per new description goes to the LLM —
         # only if a provider key is configured.
-        api_key = getattr(settings, "gemini_api_key", None)
+        provider, api_key = _resolve_provider()
         if not api_key:
             if pending_keys:
                 logger.info(
-                    "LLM skipped for %d new description(s): no GEMINI_API_KEY", len(pending_keys)
+                    "LLM skipped for %d new description(s): no LLM provider key configured",
+                    len(pending_keys),
                 )
             if applied:
                 self.db.flush()
@@ -103,7 +138,7 @@ class LLMCategorizationService:
         reps = [groups[key][0] for key in pending_keys]
         for i in range(0, len(reps), _BATCH_SIZE):
             batch = reps[i : i + _BATCH_SIZE]
-            results = self._call_llm(batch, categories, api_key)
+            results = self._call_llm(batch, categories, provider, api_key)
             for item in results:
                 idx = item.get("index")
                 if idx is None or idx >= len(batch):
@@ -220,6 +255,7 @@ class LLMCategorizationService:
         self,
         transactions: list[Transaction],
         categories: list[Category],
+        provider: str,
         api_key: str,
     ) -> list[dict]:
         category_list = "\n".join(
@@ -241,30 +277,45 @@ CATEGORIAS:
 TRANSAÇÕES:
 {items}
 
-Responda com um array JSON com {len(transactions)} objetos, um por transação, na mesma ordem:
-[
+Responda com um objeto JSON {{"results": [...]}} com {len(transactions)} itens, na mesma ordem:
+{{"results": [
   {{
     "index": 0,
     "category_id": "<id da categoria>",
     "confidence": 0.9,
     "regex_suggestion": "<regex python simples para identificar este tipo de transação, ou null>"
-  }},
-  ...
-]"""
+  }}
+]}}"""
 
         try:
-            response = httpx.post(
-                f"{_GEMINI_URL}?key={api_key}",
-                json={
-                    "contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {"responseMimeType": "application/json"},
-                },
-                timeout=30,
-            )
-            response.raise_for_status()
-            raw = response.json()
-            text = raw["candidates"][0]["content"]["parts"][0]["text"]
-            return json.loads(text)
+            if provider == "groq":
+                response = httpx.post(
+                    _GROQ_URL,
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json={
+                        "model": getattr(settings, "groq_model", "llama-3.3-70b-versatile"),
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0,
+                        "response_format": {"type": "json_object"},
+                    },
+                    timeout=40,
+                    verify=_SSL_CONTEXT,
+                )
+                response.raise_for_status()
+                text = response.json()["choices"][0]["message"]["content"]
+            else:
+                response = httpx.post(
+                    f"{_GEMINI_URL}?key={api_key}",
+                    json={
+                        "contents": [{"parts": [{"text": prompt}]}],
+                        "generationConfig": {"responseMimeType": "application/json"},
+                    },
+                    timeout=40,
+                    verify=_SSL_CONTEXT,
+                )
+                response.raise_for_status()
+                text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
+            return _parse_results(text)
         except Exception as exc:
-            logger.warning("LLM call failed: %s", exc)
+            logger.warning("LLM call failed (%s): %s", provider, exc)
             return []
