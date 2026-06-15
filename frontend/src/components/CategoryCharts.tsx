@@ -14,7 +14,8 @@ const COLORS = [
   "#a855f7", "#ec4899", "#14b8a6", "#64748b", "#84cc16",
 ];
 const MONTHS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
-const monthLabel = (ym: string) => `${MONTHS[Number(ym.slice(5, 7)) - 1] ?? ym}/${ym.slice(2, 4)}`;
+// "2024" → "2024" (yearly); "2024-03" → "mar/24" (monthly)
+const bucketLabel = (b: string) => (b.length === 4 ? b : `${MONTHS[Number(b.slice(5, 7)) - 1] ?? b}/${b.slice(2, 4)}`);
 
 // ---------------------------------------------------------------------------
 // Donut — distribuição por categoria
@@ -80,11 +81,13 @@ function EvolutionLine({ session, query }: { session: ApiSession; query: string 
   const rows = useMemo(() => {
     if (!d) return [];
     return d.months.map((m, i) => {
-      const row: Record<string, number | string> = { month: monthLabel(m) };
+      const row: Record<string, number | string> = { month: bucketLabel(m) };
       for (const s of d.series) row[s.category_name] = Number(s.points[i] ?? 0);
       return row;
     });
   }, [d]);
+
+  const tickInterval = Math.max(0, Math.ceil(rows.length / 12) - 1);
 
   if (q.isLoading) return <p className="t-sub" style={{ fontSize: 12, padding: "30px 0", textAlign: "center" }}>Carregando…</p>;
   if (!d || d.series.length === 0) return <p className="t-sub" style={{ fontSize: 12, padding: "30px 0", textAlign: "center" }}>Sem dados de evolução.</p>;
@@ -94,7 +97,7 @@ function EvolutionLine({ session, query }: { session: ApiSession; query: string 
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={rows} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
           <CartesianGrid stroke="var(--line)" strokeDasharray="3 3" vertical={false} />
-          <XAxis dataKey="month" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--ink-3)" }} />
+          <XAxis dataKey="month" interval={tickInterval} tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--ink-3)" }} />
           <YAxis tickFormatter={(v: number) => compactMoneyAbs(v)} tickLine={false} axisLine={false} width={52} tick={{ fontSize: 11, fill: "var(--ink-3)" }} />
           <Tooltip
             formatter={(v: number) => money(v)}

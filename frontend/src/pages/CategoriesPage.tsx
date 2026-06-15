@@ -998,6 +998,11 @@ export function CategoriesPage({ session, period, onOpenImports, onOpenTransacti
     queryFn: () => getSubcategoryRanking(session, rankingQuery),
     staleTime: 5 * 60 * 1000,
   });
+  const dqQ = useQuery({
+    queryKey: ["cat-dataquality", session.token],
+    queryFn: () => getDataQuality(session, ""),
+    staleTime: 5 * 60 * 1000,
+  });
 
   // value/count per subcategory, keyed by "<parentId>|<subname lowercased>".
   const subStatsByCat = useMemo(() => {
@@ -1215,8 +1220,12 @@ export function CategoriesPage({ session, period, onOpenImports, onOpenTransacti
             <span className="kpi-ic" style={{ background: "var(--neg-soft)", color: "var(--neg)" }}><CIcon name="alert" size={16} /></span>
             <span className="kpi-label">Sem categoria</span>
           </div>
-          <div className="kpi-val">0</div>
-          <div className="kpi-sub">tudo classificado</div>
+          <div className="kpi-val">{dqQ.data ? dqQ.data.uncategorized_count.toLocaleString("pt-BR") : "—"}</div>
+          <div className="kpi-sub">
+            {dqQ.data
+              ? (dqQ.data.uncategorized_count > 0 ? "lançamentos a categorizar" : "tudo classificado")
+              : "calculando…"}
+          </div>
         </div>
       </div>
 
@@ -1269,7 +1278,11 @@ export function CategoriesPage({ session, period, onOpenImports, onOpenTransacti
         <CategoryCharts
           session={session}
           rankingItems={rankQ.data?.items ?? []}
-          trendsQuery={period.dateTo ? `?date_to=${period.dateTo}&months=6&limit=40` : "?months=6&limit=40"}
+          trendsQuery={
+            period.periodPreset !== "all" && period.dateFrom && period.dateTo
+              ? `?date_from=${period.dateFrom}&date_to=${period.dateTo}&limit=40`
+              : "?limit=40"
+          }
         />
       )}
 

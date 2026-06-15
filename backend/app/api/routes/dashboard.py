@@ -168,6 +168,7 @@ class CategoryTrendSeries(BaseModel):
 class CategoryTrendsResponse(BaseModel):
     workspace_id: str
     months: list[str]
+    granularity: str = "month"
     series: list[CategoryTrendSeries]
 
 
@@ -445,14 +446,14 @@ def get_spending_breakdown(
 def get_category_trends(
     auth: AuthContext = AuthDependency,
     db: Session = DbDependency,
+    date_from: date | None = None,
     date_to: date | None = None,
-    months: int = Query(default=6, ge=2, le=12),
-    limit: int = Query(default=8, ge=1, le=40),
+    limit: int = Query(default=12, ge=1, le=40),
 ) -> CategoryTrendsResponse:
     data = DashboardService(db).category_trends(
         workspace_id=auth.workspace_id,
+        date_from=date_from,
         date_to=date_to,
-        months=months,
         limit=limit,
     )
     return CategoryTrendsResponse(workspace_id=auth.workspace_id, **data)

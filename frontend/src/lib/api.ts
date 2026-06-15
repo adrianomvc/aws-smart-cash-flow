@@ -803,6 +803,7 @@ export type CategoryTrendSeries = {
 export type CategoryTrends = {
   workspace_id: string;
   months: string[];
+  granularity: "month" | "year";
   series: CategoryTrendSeries[];
 };
 

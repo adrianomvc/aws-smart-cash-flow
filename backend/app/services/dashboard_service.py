@@ -667,23 +667,54 @@ class DashboardService:
     def category_trends(
         self,
         workspace_id: str,
+        date_from: date | None,
         date_to: date | None,
-        months: int,
         limit: int,
     ) -> dict[str, object]:
-        """Monthly expense totals per top-level category over a trailing window,
-        for an evolution line chart (by category, not subcategory)."""
-        anchor = date_to or self._latest_transaction_date(workspace_id)
-        if anchor is None:
-            return {"months": [], "series": []}
-        start = _add_months(date(anchor.year, anchor.month, 1), -(months - 1))
-        month_labels: list[str] = []
-        cur = date(start.year, start.month, 1)
-        end_month = date(anchor.year, anchor.month, 1)
-        while cur <= end_month:
-            month_labels.append(cur.strftime("%Y-%m"))
-            cur = _add_months(cur, 1)
-        month_index = {m: i for i, m in enumerate(month_labels)}
+        """Expense totals per top-level category over the selected period, for an
+        evolution line chart (by category, not subcategory). Granularity adapts:
+        monthly for spans up to 24 months, yearly for longer ranges so every
+        category that has data shows up without an unreadable number of points."""
+        end = date_to or self._latest_transaction_date(workspace_id)
+        if end is None:
+            return {"months": [], "series": [], "granularity": "month"}
+        end_month = date(end.year, end.month, 1)
+        if date_from is not None:
+            start_month = date(date_from.year, date_from.month, 1)
+        else:
+            earliest = self.db.scalar(
+                select(func.min(Transaction.transaction_date)).where(
+                    Transaction.workspace_id == workspace_id
+                )
+            )
+            start_month = (
+                date(earliest.year, earliest.month, 1)
+                if earliest is not None
+                else _add_months(end_month, -5)
+            )
+        span = (end_month.year - start_month.year) * 12 + (end_month.month - start_month.month) + 1
+        granularity = "month" if span <= 24 else "year"
+        if granularity == "month" and span < 6:
+            start_month = _add_months(end_month, -5)
+
+        labels: list[str] = []
+        if granularity == "month":
+            cur = start_month
+            while cur <= end_month:
+                labels.append(cur.strftime("%Y-%m"))
+                cur = _add_months(cur, 1)
+
+            def bucket_of(d: date) -> str:
+                return d.strftime("%Y-%m")
+        else:
+            for year in range(start_month.year, end_month.year + 1):
+                labels.append(str(year))
+
+            def bucket_of(d: date) -> str:
+                return str(d.year)
+
+        month_index = {m: i for i, m in enumerate(labels)}
+        month_labels = labels
 
         rows = self.db.execute(
             select(Transaction, Category)
@@ -702,15 +733,20 @@ class DashboardService:
                 ),
             )
             .where(
-                *self._transaction_filters(workspace_id, start, anchor),
+                *self._transaction_filters(workspace_id, start_month, end),
                 Transaction.direction == "debit",
             )
         ).all()
-        cats_by_id = {c.id: c for _, c in rows if c is not None}
+        cats_by_id = {
+            category.id: category
+            for category in self.db.scalars(
+                select(Category).where(Category.workspace_id == workspace_id)
+            ).all()
+        }
 
         acc: dict[str | None, dict[str, object]] = {}
         for transaction, category in rows:
-            month = transaction.transaction_date.strftime("%Y-%m")
+            month = bucket_of(transaction.transaction_date)
             if month not in month_index:
                 continue
             display = (
@@ -746,7 +782,7 @@ class DashboardService:
             }
             for e in ranked
         ]
-        return {"months": month_labels, "series": series}
+        return {"months": month_labels, "series": series, "granularity": granularity}
 
     def merchant_ranking(
         self,
