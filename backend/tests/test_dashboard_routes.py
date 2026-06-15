@@ -165,8 +165,8 @@ def test_dashboard_summary_calculates_period_totals(
     assert payload["savings_rate"] == "0.6949"
     assert payload["commitment_rate"] == "0.3051"
     assert payload["burn_rate"] == "1525.50"
-    assert payload["burn_rate_months"] == 1
-    assert payload["burn_rate_basis"] == "trailing_12_month_average"
+    assert payload["burn_rate_months"] == 12
+    assert payload["burn_rate_basis"] == "trailing_12_month_monthly_equivalent"
     assert payload["transaction_count"] == 4
 
 
@@ -257,9 +257,11 @@ def test_dashboard_summary_burn_rate_uses_trailing_12_months(
     assert response.status_code == 200
     payload = response.json()
     assert payload["expenses"] == "1525.50"
-    assert payload["burn_rate"] == "1262.75"
-    assert payload["burn_rate_months"] == 2
-    assert payload["burn_rate_basis"] == "trailing_12_month_average"
+    # Monthly-equivalent burn rate over the actual debit span (daily rate × 30):
+    # (1000 + 1500 + 25.50) over 47 days × 30 = 1612.02.
+    assert payload["burn_rate"] == "1612.02"
+    assert payload["burn_rate_months"] == 12
+    assert payload["burn_rate_basis"] == "trailing_12_month_monthly_equivalent"
 
 
 def test_dashboard_monthly_cashflow_groups_by_month(
