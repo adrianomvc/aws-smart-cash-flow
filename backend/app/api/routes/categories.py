@@ -988,9 +988,10 @@ def _normalize_name(name: str) -> str:
 
 
 def _normalize_rule_pattern(pattern: str, match_type: str = "contains") -> str:
-    if match_type == "amount_recurring":
-        return ""
     normalized = _normalize_spaces(pattern)
+    if match_type == "amount_recurring":
+        # Text is an optional extra filter for value-recurring rules; may be empty.
+        return normalized
     if not normalized:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1042,36 +1043,23 @@ def _validate_rule_actions(category_id: str | None, target_direction: str | None
         )
 
 
-def _rule_matches_transaction(rule: CategorizationRule, transaction: Transaction) -> bool:
-    raw_value = getattr(transaction, rule.field)
-    if raw_value is None:
-        return False
-
-    value = _normalize_spaces(str(raw_value)).casefold()
-    pattern = _normalize_spaces(rule.pattern).casefold()
-    if rule.match_type == "contains":
-        return pattern in value
-    if rule.match_type == "starts_with":
-        return value.startswith(pattern)
-    if rule.match_type == "equals":
-        return value == pattern
-    return False
-
-
 def _preview_rule(
     db: Session,
     workspace_id: str,
     rule: CategorizationRule,
     limit: int,
 ) -> RulePreviewResponse:
+    from app.services.categorization_service import CategorizationService
+
     resolved_limit = max(1, min(limit, 100))
     transactions = db.scalars(
         select(Transaction)
         .where(Transaction.workspace_id == workspace_id)
         .order_by(Transaction.transaction_date.desc(), Transaction.id)
     ).all()
+    matcher = CategorizationService(db)
     matching_transactions = [
-        transaction for transaction in transactions if _rule_matches_transaction(rule, transaction)
+        transaction for transaction in transactions if matcher.matches(rule, transaction)
     ]
     assignments = {
         assignment.transaction_id: assignment

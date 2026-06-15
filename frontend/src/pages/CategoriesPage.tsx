@@ -1467,17 +1467,15 @@ function RuleFormModal({
             />
           </label>
 
-          <div style={{ display: "grid", gridTemplateColumns: isRecurring ? "1fr" : "1fr 1fr", gap: 12 }}>
-            {!isRecurring && (
-              <label className="fld">
-                <span className="fld-label">Campo</span>
-                <select className="fld-select" value={form.field} onChange={(e) => setForm({ ...form, field: e.target.value })}>
-                  <option value="description">Descrição normalizada</option>
-                  <option value="raw_description">Descrição original</option>
-                  <option value="source_name">Origem</option>
-                </select>
-              </label>
-            )}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <label className="fld">
+              <span className="fld-label">Campo</span>
+              <select className="fld-select" value={form.field} onChange={(e) => setForm({ ...form, field: e.target.value })}>
+                <option value="description">Descrição normalizada</option>
+                <option value="raw_description">Descrição original</option>
+                <option value="source_name">Origem</option>
+              </select>
+            </label>
             <label className="fld">
               <span className="fld-label">Tipo de match</span>
               <select className="fld-select" value={form.match_type} onChange={(e) => setForm({ ...form, match_type: e.target.value })}>
@@ -1551,8 +1549,17 @@ function RuleFormModal({
                   </select>
                 </label>
               </div>
+              <label className="fld">
+                <span className="fld-label">Descrição contém (opcional)</span>
+                <input
+                  className="fld-input"
+                  placeholder="Ex: TIT  (deixe vazio p/ casar só pelo valor)"
+                  value={form.pattern}
+                  onChange={(e) => setForm({ ...form, pattern: e.target.value })}
+                />
+              </label>
               <p className="t-sub" style={{ margin: "-2px 0 0", fontSize: 12, lineHeight: 1.5 }}>
-                Casa lançamentos com valor próximo ao de referência (dentro da tolerância) que caem na janela de dias do mês — ideal para assinaturas e parcelas fixas.
+                Casa lançamentos com valor próximo ao de referência (dentro da tolerância) que caem na <strong>janela de dias</strong> — use a janela para absorver o pagamento que cai em fim de semana/feriado e vai para o próximo dia útil (ex.: dia 8 a 12). O texto da descrição é um filtro extra para distinguir cobranças de mesmo valor (ex.: <strong>TIT</strong> do colégio vs. fatura do cartão).
               </p>
             </>
           ) : (
@@ -1663,7 +1670,8 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
     name: form.name,
     field: form.field,
     match_type: form.match_type,
-    pattern: isRecurring ? "" : form.pattern,
+    // For recurring rules the pattern is an optional extra text filter.
+    pattern: form.pattern,
     category_id: form.category_id || null,
     target_direction: form.target_direction || null,
     priority: form.priority,

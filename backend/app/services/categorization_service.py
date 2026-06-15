@@ -111,6 +111,12 @@ class CategorizationService:
         self.db.flush()
         return applied
 
+    def matches(self, rule: CategorizationRule, transaction: Transaction) -> bool:
+        """Public wrapper so callers (e.g. rule preview) share the exact same
+        matching logic as the apply engine — including regex and
+        amount_recurring."""
+        return self._matches(rule, transaction)
+
     def _matches(self, rule: CategorizationRule, transaction: Transaction) -> bool:
         raw_value = getattr(transaction, rule.field) or ""
         value = self._normalize_for_match(str(raw_value), field=rule.field)
@@ -225,4 +231,13 @@ class CategorizationService:
             return False
         if rule.direction_filter and transaction.direction != rule.direction_filter:
             return False
+        # Optional text constraint: when a pattern is set, the chosen field must
+        # contain it. This disambiguates same-value charges that share a day
+        # window (e.g. "TIT" for a school boleto vs. a card bill).
+        if rule.pattern:
+            raw_value = getattr(transaction, rule.field) or ""
+            value = self._normalize_for_match(str(raw_value), field=rule.field)
+            pattern = self._normalize_pattern(rule.pattern)
+            if pattern and pattern not in value:
+                return False
         return True
