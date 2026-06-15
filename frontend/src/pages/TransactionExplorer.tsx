@@ -1159,7 +1159,22 @@ export function TransactionExplorer({
     setSortBy(nextSortBy);
     setSortDir(nextSortBy === "transaction_date" ? "desc" : "asc");
   }
-  void toggleSort;
+  const sortTh = (label: string, col: string, className?: string) => {
+    const active = sortBy === col;
+    return (
+      <th
+        className={className}
+        onClick={() => toggleSort(col)}
+        style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}
+        title={`Ordenar por ${label}`}
+      >
+        {label}
+        <span style={{ marginLeft: 4, fontSize: 10, color: active ? "var(--acc)" : "var(--ink-faint)" }}>
+          {active ? (sortDir === "asc" ? "▲" : "▼") : "↕"}
+        </span>
+      </th>
+    );
+  };
 
   function applyPeriodPreset(nextPreset: TransactionPeriodPreset) {
     setPeriodPreset(nextPreset); setPage(0);
@@ -1520,14 +1535,14 @@ export function TransactionExplorer({
                       onChange={(e) => { if (e.target.checked) setSelectedIds(new Set(visibleTransactions.map((t) => t.id))); else setSelectedIds(new Set()); }}
                     />
                   </th>
-                  <th>Data</th>
-                  <th>Descrição</th>
+                  {sortTh("Data", "transaction_date")}
+                  {sortTh("Descrição", "description")}
                   <th>Categoria</th>
                   <th>Subcategoria</th>
                   <th>Conta</th>
-                  <th>Origem</th>
+                  {sortTh("Origem", "source_type")}
                   {hasInstallments ? <th>Parcela</th> : null}
-                  <th className="num">Valor</th>
+                  {sortTh("Valor", "amount", "num")}
                   <th>Status</th>
                   <th style={{ width: 72 }} />
                 </tr>
