@@ -1269,7 +1269,7 @@ export function CategoriesPage({ session, period, onOpenImports, onOpenTransacti
         <CategoryCharts
           session={session}
           rankingItems={rankQ.data?.items ?? []}
-          trendsQuery={period.dateTo ? `?date_to=${period.dateTo}&months=6&limit=6` : "?months=6&limit=6"}
+          trendsQuery={period.dateTo ? `?date_to=${period.dateTo}&months=6&limit=8` : "?months=6&limit=8"}
         />
       )}
 

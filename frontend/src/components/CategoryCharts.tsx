@@ -108,7 +108,7 @@ export function CategoryCharts({ session, trendsQuery, rankingItems }: {
   rankingItems: CategoryRankingItem[];
 }) {
   return (
-    <div className="grid cols-2" style={{ gap: 14, marginBottom: 14, alignItems: "stretch" }}>
+    <div className="grid cat-charts-grid" style={{ gap: 14, marginBottom: 14, alignItems: "stretch", gridTemplateColumns: "minmax(0, 3fr) minmax(0, 7fr)" }}>
       <div className="card card-pad">
         <h3 style={{ margin: "0 0 12px", fontSize: 14.5, fontWeight: 700 }}>Distribuição por categoria</h3>
         <DistributionDonut items={rankingItems} />
