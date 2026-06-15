@@ -211,6 +211,56 @@ function CategoryPicker({ categoryGroups, transaction, session, onCategorized }:
   );
 }
 
+// Two cascading cells for the table: "Categoria" (parent) and "Subcategoria"
+// (child). Keeps the parent in its own column so the Categoria column never
+// shows the leaf sub-category. Both are editable and share one mutation.
+function CategoryCells({ categoryGroups, transaction, session, onCategorized }: {
+  categoryGroups: CategoryGroup[];
+  transaction: TransactionRead;
+  session: ApiSession;
+  onCategorized?: (transaction: TransactionRead, categoryId: string | null) => void;
+}) {
+  const queryClient = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: (categoryId: string | null) => updateTransactionCategory(session, transaction.id, categoryId),
+    onSuccess: (updatedTransaction, categoryId) => {
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      void queryClient.invalidateQueries({ queryKey: ["category-ranking"] });
+      void queryClient.invalidateQueries({ queryKey: ["data-quality"] });
+      onCategorized?.(updatedTransaction, categoryId);
+    },
+  });
+  const currentId = transaction.category?.category_id ?? "";
+  let parentId = "";
+  let subId = "";
+  for (const g of categoryGroups) {
+    if (g.id === currentId) { parentId = g.id; break; }
+    const s = g.subs.find((x) => x.id === currentId);
+    if (s) { parentId = g.id; subId = s.id; break; }
+  }
+  const subsOfParent = categoryGroups.find((g) => g.id === parentId)?.subs ?? [];
+  const stop = (e: React.MouseEvent) => e.stopPropagation();
+  return (
+    <>
+      <td>
+        <select className="cat-select" disabled={mutation.isPending} value={parentId}
+          onChange={(e) => mutation.mutate(e.target.value || null)} onClick={stop}>
+          <option value="">Sem categoria</option>
+          {categoryGroups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+        </select>
+      </td>
+      <td>
+        <select className="cat-select" disabled={mutation.isPending || !parentId} value={subId}
+          onChange={(e) => mutation.mutate(e.target.value || parentId || null)} onClick={stop}>
+          <option value="">{parentId ? "— (geral)" : "—"}</option>
+          {subsOfParent.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+      </td>
+    </>
+  );
+}
+
 function DirectionPicker({ transaction, session }: { transaction: TransactionRead; session: ApiSession }) {
   const queryClient = useQueryClient();
   const mutation = useMutation({
@@ -275,8 +325,7 @@ function TransactionRow({ transaction, categoryGroups, session, onDelete, onSele
         <span className="t-desc">{transaction.description}</span>
         {transaction.description !== transaction.raw_description ? <div className="t-sub">{transaction.raw_description}</div> : null}
       </td>
-      <td><CategoryPicker categoryGroups={categoryGroups} onCategorized={onCategorized} session={session} transaction={transaction} /></td>
-      <td><CategoryPicker categoryGroups={categoryGroups} onCategorized={onCategorized} session={session} transaction={transaction} /></td>
+      <CategoryCells categoryGroups={categoryGroups} onCategorized={onCategorized} session={session} transaction={transaction} />
       <td style={{ whiteSpace: "nowrap" }}><span className="t-sub">{acctText}</span></td>
       <td>
         <span className="pill" style={{ fontFamily: "var(--font-mono)", fontSize: 10.5 }}>{srcLabel}</span>
