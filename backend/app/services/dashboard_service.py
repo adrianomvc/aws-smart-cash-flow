@@ -53,6 +53,9 @@ WEEKDAY_NAMES = [
 class DashboardService:
     def __init__(self, db: Session) -> None:
         self.db = db
+        # Request-scoped memo: widgets that scan the same transaction window
+        # within a single request (e.g. the /overview endpoint) hit the DB once.
+        self._tx_memo: dict[tuple, list[Transaction]] = {}
 
     def summary(
         self,
@@ -1905,7 +1908,11 @@ class DashboardService:
         date_from: date | None,
         date_to: date | None,
     ) -> list[Transaction]:
-        return self.db.scalars(
+        key = ("tx", workspace_id, date_from, date_to)
+        cached = self._tx_memo.get(key)
+        if cached is not None:
+            return cached
+        rows = self.db.scalars(
             select(Transaction)
             .where(
                 *self._transaction_filters(
@@ -1916,6 +1923,8 @@ class DashboardService:
             )
             .order_by(Transaction.transaction_date, Transaction.id)
         ).all()
+        self._tx_memo[key] = rows
+        return rows
 
     def _cashflow_transactions(
         self,
@@ -1923,12 +1932,18 @@ class DashboardService:
         date_from: date | None,
         date_to: date | None,
     ) -> list[Transaction]:
+        key = ("cf", workspace_id, date_from, date_to)
+        cached = self._tx_memo.get(key)
+        if cached is not None:
+            return cached
         if date_from is None and date_to is None:
-            return self._transactions(
+            rows = self._transactions(
                 workspace_id=workspace_id,
                 date_from=None,
                 date_to=None,
             )
+            self._tx_memo[key] = rows
+            return rows
 
         installment_from = _add_months(date_from, -99) if date_from is not None else None
         installment_clause = and_(
@@ -1961,12 +1976,14 @@ class DashboardService:
                     or_(*source_file_month_filters),
                 )
             )
-        return self.db.scalars(
+        rows = self.db.scalars(
             select(Transaction)
             .join(SourceFile, SourceFile.id == Transaction.source_file_id)
             .where(or_(*cashflow_clauses))
             .order_by(Transaction.transaction_date, Transaction.id)
         ).all()
+        self._tx_memo[key] = rows
+        return rows
 
     def _source_file_statement_due_dates(self, transactions: list[Transaction]) -> dict[str, date]:
         source_file_ids = {

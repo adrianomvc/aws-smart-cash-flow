@@ -330,6 +330,62 @@ class ProjectionFeedResponse(BaseModel):
     variable_categories: list[ProjectionFeedVariableCategoryItem]
 
 
+class DashboardOverviewResponse(BaseModel):
+    workspace_id: str
+    summary: DashboardSummaryResponse
+    daily_cashflow: DailyCashflowResponse
+    category_ranking: CategoryRankingResponse
+    subcategory_ranking: SubcategoryRankingResponse
+    data_quality: DataQualityResponse
+
+
+@router.get("/overview")
+def get_overview(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    category_limit: int = Query(default=8, ge=1, le=50),
+    subcategory_limit: int = Query(default=40, ge=1, le=100),
+) -> DashboardOverviewResponse:
+    """Consolidated payload for the main Dashboard screen: one request served by a
+    single DashboardService instance, so period-based widgets share one scan of
+    the transactions table (request-scoped memo) instead of one scan per call."""
+    service = DashboardService(db)
+    ws = auth.workspace_id
+    return DashboardOverviewResponse(
+        workspace_id=ws,
+        summary=DashboardSummaryResponse(
+            **service.summary(workspace_id=ws, date_from=date_from, date_to=date_to)
+        ),
+        daily_cashflow=DailyCashflowResponse(
+            workspace_id=ws,
+            items=service.daily_cashflow(
+                workspace_id=ws, date_from=date_from, date_to=date_to
+            ),
+        ),
+        category_ranking=CategoryRankingResponse(
+            workspace_id=ws,
+            items=service.category_ranking(
+                workspace_id=ws, date_from=date_from, date_to=date_to, limit=category_limit
+            ),
+        ),
+        subcategory_ranking=SubcategoryRankingResponse(
+            workspace_id=ws,
+            items=service.subcategory_ranking(
+                workspace_id=ws,
+                date_from=date_from,
+                date_to=date_to,
+                category_id=None,
+                limit=subcategory_limit,
+            ),
+        ),
+        data_quality=DataQualityResponse(
+            **service.data_quality(workspace_id=ws, date_from=date_from, date_to=date_to)
+        ),
+    )
+
+
 @router.get("/summary")
 def get_summary(
     auth: AuthContext = AuthDependency,

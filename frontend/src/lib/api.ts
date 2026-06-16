@@ -778,6 +778,21 @@ export function getCurrentWorkspace(session: ApiSession) {
   return apiRequest<WorkspaceCurrent>("/workspaces/current", session);
 }
 
+export type DashboardOverview = {
+  workspace_id: string;
+  summary: DashboardSummary;
+  daily_cashflow: ListResponse<DailyCashflowItem>;
+  category_ranking: ListResponse<CategoryRankingItem>;
+  subcategory_ranking: ListResponse<SubcategoryRankingItem>;
+  data_quality: DataQuality;
+};
+
+// One request for the main Dashboard screen: the backend shares a single
+// transaction scan across these widgets, cutting DB reads on a cold cache.
+export function getDashboardOverview(session: ApiSession, query: string) {
+  return apiRequest<DashboardOverview>(`/dashboard/overview${query}`, session);
+}
+
 export function getDashboardSummary(session: ApiSession, query: string) {
   return apiRequest<DashboardSummary>(`/dashboard/summary${query}`, session);
 }

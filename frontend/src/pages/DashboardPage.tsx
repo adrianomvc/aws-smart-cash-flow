@@ -24,8 +24,7 @@ import type { ApiSession } from "../lib/api";
 import { yearQueryFromDate } from "../lib/utils";
 import type { ImportDrilldown, Page, PeriodState, TransactionDrilldown } from "../types";
 import {
-  getDashboardSummary, getMonthlyCashflow, getDailyCashflow,
-  getCategoryRanking, getSubcategoryRanking, getDataQuality,
+  getDashboardOverview, getMonthlyCashflow,
   getGoals, getBudgets, getCreditCards, getCalendarEvents,
   type DashboardSummary, type MonthlyCashflowItem, type DailyCashflowItem,
   type CategoryRankingItem, type SubcategoryRankingItem,
@@ -1291,24 +1290,22 @@ export function DashboardPage({
   // from /workspaces/current, so we skip every dashboard query and render the
   // onboarding immediately instead of waiting on the slow summary.
   const full = ok && hasTransactions !== false;
-  const summaryQ  = useQuery({ queryKey: ["dash-summary",  session.token, q], queryFn: () => getDashboardSummary(session, q),                    enabled: full, staleTime });
+  // Consolidated: one request for summary + daily + category/subcategory
+  // ranking + data-quality (backend shares a single transaction scan).
+  const overviewQ = useQuery({ queryKey: ["dash-overview", session.token, q], queryFn: () => getDashboardOverview(session, q), enabled: full, staleTime });
   // history: last 12 months ending at period.dateTo — for sparklines
   const histMonthlyQ = useQuery({ queryKey: ["dash-history", session.token, historyQ_key], queryFn: () => getMonthlyCashflow(session, historyQ_key), enabled: full, staleTime: 10 * 60 * 1000 });
   // year: all 12 months of the selected year — for FlowCard "Mês" tab
   const yearMonthlyQ = useQuery({ queryKey: ["dash-year", session.token, yearQ_key], queryFn: () => getMonthlyCashflow(session, yearQ_key), enabled: full && !!yearQ_key, staleTime: 10 * 60 * 1000 });
-  const dailyQ    = useQuery({ queryKey: ["dash-daily",    session.token, q], queryFn: () => getDailyCashflow(session, q),                        enabled: full, staleTime });
-  const catsQ     = useQuery({ queryKey: ["dash-cats",     session.token, q], queryFn: () => getCategoryRanking(session, q + (q ? "&" : "?") + "limit=8"), enabled: full, staleTime });
-  const subsQ     = useQuery({ queryKey: ["dash-subs",     session.token, q], queryFn: () => getSubcategoryRanking(session, q + (q ? "&" : "?") + "limit=40"), enabled: full, staleTime });
-  const qualityQ  = useQuery({ queryKey: ["dash-quality",  session.token, q], queryFn: () => getDataQuality(session, q),            enabled: full, staleTime });
   const goalsQ    = useQuery({ queryKey: ["goals",         session.token],     queryFn: () => getGoals(session),                     enabled: full, staleTime });
   const budgetsQ  = useQuery({ queryKey: ["budgets",       session.token, q],  queryFn: () => getBudgets(session, q),                enabled: full, staleTime });
   const cardsQ    = useQuery({ queryKey: ["credit-cards",  session.token],     queryFn: () => getCreditCards(session),               enabled: full, staleTime });
   const eventsQ   = useQuery({ queryKey: ["cal-events",    session.token, q],  queryFn: () => getCalendarEvents(session, q),         enabled: full, staleTime });
 
-  const summary     = summaryQ.data;
+  const summary     = overviewQ.data?.summary;
   const histMonthly = histMonthlyQ.data?.items ?? [];
   const yearMonthly = yearMonthlyQ.data?.items ?? [];
-  const daily       = dailyQ.data?.items      ?? [];
+  const daily       = overviewQ.data?.daily_cashflow?.items ?? [];
 
   // previous month item from history (for KPI delta % comparison)
   const prevMonth: MonthlyCashflowItem | null = (() => {
@@ -1318,9 +1315,9 @@ export function DashboardPage({
     const key = pd.toISOString().slice(0, 7); // "2026-05"
     return histMonthly.find(m => m.month.slice(0, 7) === key) ?? null;
   })();
-  const cats     = catsQ.data?.items    ?? [];
-  const subs     = subsQ.data?.items    ?? [];
-  const quality  = qualityQ.data;
+  const cats     = overviewQ.data?.category_ranking?.items    ?? [];
+  const subs     = overviewQ.data?.subcategory_ranking?.items ?? [];
+  const quality  = overviewQ.data?.data_quality;
   const goals    = goalsQ.data?.items   ?? [];
   const budgets  = budgetsQ.data?.items ?? [];
   const cards    = cardsQ.data?.items   ?? [];

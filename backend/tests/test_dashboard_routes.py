@@ -170,6 +170,28 @@ def test_dashboard_summary_calculates_period_totals(
     assert payload["transaction_count"] == 4
 
 
+def test_dashboard_overview_consolidates_widgets(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    seed_dashboard_data(client=client, db_session=db_session, auth=auth)
+
+    response = client.get("/v1/dashboard/overview?date_from=2026-05-01&date_to=2026-05-31")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["workspace_id"] == auth.workspace_id
+    # Same numbers the standalone /summary endpoint returns for this period.
+    assert payload["summary"]["income"] == "5000.00"
+    assert payload["summary"]["expenses"] == "1525.50"
+    # Nested widget payloads keep their usual shape.
+    assert "items" in payload["daily_cashflow"]
+    assert "items" in payload["category_ranking"]
+    assert "items" in payload["subcategory_ranking"]
+    assert isinstance(payload["data_quality"], dict)
+
+
 def test_dashboard_summary_returns_latest_account_balance_before_period_end(
     client: TestClient,
     db_session: Session,
