@@ -791,8 +791,8 @@ class DashboardService:
         date_to: date | None,
         limit: int,
     ) -> list[dict[str, object]]:
-        transactions = self.db.scalars(
-            select(Transaction)
+        transactions = self.db.execute(
+            select(Transaction.description, Transaction.amount)
             .where(
                 *self._transaction_filters(
                     workspace_id=workspace_id,
@@ -1230,8 +1230,14 @@ class DashboardService:
         if date_to is not None:
             filters.append(Transaction.transaction_date <= date_to)
 
-        transactions = self.db.scalars(
-            select(Transaction)
+        transactions = self.db.execute(
+            select(
+                Transaction.installment_current,
+                Transaction.installment_total,
+                Transaction.raw_description,
+                Transaction.amount,
+                Transaction.transaction_date,
+            )
             .where(*filters)
             .order_by(desc(Transaction.transaction_date), Transaction.description, Transaction.id)
         ).all()
@@ -1813,8 +1819,14 @@ class DashboardService:
         date_to: date,
         limit: int,
     ) -> dict[str, object]:
-        rows = self.db.scalars(
-            select(Transaction)
+        rows = self.db.execute(
+            select(
+                Transaction.installment_current,
+                Transaction.installment_total,
+                Transaction.raw_description,
+                Transaction.amount,
+                Transaction.transaction_date,
+            )
             .where(
                 Transaction.workspace_id == workspace_id,
                 Transaction.natural_dedupe_key.is_not(None),
