@@ -15,3 +15,18 @@ import os
 
 os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
 os.environ.setdefault("APP_ENV", "local")
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _clear_analytics_cache():
+    """Os caches de analytics/copiloto vivem no processo; limpamos entre testes
+    para que dados de um teste nunca vazem para outro."""
+    from app.services import analytics_cache, copilot_service
+
+    analytics_cache.invalidate()
+    copilot_service.invalidate_context_cache()
+    yield
+    analytics_cache.invalidate()
+    copilot_service.invalidate_context_cache()

@@ -19,6 +19,7 @@ from app.db.models import (
     TransactionCategoryAssignment,
     WorkspacePreferences,
 )
+from app.services.analytics_cache import cache_public_reads
 from app.services.parsers import extract_installment, normalize_transaction_description
 
 ZERO = Decimal("0.00")
@@ -48,6 +49,7 @@ WEEKDAY_NAMES = [
 ]
 
 
+@cache_public_reads
 class DashboardService:
     def __init__(self, db: Session) -> None:
         self.db = db
