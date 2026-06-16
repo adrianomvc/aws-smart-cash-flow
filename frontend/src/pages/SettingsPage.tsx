@@ -26,7 +26,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { associateCreditCardSourceFile, autoAssociateCreditCardFiles, deleteImport, getActiveAccounts, getCreditCards, getCreditCardSourceFiles, getImports, getPreferences, getProfile, getTransactions, normalizeTransactionDescriptions, unlinkCreditCardSourceFile, updatePreferences, updateProfile, uploadImport } from "../lib/api";
+import { associateCreditCardSourceFile, autoAssociateCreditCardFiles, deleteImport, getActiveAccounts, getCreditCards, getCreditCardSourceFiles, getImports, getPreferences, getProfile, exportTransactionsCsv, normalizeTransactionDescriptions, unlinkCreditCardSourceFile, updatePreferences, updateProfile, uploadImport } from "../lib/api";
 import { apiErrorMessage, dateLabel, money, moneyAbs } from "../lib/utils";
 import { InlineError, InlineSuccess, PageState } from "../components/ui";
 import { RulesPage } from "./CategoriesPage";
@@ -362,15 +362,10 @@ function SecurityBody({ session }: { session: ApiSession }) {
   async function exportData() {
     setExporting(true);
     try {
-      const res = await getTransactions(session, "?limit=5000");
-      const rows = (res.items ?? []).map(t => [
-        t.transaction_date, t.description, t.amount, t.direction,
-        t.account_or_card ?? "", t.category?.category_id ?? "",
-      ]);
-      const headers = ["Data", "Descricao", "Valor", "Direcao", "Conta", "CategoriaId"];
-      const esc = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
-      const csv = [headers, ...rows].map(r => r.map(esc).join(";")).join("\n");
-      const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+      // CSV is generated server-side (already includes header + BOM), so we only
+      // download the text instead of pulling thousands of full rows as JSON.
+      const csv = await exportTransactionsCsv(session);
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
       a.download = "smartcashflow-transacoes.csv";

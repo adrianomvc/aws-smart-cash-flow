@@ -4,7 +4,7 @@ from decimal import Decimal
 from hashlib import sha256
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy import and_, asc, case, delete, desc, func, or_, select
 from sqlalchemy.orm import Session
@@ -288,7 +288,7 @@ async def list_transactions(
     tx_status: str | None = Query(default=None, alias="status"),
     category_source: str | None = None,
     category_review_status: str | None = None,
-    limit: int = Query(default=50, ge=1, le=500),
+    limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> TransactionListResponse:
     sort_columns = {
@@ -513,6 +513,66 @@ async def list_transactions(
         total_income=income_sum,
         total_expense=expense_sum,
         total_net=income_sum - expense_sum,
+    )
+
+
+@router.get("/export.csv")
+async def export_transactions_csv(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> Response:
+    """Server-side CSV export. Projects only the 6 columns the CSV needs instead
+    of streaming full transaction rows to the client (which previously pulled
+    thousands of rows, including heavy fields, from the database)."""
+    rows = db.execute(
+        select(
+            Transaction.transaction_date,
+            Transaction.description,
+            Transaction.amount,
+            Transaction.direction,
+            Transaction.account_or_card,
+            TransactionCategoryAssignment.category_id,
+        )
+        .outerjoin(
+            TransactionCategoryAssignment,
+            and_(
+                TransactionCategoryAssignment.transaction_id == Transaction.id,
+                TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+            ),
+        )
+        .where(
+            Transaction.workspace_id == auth.workspace_id,
+            Transaction.natural_dedupe_key.is_not(None),
+        )
+        .order_by(desc(Transaction.transaction_date), desc(Transaction.id))
+    ).all()
+
+    def esc(value: object) -> str:
+        return '"' + str(value).replace('"', '""') + '"'
+
+    header = ["Data", "Descricao", "Valor", "Direcao", "Conta", "CategoriaId"]
+    lines = [";".join(esc(h) for h in header)]
+    for r in rows:
+        lines.append(
+            ";".join(
+                esc(v)
+                for v in (
+                    r.transaction_date.isoformat(),
+                    r.description,
+                    r.amount,
+                    r.direction,
+                    r.account_or_card or "",
+                    r.category_id or "",
+                )
+            )
+        )
+    body = "﻿" + "\n".join(lines)
+    return Response(
+        content=body,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": "attachment; filename=smartcashflow-transacoes.csv"
+        },
     )
 
 

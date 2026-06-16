@@ -756,6 +756,24 @@ async function apiRequest<T>(path: string, session: ApiSession, options: ApiOpti
   return response.json() as Promise<T>;
 }
 
+// Downloads the transactions CSV generated server-side (only the columns the
+// CSV needs), instead of fetching thousands of full transaction rows as JSON.
+export async function exportTransactionsCsv(session: ApiSession): Promise<string> {
+  const headers = new Headers();
+  let token = session.token;
+  if (session.mode === "cognito" && cognitoTokenProvider) {
+    const fresh = await cognitoTokenProvider();
+    if (fresh) token = fresh;
+  }
+  headers.set("Authorization", `Bearer ${token}`);
+  const response = await fetch(`${API_BASE_URL}/transactions/export.csv`, { headers });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `API request failed: ${response.status}`);
+  }
+  return response.text();
+}
+
 export function getCurrentWorkspace(session: ApiSession) {
   return apiRequest<WorkspaceCurrent>("/workspaces/current", session);
 }
