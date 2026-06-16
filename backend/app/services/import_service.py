@@ -475,6 +475,10 @@ class ImportService:
             self.db.commit()
         except Exception:  # noqa: BLE001 - goal linking must never break the import
             self.db.rollback()
+        # New data arrived → drop the copilot's cached context for this workspace.
+        from app.services.copilot_service import invalidate_context_cache
+
+        invalidate_context_cache(workspace_id)
         return ImportResult(
             import_job_id=import_job.id,
             source_file_id=source_file.id,
