@@ -164,6 +164,11 @@ class CategorizationService:
         threshold: float = _TRGM_THRESHOLD,
     ) -> int:
         """Stage 2a: suggest categories based on trigram similarity to categorized transactions."""
+        # similarity() needs the pg_trgm extension (PostgreSQL). On other engines
+        # (e.g. SQLite locally) skip this stage gracefully so the pipeline falls
+        # through to the LLM step instead of erroring.
+        if self.db.get_bind().dialect.name != "postgresql":
+            return 0
         transaction_query = (
             select(Transaction)
             .outerjoin(

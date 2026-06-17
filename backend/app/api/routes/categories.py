@@ -586,7 +586,14 @@ async def categorize_pending(
     from app.services.categorization_service import CategorizationService
     from app.services.llm_categorization_service import LLMCategorizationService
 
-    trgm = CategorizationService(db).apply_trgm_memory(auth.workspace_id)
+    # Trigram memory is a best-effort stage: if it is unavailable (no pg_trgm /
+    # non-PostgreSQL engine) or has no categorized history to learn from, it must
+    # never block the LLM fallback that follows.
+    try:
+        trgm = CategorizationService(db).apply_trgm_memory(auth.workspace_id)
+    except Exception:  # noqa: BLE001 - degrade gracefully into the LLM stage
+        db.rollback()
+        trgm = 0
     llm = LLMCategorizationService(db).apply_llm_batch(auth.workspace_id)
     db.commit()
     return BatchCategorizationResponse(
