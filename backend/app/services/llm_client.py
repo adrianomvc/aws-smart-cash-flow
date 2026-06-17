@@ -23,23 +23,44 @@ _GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 SSL_CONTEXT = ssl.create_default_context()
 
 
+def _provider_key(provider: str) -> str:
+    if provider == "groq":
+        return getattr(settings, "groq_api_key", "") or ""
+    if provider == "gemini":
+        return getattr(settings, "gemini_api_key", "") or ""
+    return ""
+
+
 def resolve_provider() -> tuple[str, str]:
-    """Returns (provider, api_key)."""
+    """Default provider (from LLM_PROVIDER, else auto-detected). Returns (provider, key)."""
     provider = (getattr(settings, "llm_provider", "") or "").lower()
     if not provider:
-        if getattr(settings, "groq_api_key", ""):
+        if _provider_key("groq"):
             provider = "groq"
-        elif getattr(settings, "gemini_api_key", ""):
+        elif _provider_key("gemini"):
             provider = "gemini"
-    if provider == "groq":
-        return "groq", getattr(settings, "groq_api_key", "")
-    if provider == "gemini":
-        return "gemini", getattr(settings, "gemini_api_key", "")
-    return provider, ""
+    return provider, _provider_key(provider)
+
+
+def _provider_chain(prefer: str | None) -> list[tuple[str, str]]:
+    """Ordered (provider, key) list to try: preferred first, then the configured
+    default, then the remaining provider. Only providers with a key are kept, so a
+    function that prefers Gemini automatically falls back to Groq (and vice-versa)."""
+    order = [(prefer or "").lower(), resolve_provider()[0], "groq", "gemini"]
+    chain: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for provider in order:
+        if not provider or provider in seen:
+            continue
+        seen.add(provider)
+        key = _provider_key(provider)
+        if key:
+            chain.append((provider, key))
+    return chain
 
 
 def llm_available() -> bool:
-    return bool(resolve_provider()[1])
+    return bool(_provider_chain(None))
 
 
 def chat(
@@ -48,12 +69,32 @@ def chat(
     max_tokens: int | None = None,
     json_mode: bool = False,
     timeout: float = 60,
+    prefer: str | None = None,
 ) -> str | None:
-    """Chat completion. `messages` is a list of {"role", "content"}. Returns the
-    assistant text, or None if no provider is configured or the call fails."""
-    provider, api_key = resolve_provider()
-    if not api_key:
+    """Chat completion. `messages` is a list of {"role", "content"}. Tries the
+    preferred provider first and falls back to the other configured one on failure
+    (e.g. rate limit). Returns the assistant text, or None if all attempts fail."""
+    chain = _provider_chain(prefer)
+    if not chain:
         return None
+    for provider, api_key in chain:
+        result = _call_provider(
+            provider, api_key, messages, temperature, max_tokens, json_mode, timeout
+        )
+        if result is not None:
+            return result
+    return None
+
+
+def _call_provider(
+    provider: str,
+    api_key: str,
+    messages: list[dict],
+    temperature: float,
+    max_tokens: int | None,
+    json_mode: bool,
+    timeout: float,
+) -> str | None:
     try:
         if provider == "groq":
             body: dict = {

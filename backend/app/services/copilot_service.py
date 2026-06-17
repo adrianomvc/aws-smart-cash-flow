@@ -100,7 +100,8 @@ class CopilotService:
             if content:
                 messages.append({"role": role, "content": content})
         messages.append({"role": "user", "content": message[:2000]})
-        reply = chat(messages, temperature=0.3, max_tokens=700)
+        # Chat is latency-sensitive → prefer Groq (fastest); fall back to Gemini.
+        reply = chat(messages, temperature=0.3, max_tokens=700, prefer="groq")
         return {"reply": reply or _refusal(), "available": True}
 
     def _period_totals(self, workspace_id: str, df: date | None, dt: date | None) -> str:
