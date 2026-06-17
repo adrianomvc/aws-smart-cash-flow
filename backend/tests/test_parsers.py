@@ -1,8 +1,9 @@
+from datetime import date
 from decimal import Decimal, InvalidOperation
 
 import pytest
 
-from app.domain.imports import TransactionDirection
+from app.domain.imports import SourceKind, TransactionDirection
 from app.services.parsers import (
     extract_installment,
     normalize_transaction_description,
@@ -10,8 +11,33 @@ from app.services.parsers import (
     parse_brazilian_decimal,
     parse_credit_card_csv,
     parse_excel_bank_statement,
+    parse_itau_credit_card_statement_text,
     parse_txt_bank_statement,
 )
+
+
+def test_parse_itau_credit_card_statement_text():
+    text = "\n".join(
+        [
+            "Vencimento: 01/05/2026",
+            "25/03 99APP *99App 28,06",
+            "26/04 Clinica 12/18 355,65",
+            "20/12 LOJA DE NATAL 100,00",  # month after due month -> previous year
+            "Total desta fatura 775,69",  # not a DD/MM line -> skipped
+            "Limite total de credito",
+        ]
+    )
+
+    result = parse_itau_credit_card_statement_text(text)
+
+    assert result.source_kind == SourceKind.CREDIT_CARD_PDF
+    txs = result.transactions
+    assert len(txs) == 3
+    assert txs[0].transaction_date == date(2026, 3, 25)
+    assert txs[0].amount == Decimal("28.06")
+    assert txs[0].direction == TransactionDirection.DEBIT
+    assert (txs[1].installment_current, txs[1].installment_total) == (12, 18)
+    assert txs[2].transaction_date == date(2025, 12, 20)
 
 
 class FakeExcelSheet:

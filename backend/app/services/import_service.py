@@ -33,6 +33,7 @@ from app.services.parsers import (
     normalize_transaction_description_for_dedupe,
     parse_credit_card_csv,
     parse_excel_bank_statement,
+    parse_itau_credit_card_pdf,
     parse_txt_bank_statement,
 )
 from app.services.storage_service import StorageService
@@ -114,10 +115,10 @@ class ImportService:
         source_kind: str | None = None,
     ) -> ImportPreviewResult:
         suffix = filename.rsplit(".", maxsplit=1)[-1].lower() if "." in filename else ""
-        if suffix not in {"txt", "csv", "xls"}:
+        if suffix not in {"txt", "csv", "xls", "pdf"}:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only TXT, CSV and XLS Excel files are supported",
+                detail="Only TXT, CSV, XLS Excel and PDF files are supported",
             )
         if len(content) > self.max_upload_bytes:
             raise HTTPException(
@@ -225,10 +226,10 @@ class ImportService:
         source_kind: str | None = None,
     ) -> ImportResult:
         suffix = filename.rsplit(".", maxsplit=1)[-1].lower() if "." in filename else ""
-        if suffix not in {"txt", "csv", "xls"}:
+        if suffix not in {"txt", "csv", "xls", "pdf"}:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only TXT, CSV and XLS Excel files are supported",
+                detail="Only TXT, CSV, XLS Excel and PDF files are supported",
             )
         if len(content) > self.max_upload_bytes:
             raise HTTPException(
@@ -725,6 +726,8 @@ class ImportService:
             return parse_excel_bank_statement(raw_content)
         if source_kind == SourceKind.CREDIT_CARD_CSV:
             return parse_credit_card_csv(text_content)
+        if source_kind == SourceKind.CREDIT_CARD_PDF:
+            return parse_itau_credit_card_pdf(raw_content)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Unsupported or unrecognized file layout",
@@ -759,7 +762,7 @@ class ImportService:
         return resolved
 
     def _decode_text_content(self, source_kind: SourceKind, content: bytes) -> str:
-        if source_kind == SourceKind.BANK_STATEMENT_EXCEL:
+        if source_kind in {SourceKind.BANK_STATEMENT_EXCEL, SourceKind.CREDIT_CARD_PDF}:
             return ""
         try:
             return content.decode("utf-8-sig")
@@ -829,7 +832,7 @@ class ImportService:
         return raw_lines
 
     def _iter_data_lines(self, source_kind: SourceKind, content: str) -> list[tuple[int, str]]:
-        if source_kind == SourceKind.BANK_STATEMENT_EXCEL:
+        if source_kind in {SourceKind.BANK_STATEMENT_EXCEL, SourceKind.CREDIT_CARD_PDF}:
             return []
         lines = list(enumerate(content.splitlines(), start=1))
         if source_kind == SourceKind.CREDIT_CARD_CSV:
@@ -901,6 +904,9 @@ class ImportService:
             SourceKind.BANK_STATEMENT_EXCEL.value,
         }:
             return "bank_statement"
-        if source_kind == SourceKind.CREDIT_CARD_CSV.value:
+        if source_kind in {
+            SourceKind.CREDIT_CARD_CSV.value,
+            SourceKind.CREDIT_CARD_PDF.value,
+        }:
             return "credit_card_statement"
         return "unknown"

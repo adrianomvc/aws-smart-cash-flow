@@ -688,7 +688,7 @@ export function ImportsPage({
             </button>
             <input
               ref={fileInputRef}
-              accept=".txt,.csv,.xls,.xlsx,.ofx,text/plain,text/csv,application/vnd.ms-excel"
+              accept=".txt,.csv,.xls,.pdf,text/plain,text/csv,application/vnd.ms-excel,application/pdf"
               disabled={upload.isPending || previewMutation.isPending}
               multiple
               type="file"

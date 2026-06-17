@@ -9,6 +9,7 @@ class SourceKind(StrEnum):
     BANK_STATEMENT_TXT = "bank_statement_txt"
     BANK_STATEMENT_EXCEL = "bank_statement_excel"
     CREDIT_CARD_CSV = "credit_card_csv"
+    CREDIT_CARD_PDF = "credit_card_pdf"
     UNKNOWN = "unknown"
 
 

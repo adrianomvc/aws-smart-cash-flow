@@ -876,3 +876,108 @@ def parse_credit_card_csv(content: str) -> ParseResult:
         transactions=transactions,
         errors=errors,
     )
+
+
+# A transaction line in an Itaú credit-card statement PDF, e.g.
+#   "25/03 99APP *99App 28,06"  or  "26/04 Clinica 12/18 355,65"
+# day/month at the start, a free-text merchant, and a Brazilian-decimal amount at
+# the end (optionally negative for credits/reversals).
+_ITAU_PDF_TX_RE = re.compile(
+    r"^(?P<day>\d{2})/(?P<month>\d{2})\s+"
+    r"(?P<desc>.+?)\s+"
+    r"(?P<neg>-)?(?P<amount>\d{1,3}(?:\.\d{3})*,\d{2})(?P<trail>-)?$"
+)
+_ITAU_PDF_DUE_RE = re.compile(r"[Vv]encimento:?\s*(\d{2})/(\d{2})/(\d{4})")
+
+
+def _itau_pdf_reference_month_year(text: str) -> tuple[int, int]:
+    """The statement due date anchors the year for transactions that only carry
+    day/month. Falls back to today if the due date can't be found."""
+    match = _ITAU_PDF_DUE_RE.search(text)
+    if match:
+        return int(match.group(2)), int(match.group(3))
+    today = date.today()
+    return today.month, today.year
+
+
+def parse_itau_credit_card_statement_text(text: str) -> ParseResult:
+    """Parse the extracted text of an Itaú credit-card statement into transactions.
+
+    Itaú digital invoices are text PDFs (no OCR needed). Each purchase line is
+    ``DD/MM <merchant> <amount>``; non-transaction lines (totals, limits, payment
+    summaries, international USD detail) don't match the pattern and are skipped.
+    """
+    ref_month, ref_year = _itau_pdf_reference_month_year(text)
+    transactions: list[ParsedTransaction] = []
+    for line_number, raw_line in enumerate(text.splitlines(), start=1):
+        match = _ITAU_PDF_TX_RE.match(raw_line.strip())
+        if match is None:
+            continue
+        day = int(match.group("day"))
+        month = int(match.group("month"))
+        if not (1 <= month <= 12 and 1 <= day <= 31):
+            continue
+        # Transactions whose month is after the due month belong to the prior year.
+        year = ref_year - 1 if month > ref_month else ref_year
+        try:
+            transaction_date = date(year, month, day)
+        except ValueError:
+            continue
+
+        raw_description = match.group("desc").strip()
+        if not raw_description:
+            continue
+        amount = parse_brazilian_decimal(match.group("amount"))
+        if match.group("neg") or match.group("trail"):
+            amount = -amount
+
+        normalized_description = normalize_transaction_description(raw_description)
+        installment_current, installment_total = extract_installment(raw_description)
+        if amount < 0 and normalized_description == "PAGAMENTO EFETUADO":
+            direction = TransactionDirection.PAYMENT
+        elif amount < 0:
+            direction = TransactionDirection.CREDIT
+        else:
+            direction = TransactionDirection.DEBIT
+
+        transactions.append(
+            ParsedTransaction(
+                transaction_date=transaction_date,
+                raw_description=raw_description,
+                description=normalized_description,
+                amount=amount,
+                direction=direction,
+                source_line=line_number,
+                installment_current=installment_current,
+                installment_total=installment_total,
+            )
+        )
+
+    return ParseResult(
+        source_kind=SourceKind.CREDIT_CARD_PDF,
+        total_rows=len(transactions),
+        transactions=transactions,
+    )
+
+
+def parse_itau_credit_card_pdf(content: bytes) -> ParseResult:
+    """Extract text from an Itaú credit-card statement PDF and parse its transactions."""
+    from io import BytesIO
+
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(BytesIO(content))
+        text = "\n".join((page.extract_text() or "") for page in reader.pages)
+    except Exception as exc:  # noqa: BLE001 - surface a parse error instead of crashing the import
+        return ParseResult(
+            source_kind=SourceKind.CREDIT_CARD_PDF,
+            total_rows=0,
+            errors=[
+                ParseError(
+                    error_code="invalid_pdf",
+                    message=f"Could not read PDF: {exc}",
+                )
+            ],
+        )
+    return parse_itau_credit_card_statement_text(text)
