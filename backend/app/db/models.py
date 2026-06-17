@@ -105,7 +105,8 @@ class SourceFile(Base):
         UniqueConstraint("workspace_id", "content_hash", name="uq_source_file_workspace_hash"),
         CheckConstraint(
             "source_kind in ("
-            "'bank_statement_txt', 'bank_statement_excel', 'credit_card_csv', 'unknown'"
+            "'bank_statement_txt', 'bank_statement_excel', 'credit_card_csv', "
+            "'credit_card_pdf', 'unknown'"
             ")",
             name="ck_source_file_source_kind",
         ),
