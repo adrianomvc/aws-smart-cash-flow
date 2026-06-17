@@ -878,14 +878,17 @@ def parse_credit_card_csv(content: str) -> ParseResult:
     )
 
 
-# A transaction line in an Itaú credit-card statement PDF, e.g.
-#   "25/03 99APP *99App 28,06"  or  "26/04 Clinica 12/18 355,65"
-# day/month at the start, a free-text merchant, and a Brazilian-decimal amount at
-# the end (optionally negative for credits/reversals).
+# A transaction line in an Itaú credit-card statement PDF (layout extraction), e.g.
+#   "25/03 99APP *99App 28,06"            (newer statements)
+#   "01/03 ESPACO FISICO 05/12 130,77 DIVERSOS .Sao Paulo"  (older statements)
+# day/month at the start, a free-text merchant (which may embed an N/M installment),
+# the Brazilian-decimal amount (the FIRST decimal after the merchant — non-greedy so
+# trailing columns like the Itaú category or a limit value are ignored).
 _ITAU_PDF_TX_RE = re.compile(
     r"^(?P<day>\d{2})/(?P<month>\d{2})\s+"
     r"(?P<desc>.+?)\s+"
-    r"(?P<neg>-)?(?P<amount>\d{1,3}(?:\.\d{3})*,\d{2})(?P<trail>-)?$"
+    r"(?P<neg>-)?(?P<amount>\d{1,3}(?:\.\d{3})*,\d{2})(?P<trail>-)?"
+    r"(?:\s.*)?$"
 )
 _ITAU_PDF_DUE_RE = re.compile(r"[Vv]encimento:?\s*(\d{2})/(\d{2})/(\d{4})")
 
@@ -961,23 +964,38 @@ def parse_itau_credit_card_statement_text(text: str) -> ParseResult:
 
 
 def parse_itau_credit_card_pdf(content: bytes) -> ParseResult:
-    """Extract text from an Itaú credit-card statement PDF and parse its transactions."""
+    """Extract text from an Itaú credit-card statement PDF and parse its transactions.
+
+    Itaú changed the statement layout over the years: newer ones extract cleanly in
+    pypdf's default ("plain") mode, while older ones only line up date/merchant/amount
+    in "layout" mode. We try both and keep whichever yields more transactions.
+    """
     from io import BytesIO
 
     try:
         from pypdf import PdfReader
 
-        reader = PdfReader(BytesIO(content))
-        text = "\n".join((page.extract_text() or "") for page in reader.pages)
-    except Exception as exc:  # noqa: BLE001 - surface a parse error instead of crashing the import
+        pages = list(PdfReader(BytesIO(content)).pages)
+    except Exception as exc:  # noqa: BLE001 - surface a parse error instead of crashing
         return ParseResult(
             source_kind=SourceKind.CREDIT_CARD_PDF,
             total_rows=0,
-            errors=[
-                ParseError(
-                    error_code="invalid_pdf",
-                    message=f"Could not read PDF: {exc}",
-                )
-            ],
+            errors=[ParseError(error_code="invalid_pdf", message=f"Could not read PDF: {exc}")],
         )
-    return parse_itau_credit_card_statement_text(text)
+
+    best: ParseResult | None = None
+    for mode in ("plain", "layout"):
+        try:
+            text = "\n".join((page.extract_text(extraction_mode=mode) or "") for page in pages)
+        except Exception:  # noqa: BLE001 - a mode may be unsupported; try the other
+            continue
+        result = parse_itau_credit_card_statement_text(text)
+        if best is None or len(result.transactions) > len(best.transactions):
+            best = result
+    if best is None:
+        return ParseResult(
+            source_kind=SourceKind.CREDIT_CARD_PDF,
+            total_rows=0,
+            errors=[ParseError(error_code="invalid_pdf", message="Could not extract PDF text")],
+        )
+    return best

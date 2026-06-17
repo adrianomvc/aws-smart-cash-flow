@@ -23,6 +23,10 @@ def test_parse_itau_credit_card_statement_text():
             "25/03 99APP *99App 28,06",
             "26/04 Clinica 12/18 355,65",
             "20/12 LOJA DE NATAL 100,00",  # month after due month -> previous year
+            # older layout: trailing Itaú category column after the amount + N/M installment
+            "01/03 ESPACO FISICO 05/12 130,77 DIVERSOS .Sao Paulo",
+            # the FIRST decimal is the amount, not the trailing limit value
+            "02/04 99APP 21,00 Limite disponivel 18.384,31",
             "Total desta fatura 775,69",  # not a DD/MM line -> skipped
             "Limite total de credito",
         ]
@@ -32,12 +36,15 @@ def test_parse_itau_credit_card_statement_text():
 
     assert result.source_kind == SourceKind.CREDIT_CARD_PDF
     txs = result.transactions
-    assert len(txs) == 3
+    assert len(txs) == 5
     assert txs[0].transaction_date == date(2026, 3, 25)
     assert txs[0].amount == Decimal("28.06")
     assert txs[0].direction == TransactionDirection.DEBIT
     assert (txs[1].installment_current, txs[1].installment_total) == (12, 18)
     assert txs[2].transaction_date == date(2025, 12, 20)
+    older = next(t for t in txs if t.amount == Decimal("130.77"))
+    assert (older.installment_current, older.installment_total) == (5, 12)
+    assert any(t.amount == Decimal("21.00") for t in txs)  # not the trailing 18.384,31
 
 
 class FakeExcelSheet:
