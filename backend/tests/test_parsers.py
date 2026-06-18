@@ -6,6 +6,7 @@ import pytest
 from app.domain.imports import SourceKind, TransactionDirection
 from app.services.parsers import (
     extract_installment,
+    extract_itau_card_metadata,
     normalize_transaction_description,
     normalize_transaction_description_for_dedupe,
     parse_brazilian_decimal,
@@ -14,6 +15,37 @@ from app.services.parsers import (
     parse_itau_credit_card_statement_text,
     parse_txt_bank_statement,
 )
+
+
+def test_extract_itau_card_metadata_reads_identity_from_pdf():
+    text = "\n".join(
+        [
+            "4771.XXXX.XXXX.1359 VISA INFINITE",
+            "Vencimento: 20/05/2026",
+            "Previsao prox. Fechamento: 13/05/2026",
+            "Total desta fatura 1.234,56",
+        ]
+    )
+
+    card = extract_itau_card_metadata(text)
+
+    assert card is not None
+    assert card.last_four == "1359"
+    assert card.brand == "visa"
+    assert card.name == "Visa Infinite"
+    assert (card.closing_day, card.due_day) == (13, 20)
+    assert card.due_date == date(2026, 5, 20)
+    assert card.statement_total == Decimal("1234.56")
+
+
+def test_extract_itau_card_metadata_falls_back_to_brand_and_last_four():
+    text = "5312.XXXX.XXXX.7164\nVencimento: 01/05/2026"
+
+    card = extract_itau_card_metadata(text)
+
+    assert card is not None
+    assert card.brand == "mastercard"
+    assert card.name == "Mastercard final 7164"
 
 
 def test_parse_itau_credit_card_statement_text():

@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from hashlib import sha256
 from uuid import uuid4
@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 from app.core.auth import AuthContext
 from app.db.models import (
     AccountBalance,
+    CreditCard,
+    CreditCardStatement,
     FinancialCalendarEvent,
     ImportError,
     ImportJob,
@@ -23,6 +25,7 @@ from app.domain.imports import (
     ImportStatus,
     ParsedCalendarEvent,
     ParsedTransaction,
+    ParseResult,
     PreviewTransaction,
     SourceKind,
 )
@@ -460,6 +463,13 @@ class ImportService:
                 transaction_ids=persisted_transaction_ids,
             )
         self.db.commit()
+        # Best-effort: auto-register the credit card this PDF statement belongs to,
+        # using the identity read from the PDF itself.
+        try:
+            self._register_pdf_credit_card(workspace_id, source_file, parse_result)
+            self.db.commit()
+        except Exception:  # noqa: BLE001 - card registration must never break the import
+            self.db.rollback()
         # Best-effort: link any credit-card files to a card now that new data
         # (invoice or its settling payment) may have arrived.
         try:
@@ -910,3 +920,56 @@ class ImportService:
         }:
             return "credit_card_statement"
         return "unknown"
+
+    def _register_pdf_credit_card(
+        self,
+        workspace_id: str,
+        source_file: SourceFile,
+        parse_result: ParseResult,
+    ) -> None:
+        """Auto-create (or reuse) the credit card identified in a PDF statement and
+        link this statement file to it, so the card shows up under Cartões."""
+        card_info = parse_result.credit_card
+        if card_info is None or card_info.due_date is None:
+            return
+        card = self.db.scalar(
+            select(CreditCard).where(
+                CreditCard.workspace_id == workspace_id,
+                CreditCard.last_four == card_info.last_four,
+            )
+        )
+        if card is None:
+            card = CreditCard(
+                id=str(uuid4()),
+                workspace_id=workspace_id,
+                name=card_info.name,
+                issuer="Itaú",
+                brand=card_info.brand,
+                last_four=card_info.last_four,
+                closing_day=card_info.closing_day or 1,
+                due_day=card_info.due_day or 10,
+            )
+            self.db.add(card)
+            self.db.flush()
+
+        already_linked = self.db.scalar(
+            select(CreditCardStatement.id).where(
+                CreditCardStatement.source_file_id == source_file.id
+            )
+        )
+        if already_linked is not None:
+            return
+        due_date = card_info.due_date
+        self.db.add(
+            CreditCardStatement(
+                id=str(uuid4()),
+                workspace_id=workspace_id,
+                credit_card_id=card.id,
+                source_file_id=source_file.id,
+                statement_month=date(due_date.year, due_date.month, 1),
+                closing_date=card_info.closing_date,
+                due_date=due_date,
+                total_amount=card_info.statement_total,
+                status="closed",
+            )
+        )

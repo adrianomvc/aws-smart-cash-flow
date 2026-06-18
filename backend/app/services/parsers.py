@@ -8,6 +8,7 @@ from unicodedata import normalize
 from app.domain.imports import (
     ParsedAccountBalance,
     ParsedCalendarEvent,
+    ParsedCreditCard,
     ParsedTransaction,
     ParseError,
     ParseResult,
@@ -896,6 +897,51 @@ _ITAU_PDF_DUE_RE = re.compile(r"[Vv]encimento:?\s*(\d{2})/(\d{2})/(\d{4})")
 _ITAU_PDF_IOF_RE = re.compile(
     r"Repasse de IOF em R\$?\s*(\d{1,3}(?:\.\d{3})*,\d{2})", re.IGNORECASE
 )
+# Primary card number on the statement, e.g. "5312.XXXX.XXXX.7164 VISA INFINITE".
+_ITAU_PDF_CARD_RE = re.compile(
+    r"(?P<bin>\d)\d{3}\.[X*]{4}\.[X*]{4}\.(?P<last4>\d{4})(?P<product>[^\n]{0,40})"
+)
+_ITAU_PDF_CLOSING_RE = re.compile(r"Fechamento:?\s*(\d{2})/(\d{2})/(\d{4})", re.IGNORECASE)
+_ITAU_CARD_BRANDS = {"3": "amex", "4": "visa", "5": "mastercard", "6": "elo"}
+_ITAU_CARD_TIERS = (
+    "INFINITE", "PLATINUM", "GOLD", "BLACK", "NANQUIM", "PERSONNALITE", "GRAFITE",
+    "INTERNACIONAL", "STANDARD",
+)
+
+
+def extract_itau_card_metadata(text: str) -> ParsedCreditCard | None:
+    """Identify the statement's primary card from the PDF itself (never the file
+    name): last four digits and brand from the masked card number, an optional
+    product tier as the name, and the closing/due days from the statement dates."""
+    card = _ITAU_PDF_CARD_RE.search(text)
+    if card is None:
+        return None
+    last_four = card.group("last4")
+    brand = _ITAU_CARD_BRANDS.get(card.group("bin"))
+    product = card.group("product").strip()
+    if product and any(tier in product.upper() for tier in _ITAU_CARD_TIERS):
+        name = " ".join(product.split()).title()
+    else:
+        name = f"{(brand or 'Cartão').title()} final {last_four}"
+    due = _ITAU_PDF_DUE_RE.search(text)
+    closing = _ITAU_PDF_CLOSING_RE.search(text)
+    total = _ITAU_PDF_TOTAL_RE.search(text)
+    due_date = date(int(due.group(3)), int(due.group(2)), int(due.group(1))) if due else None
+    closing_date = (
+        date(int(closing.group(3)), int(closing.group(2)), int(closing.group(1)))
+        if closing
+        else None
+    )
+    return ParsedCreditCard(
+        last_four=last_four,
+        brand=brand,
+        name=name,
+        closing_day=closing_date.day if closing_date else None,
+        due_day=due_date.day if due_date else None,
+        closing_date=closing_date,
+        due_date=due_date,
+        statement_total=parse_brazilian_decimal(total.group(1)) if total else None,
+    )
 _ITAU_PDF_TOTAL_RE = re.compile(
     r"Total desta fatura\D*?(\d{1,3}(?:\.\d{3})*,\d{2})", re.IGNORECASE
 )
@@ -990,6 +1036,7 @@ def parse_itau_credit_card_statement_text(text: str) -> ParseResult:
         total_rows=len(transactions),
         transactions=transactions,
         errors=errors,
+        credit_card=extract_itau_card_metadata(text),
     )
 
 
