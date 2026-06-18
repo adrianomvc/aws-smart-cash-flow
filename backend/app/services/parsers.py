@@ -878,19 +878,23 @@ def parse_credit_card_csv(content: str) -> ParseResult:
     )
 
 
-# A transaction line in an Itaú credit-card statement PDF (layout extraction), e.g.
-#   "25/03 99APP *99App 28,06"            (newer statements)
-#   "01/03 ESPACO FISICO 05/12 130,77 DIVERSOS .Sao Paulo"  (older statements)
-# day/month at the start, a free-text merchant (which may embed an N/M installment),
-# the Brazilian-decimal amount (the FIRST decimal after the merchant — non-greedy so
-# trailing columns like the Itaú category or a limit value are ignored).
+# A transaction segment in an Itaú credit-card statement PDF (layout extraction):
+#   "25/03 99APP *99App 28,06"  or  "01/03 ESPACO FISICO 05/12 130,77"
+# Older statements print TWO columns of transactions per visual row, so we scan EVERY
+# segment in a line (finditer), not just one at the start. The amount is the first
+# Brazilian decimal after the merchant (non-greedy); a merchant may embed an N/M
+# installment. The trailing lookahead keeps the amount from eating an adjacent column.
 _ITAU_PDF_TX_RE = re.compile(
-    r"^(?P<day>\d{2})/(?P<month>\d{2})\s+"
+    r"(?P<day>\d{2})/(?P<month>\d{2})\s+"
     r"(?P<desc>.+?)\s+"
     r"(?P<neg>-)?(?P<amount>\d{1,3}(?:\.\d{3})*,\d{2})(?P<trail>-)?"
-    r"(?:\s.*)?$"
+    r"(?=\s|$)"
 )
+_ITAU_PDF_LINE_START_RE = re.compile(r"\d{2}/\d{2}\s")
 _ITAU_PDF_DUE_RE = re.compile(r"[Vv]encimento:?\s*(\d{2})/(\d{2})/(\d{4})")
+_ITAU_PDF_TOTAL_RE = re.compile(
+    r"Total desta fatura\D*?(\d{1,3}(?:\.\d{3})*,\d{2})", re.IGNORECASE
+)
 
 
 def _itau_pdf_reference_month_year(text: str) -> tuple[int, int]:
@@ -903,64 +907,135 @@ def _itau_pdf_reference_month_year(text: str) -> tuple[int, int]:
     return today.month, today.year
 
 
+def _subtract_months(year: int, month: int, count: int) -> tuple[int, int]:
+    total = year * 12 + (month - 1) - count
+    return total // 12, total % 12 + 1
+
+
 def parse_itau_credit_card_statement_text(text: str) -> ParseResult:
     """Parse the extracted text of an Itaú credit-card statement into transactions.
 
-    Itaú digital invoices are text PDFs (no OCR needed). Each purchase line is
-    ``DD/MM <merchant> <amount>``; non-transaction lines (totals, limits, payment
-    summaries, international USD detail) don't match the pattern and are skipped.
+    Itaú digital invoices are text PDFs (no OCR needed). Statements may print two
+    columns of transactions per line, so we scan every ``DD/MM <merchant> <amount>``
+    segment. The displayed date carries only day/month; the year is inferred from the
+    statement due date, going back ``installment_current - 1`` months for installments
+    (an 11/12 charge was purchased ~10 months earlier). A non-blocking reconciliation
+    note is emitted when the imported sum doesn't match the statement total.
     """
     ref_month, ref_year = _itau_pdf_reference_month_year(text)
     transactions: list[ParsedTransaction] = []
     for line_number, raw_line in enumerate(text.splitlines(), start=1):
-        match = _ITAU_PDF_TX_RE.match(raw_line.strip())
-        if match is None:
+        line = raw_line.strip()
+        # Only scan lines that begin with a transaction date. This skips the limit,
+        # financing and points sections (which also contain dates and amounts) and
+        # avoids over-capturing non-transaction values.
+        if not _ITAU_PDF_LINE_START_RE.match(line):
             continue
-        day = int(match.group("day"))
-        month = int(match.group("month"))
-        if not (1 <= month <= 12 and 1 <= day <= 31):
-            continue
-        # Transactions whose month is after the due month belong to the prior year.
-        year = ref_year - 1 if month > ref_month else ref_year
-        try:
-            transaction_date = date(year, month, day)
-        except ValueError:
-            continue
+        for match in _ITAU_PDF_TX_RE.finditer(line):
+            day = int(match.group("day"))
+            month = int(match.group("month"))
+            if not (1 <= month <= 12 and 1 <= day <= 31):
+                continue
+            raw_description = match.group("desc").strip()
+            if not raw_description:
+                continue
+            amount = parse_brazilian_decimal(match.group("amount"))
+            if match.group("neg") or match.group("trail"):
+                amount = -amount
 
-        raw_description = match.group("desc").strip()
-        if not raw_description:
-            continue
-        amount = parse_brazilian_decimal(match.group("amount"))
-        if match.group("neg") or match.group("trail"):
-            amount = -amount
+            normalized_description = normalize_transaction_description(raw_description)
+            installment_current, installment_total = extract_installment(raw_description)
+            # The purchase happened (installment_current - 1) months before this
+            # statement; anchor the year there, then choose the year whose <month>
+            # sits at/just-before that reference month.
+            back = installment_current - 1 if installment_current else 0
+            base_year, base_month = _subtract_months(ref_year, ref_month, back)
+            year = base_year if month <= base_month else base_year - 1
+            try:
+                transaction_date = date(year, month, day)
+            except ValueError:
+                continue
 
-        normalized_description = normalize_transaction_description(raw_description)
-        installment_current, installment_total = extract_installment(raw_description)
-        if amount < 0 and normalized_description == "PAGAMENTO EFETUADO":
-            direction = TransactionDirection.PAYMENT
-        elif amount < 0:
-            direction = TransactionDirection.CREDIT
-        else:
-            direction = TransactionDirection.DEBIT
+            if amount < 0 and normalized_description == "PAGAMENTO EFETUADO":
+                direction = TransactionDirection.PAYMENT
+            elif amount < 0:
+                direction = TransactionDirection.CREDIT
+            else:
+                direction = TransactionDirection.DEBIT
 
-        transactions.append(
-            ParsedTransaction(
-                transaction_date=transaction_date,
-                raw_description=raw_description,
-                description=normalized_description,
-                amount=amount,
-                direction=direction,
-                source_line=line_number,
-                installment_current=installment_current,
-                installment_total=installment_total,
+            transactions.append(
+                ParsedTransaction(
+                    transaction_date=transaction_date,
+                    raw_description=raw_description,
+                    description=normalized_description,
+                    amount=amount,
+                    direction=direction,
+                    source_line=line_number,
+                    installment_current=installment_current,
+                    installment_total=installment_total,
+                )
             )
-        )
 
+    transactions = _drop_future_installment_previews(transactions)
+    errors = _itau_pdf_total_reconciliation(text, transactions)
     return ParseResult(
         source_kind=SourceKind.CREDIT_CARD_PDF,
         total_rows=len(transactions),
         transactions=transactions,
+        errors=errors,
     )
+
+
+def _drop_future_installment_previews(
+    transactions: list[ParsedTransaction],
+) -> list[ParsedTransaction]:
+    """Statements preview upcoming installments of a parceled purchase (e.g. show
+    both 12/18 and 13/18). Only the current — lowest — installment is charged now;
+    keep that one per purchase and drop the future previews and exact duplicates."""
+    min_current: dict[tuple, int] = {}
+    for t in transactions:
+        if t.installment_current and t.installment_total:
+            key = (t.description, t.amount, t.installment_total)
+            current = min_current.get(key)
+            if current is None or t.installment_current < current:
+                min_current[key] = t.installment_current
+
+    kept: list[ParsedTransaction] = []
+    seen: set[tuple] = set()
+    for t in transactions:
+        if t.installment_current and t.installment_total:
+            key = (t.description, t.amount, t.installment_total)
+            if t.installment_current != min_current[key] or key in seen:
+                continue
+            seen.add(key)
+        kept.append(t)
+    return kept
+
+
+def _itau_pdf_total_reconciliation(
+    text: str, transactions: list[ParsedTransaction]
+) -> list[ParseError]:
+    """Compare the sum of imported charges with the statement total. Returns a
+    non-blocking warning when they differ (e.g. uncaptured IOF or missed lines)."""
+    match = _ITAU_PDF_TOTAL_RE.search(text)
+    if not match:
+        return []
+    statement_total = parse_brazilian_decimal(match.group(1))
+    imported = sum(
+        (t.amount for t in transactions if t.direction != TransactionDirection.PAYMENT),
+        Decimal("0"),
+    )
+    if abs(imported - statement_total) <= Decimal("0.01"):
+        return []
+    return [
+        ParseError(
+            error_code="statement_total_mismatch",
+            message=(
+                f"Total da fatura R$ {statement_total} difere da soma importada "
+                f"R$ {imported} (diferenca R$ {statement_total - imported})."
+            ),
+        )
+    ]
 
 
 def parse_itau_credit_card_pdf(content: bytes) -> ParseResult:

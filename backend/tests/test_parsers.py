@@ -47,6 +47,40 @@ def test_parse_itau_credit_card_statement_text():
     assert any(t.amount == Decimal("21.00") for t in txs)  # not the trailing 18.384,31
 
 
+def test_parse_itau_statement_drops_future_installments_and_reconciles():
+    text = "\n".join(
+        [
+            "Vencimento: 01/05/2026",
+            "26/04 Clinica 12/18 355,65",  # current installment
+            "28/03 Loja Teste 100,00",
+            "26/04 Clinica 13/18 355,65",  # future preview -> dropped
+            "Total desta fatura 455,65",  # 355,65 + 100,00 -> matches
+        ]
+    )
+
+    result = parse_itau_credit_card_statement_text(text)
+
+    assert len(result.transactions) == 2  # only one Clinica installment kept
+    clinica = next(t for t in result.transactions if "CLINICA" in t.description)
+    assert clinica.installment_current == 12
+    assert not any(e.error_code == "statement_total_mismatch" for e in result.errors)
+
+
+def test_parse_itau_statement_flags_total_mismatch_without_blocking():
+    text = "\n".join(
+        [
+            "Vencimento: 01/05/2026",
+            "28/03 Loja Teste 100,00",
+            "Total desta fatura 150,00",  # imported 100,00 != 150,00
+        ]
+    )
+
+    result = parse_itau_credit_card_statement_text(text)
+
+    assert len(result.transactions) == 1  # still imported (non-blocking)
+    assert any(e.error_code == "statement_total_mismatch" for e in result.errors)
+
+
 class FakeExcelSheet:
     name = "Lançamentos"
 
