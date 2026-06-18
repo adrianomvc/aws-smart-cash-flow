@@ -66,6 +66,26 @@ def test_parse_itau_statement_drops_future_installments_and_reconciles():
     assert not any(e.error_code == "statement_total_mismatch" for e in result.errors)
 
 
+def test_parse_itau_statement_imports_iof_on_due_date():
+    text = "\n".join(
+        [
+            "Vencimento: 01/05/2026",
+            "28/03 Loja Teste 100,00",
+            "Repasse de IOF em R$ 13,28",  # no date -> dated on the due date
+            "Total desta fatura 113,28",
+        ]
+    )
+
+    result = parse_itau_credit_card_statement_text(text)
+
+    iof = [t for t in result.transactions if t.description == "IOF"]
+    assert len(iof) == 1
+    assert iof[0].amount == Decimal("13.28")
+    assert iof[0].transaction_date == date(2026, 5, 1)
+    assert iof[0].direction == TransactionDirection.DEBIT
+    assert not any(e.error_code == "statement_total_mismatch" for e in result.errors)
+
+
 def test_parse_itau_statement_flags_total_mismatch_without_blocking():
     text = "\n".join(
         [

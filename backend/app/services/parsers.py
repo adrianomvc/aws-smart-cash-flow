@@ -892,6 +892,10 @@ _ITAU_PDF_TX_RE = re.compile(
 )
 _ITAU_PDF_LINE_START_RE = re.compile(r"\d{2}/\d{2}\s")
 _ITAU_PDF_DUE_RE = re.compile(r"[Vv]encimento:?\s*(\d{2})/(\d{2})/(\d{4})")
+# International IOF is charged on the invoice but carries no transaction date.
+_ITAU_PDF_IOF_RE = re.compile(
+    r"Repasse de IOF em R\$?\s*(\d{1,3}(?:\.\d{3})*,\d{2})", re.IGNORECASE
+)
 _ITAU_PDF_TOTAL_RE = re.compile(
     r"Total desta fatura\D*?(\d{1,3}(?:\.\d{3})*,\d{2})", re.IGNORECASE
 )
@@ -976,6 +980,9 @@ def parse_itau_credit_card_statement_text(text: str) -> ParseResult:
                 )
             )
 
+    iof = _itau_pdf_iof_charge(text)
+    if iof is not None:
+        transactions.append(iof)
     transactions = _drop_future_installment_previews(transactions)
     errors = _itau_pdf_total_reconciliation(text, transactions)
     return ParseResult(
@@ -983,6 +990,27 @@ def parse_itau_credit_card_statement_text(text: str) -> ParseResult:
         total_rows=len(transactions),
         transactions=transactions,
         errors=errors,
+    )
+
+
+def _itau_pdf_iof_charge(text: str) -> ParsedTransaction | None:
+    """The international IOF is charged on the invoice but has no transaction line.
+    Import it as a debit dated on the statement due date so the total reconciles."""
+    iof_match = _ITAU_PDF_IOF_RE.search(text)
+    due_match = _ITAU_PDF_DUE_RE.search(text)
+    if not iof_match or not due_match:
+        return None
+    amount = parse_brazilian_decimal(iof_match.group(1))
+    if amount <= 0:
+        return None
+    due_date = date(int(due_match.group(3)), int(due_match.group(2)), int(due_match.group(1)))
+    return ParsedTransaction(
+        transaction_date=due_date,
+        raw_description="REPASSE DE IOF",
+        description="IOF",
+        amount=amount,
+        direction=TransactionDirection.DEBIT,
+        source_line=0,
     )
 
 
@@ -1025,7 +1053,8 @@ def _itau_pdf_total_reconciliation(
         (t.amount for t in transactions if t.direction != TransactionDirection.PAYMENT),
         Decimal("0"),
     )
-    if abs(imported - statement_total) <= Decimal("0.01"):
+    # Tolerate cent-level rounding; flag only meaningful gaps (missed transactions).
+    if abs(imported - statement_total) <= Decimal("1.00"):
         return []
     return [
         ParseError(
