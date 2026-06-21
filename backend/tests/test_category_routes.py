@@ -270,3 +270,61 @@ def test_delete_category_removes_unused_category(
 
     assert response.status_code == 204
     assert db_session.scalar(select(Category).where(Category.id == category["id"])) is None
+
+
+def test_merchant_alias_crud_and_unique_pattern(client: TestClient) -> None:
+    created = client.post(
+        "/v1/merchant-aliases",
+        json={"pattern": "BANCO ITAU SA", "replacement": "Itaú"},
+    )
+    assert created.status_code == 201
+    alias = created.json()
+    assert alias["pattern"] == "BANCO ITAU SA"
+    assert alias["replacement"] == "Itaú"
+    assert alias["match_type"] == "contains"
+    assert alias["active"] is True
+
+    # Same pattern again → conflict.
+    dup = client.post(
+        "/v1/merchant-aliases",
+        json={"pattern": "BANCO ITAU SA", "replacement": "Outro"},
+    )
+    assert dup.status_code == 409
+
+    listed = client.get("/v1/merchant-aliases").json()
+    assert [a["id"] for a in listed["items"]] == [alias["id"]]
+
+    updated = client.patch(
+        f"/v1/merchant-aliases/{alias['id']}",
+        json={"replacement": "Itaú Unibanco", "active": False},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["replacement"] == "Itaú Unibanco"
+    assert updated.json()["active"] is False
+
+    deleted = client.delete(f"/v1/merchant-aliases/{alias['id']}")
+    assert deleted.status_code == 204
+    assert client.get("/v1/merchant-aliases").json()["items"] == []
+
+
+def test_merchant_alias_blank_pattern_rejected(client: TestClient) -> None:
+    response = client.post(
+        "/v1/merchant-aliases",
+        json={"pattern": "   ", "replacement": "X"},
+    )
+    assert response.status_code == 400
+
+
+def test_merchant_alias_match_type_validation(client: TestClient) -> None:
+    token = client.post(
+        "/v1/merchant-aliases",
+        json={"pattern": "IFD", "replacement": "iFood", "match_type": "token"},
+    )
+    assert token.status_code == 201
+    assert token.json()["match_type"] == "token"
+
+    bogus = client.post(
+        "/v1/merchant-aliases",
+        json={"pattern": "X", "replacement": "Y", "match_type": "bogus"},
+    )
+    assert bogus.status_code == 400

@@ -351,6 +351,21 @@ input, select, textarea { font-family: inherit; color: var(--ink); }
 .chip:hover { border-color: var(--line-strong); color: var(--ink); }
 .chip.on { background: var(--acc); color: #fff; border-color: var(--acc); box-shadow: 0 4px 12px rgba(0,184,107,.3); }
 .chip svg { width: 14px; height: 14px; }
+.chip { cursor: pointer; }
+
+/* Mobile transaction cards (lista de Transações no celular) */
+.tx-card-list { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; }
+.tx-card { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--card-2); cursor: pointer; transition: border-color .14s, box-shadow .14s; }
+.tx-card:hover { border-color: var(--line-strong); box-shadow: var(--sh-sm); }
+.tx-card .cat-select { width: 100%; }
+
+/* Filtro como chip com controle inline (barra de filtros de Transações) */
+.fbox { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; border: 1px solid var(--line); border-radius: 20px; background: var(--card); box-shadow: var(--sh-sm); }
+.fbox-lbl { font-size: 11px; font-weight: 700; color: var(--ink-3); text-transform: uppercase; letter-spacing: .4px; white-space: nowrap; }
+.fbox .cat-select { border: none; background: transparent; box-shadow: none; }
+.fbox-x { border: none; background: none; cursor: pointer; color: var(--ink-3); font-size: 13px; line-height: 1; padding: 2px 4px; border-radius: 50%; }
+.fbox-x:hover { background: var(--neg-soft); color: var(--neg); }
+[data-theme="dark"] .fbox { background: rgba(255,255,255,.03); border-color: rgba(255,255,255,.08); }
 
 /* ============================================================ PROGRESS / BARS */
 .track { height: 8px; border-radius: 20px; background: var(--bg-sunken); overflow: hidden; }

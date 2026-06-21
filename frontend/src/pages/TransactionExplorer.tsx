@@ -1,17 +1,20 @@
 import type { FormEvent } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   applyRules,
+  createCategory,
   createManualTransaction,
   createRule,
   deleteTransaction,
   getActiveAccounts,
   getCreditCards,
+  getCreditCardStatements,
   getRuleSuggestion,
   getTransactionDuplicates,
   getTransactions,
+  getUncategorizedGroups,
   normalizeTransactionDescriptions,
   updateTransactionCategory,
   updateTransactionDirection,
@@ -20,7 +23,7 @@ import {
   amountClass,
   apiErrorMessage,
   categoryPath,
-  compactMoneyAbs,
+  compactValueAbs,
   dateLabel,
   duplicatePrimaryId,
   exportTransactionsCSV,
@@ -29,11 +32,11 @@ import {
   money,
   moneyAbs,
   orderedCategoryOptions,
-  periodRange,
   sourceTypeLabel,
   transactionFilterSummary,
 } from "../lib/utils";
 import { useCategories } from "../hooks";
+import { CatModal } from "../components/CatModal";
 import type {
   ActiveAccountItem,
   ApiSession,
@@ -66,10 +69,73 @@ const T_ICONS: Record<string, string> = {
   file:     "M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8l-5-5z M14 3v5h5",
   chevR:    "M9 18l6-6-6-6",
   chevL:    "M15 18l-6-6 6-6",
+  calendar: "M7 3v3 M17 3v3 M4 8h16 M5 6h14a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1z",
   info:     "M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0 M12 11v5 M12 8h.01",
   zap:      "M13 2L3 14h9l-1 8 10-12h-9l1-8z",
   x:        "M18 6L6 18 M6 6l12 12",
 };
+
+// Invoice reference month/year, e.g. "ago/2021" (based on the due/payment date).
+function faturaMonthLabel(iso?: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso + "T00:00:00");
+  if (Number.isNaN(d.getTime())) return "";
+  const m = d.toLocaleDateString("pt-BR", { month: "short" }).replace(".", "");
+  return `${m}/${d.getFullYear()}`;
+}
+
+// Range calendar (estilo Decolar): clica início → fim, com o intervalo destacado.
+function DateRangePicker({ from, to, onChange }: { from: string; to: string; onChange: (from: string, to: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState(() => { const d = from ? new Date(from + "T00:00:00") : new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
+  const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const label = from && to ? `${dateLabel(from)} – ${dateLabel(to)}` : from ? `${dateLabel(from)} – escolha o fim` : "Selecionar datas";
+  const year = view.getFullYear();
+  const month = view.getMonth();
+  const firstWeekday = new Date(year, month, 1).getDay();
+  const days = new Date(year, month + 1, 0).getDate();
+  const cells: (number | null)[] = [...Array(firstWeekday).fill(null), ...Array.from({ length: days }, (_, i) => i + 1)];
+  function pick(day: number) {
+    const d = iso(new Date(year, month, day));
+    if (!from || (from && to)) onChange(d, "");
+    else if (d < from) onChange(d, "");
+    else { onChange(from, d); setOpen(false); }
+  }
+  return (
+    <div style={{ position: "relative" }}>
+      <button type="button" className={`cat-select${from ? " active" : ""}`} style={{ padding: "5px 10px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }} onClick={() => setOpen((o) => !o)}>
+        <TIcon name="calendar" size={13} /> {label}
+      </button>
+      {open && (
+        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 40, background: "var(--card)", border: "1px solid var(--line)", borderRadius: 10, boxShadow: "var(--sh-pop)", padding: 12, width: 264 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <button type="button" className="btn btn-quiet btn-sm" onClick={() => setView(new Date(year, month - 1, 1))}><TIcon name="chevL" size={13} /></button>
+            <span style={{ fontWeight: 700, fontSize: 13, textTransform: "capitalize" }}>{view.toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}</span>
+            <button type="button" className="btn btn-quiet btn-sm" onClick={() => setView(new Date(year, month + 1, 1))}><TIcon name="chevR" size={13} /></button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 2, fontSize: 10.5, textAlign: "center", color: "var(--ink-faint)", marginBottom: 4 }}>
+            {["D", "S", "T", "Q", "Q", "S", "S"].map((w, i) => <div key={i}>{w}</div>)}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 2 }}>
+            {cells.map((day, i) => {
+              if (day === null) return <div key={i} />;
+              const d = iso(new Date(year, month, day));
+              const edge = d === from || d === to;
+              const inRange = !!(from && to && d > from && d < to);
+              return (
+                <button key={i} type="button" onClick={() => pick(day)} style={{ padding: "6px 0", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 12, background: edge ? "var(--acc)" : inRange ? "var(--acc-soft)" : "transparent", color: edge ? "#fff" : "var(--ink)" }}>{day}</button>
+              );
+            })}
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, marginTop: 8 }}>
+            <button type="button" className="btn btn-quiet btn-sm" onClick={() => onChange("", "")}>Limpar</button>
+            <button type="button" className="btn btn-primary btn-sm" onClick={() => setOpen(false)}>Fechar</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function TIcon({ name, size = 15 }: { name: string; size?: number }) {
   const d = T_ICONS[name];
@@ -180,6 +246,15 @@ function ActiveAccountsPanel({ accounts, loading }: { accounts: ActiveAccountIte
 
 type CategoryGroup = { id: string; name: string; subs: { id: string; name: string }[] };
 
+// Sentinel value used by the category <select>s to mean "create a new one".
+const NEW_CATEGORY_VALUE = "__new__";
+
+// Lets any CategoryPicker (deeply nested in rows/cards/detail/review) open the
+// shared "create category" modal without threading callbacks through every layer.
+// The handler receives an `apply` callback that assigns the freshly created
+// category id to whatever target triggered it (a transaction, a group, a batch).
+const NewCategoryContext = createContext<((apply: (categoryId: string) => void) => void) | null>(null);
+
 function CategoryPicker({ categoryGroups, transaction, session, onCategorized }: {
   categoryGroups: CategoryGroup[];
   transaction: TransactionRead;
@@ -197,8 +272,19 @@ function CategoryPicker({ categoryGroups, transaction, session, onCategorized }:
       onCategorized?.(updatedTransaction, categoryId);
     },
   });
+  const requestNewCategory = useContext(NewCategoryContext);
   return (
-    <select className="cat-select" disabled={mutation.isPending} value={transaction.category?.category_id ?? ""} onChange={(e) => mutation.mutate(e.target.value || null)} onClick={(e) => e.stopPropagation()}>
+    <select
+      className="cat-select"
+      disabled={mutation.isPending}
+      value={transaction.category?.category_id ?? ""}
+      onChange={(e) => {
+        const value = e.target.value;
+        if (value === NEW_CATEGORY_VALUE) { requestNewCategory?.((id) => mutation.mutate(id)); return; }
+        mutation.mutate(value || null);
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
       <option value="">Sem categoria</option>
       {categoryGroups.map((g) => (
         <optgroup key={g.id} label={g.name}>
@@ -206,57 +292,8 @@ function CategoryPicker({ categoryGroups, transaction, session, onCategorized }:
           {g.subs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </optgroup>
       ))}
+      {requestNewCategory ? <option value={NEW_CATEGORY_VALUE}>＋ Nova categoria…</option> : null}
     </select>
-  );
-}
-
-// Two cascading cells for the table: "Categoria" (parent) and "Subcategoria"
-// (child). Keeps the parent in its own column so the Categoria column never
-// shows the leaf sub-category. Both are editable and share one mutation.
-function CategoryCells({ categoryGroups, transaction, session, onCategorized }: {
-  categoryGroups: CategoryGroup[];
-  transaction: TransactionRead;
-  session: ApiSession;
-  onCategorized?: (transaction: TransactionRead, categoryId: string | null) => void;
-}) {
-  const queryClient = useQueryClient();
-  const mutation = useMutation({
-    mutationFn: (categoryId: string | null) => updateTransactionCategory(session, transaction.id, categoryId),
-    onSuccess: (updatedTransaction, categoryId) => {
-      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
-      void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
-      void queryClient.invalidateQueries({ queryKey: ["category-ranking"] });
-      void queryClient.invalidateQueries({ queryKey: ["data-quality"] });
-      onCategorized?.(updatedTransaction, categoryId);
-    },
-  });
-  const currentId = transaction.category?.category_id ?? "";
-  let parentId = "";
-  let subId = "";
-  for (const g of categoryGroups) {
-    if (g.id === currentId) { parentId = g.id; break; }
-    const s = g.subs.find((x) => x.id === currentId);
-    if (s) { parentId = g.id; subId = s.id; break; }
-  }
-  const subsOfParent = categoryGroups.find((g) => g.id === parentId)?.subs ?? [];
-  const stop = (e: React.MouseEvent) => e.stopPropagation();
-  return (
-    <>
-      <td>
-        <select className="cat-select" disabled={mutation.isPending} value={parentId}
-          onChange={(e) => mutation.mutate(e.target.value || null)} onClick={stop}>
-          <option value="">Sem categoria</option>
-          {categoryGroups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-        </select>
-      </td>
-      <td>
-        <select className="cat-select" disabled={mutation.isPending || !parentId} value={subId}
-          onChange={(e) => mutation.mutate(e.target.value || parentId || null)} onClick={stop}>
-          <option value="">{parentId ? "— (geral)" : "—"}</option>
-          {subsOfParent.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
-      </td>
-    </>
   );
 }
 
@@ -316,30 +353,28 @@ function TransactionRow({ transaction, categoryGroups, session, onDelete, onSele
       <td
         className="mono"
         style={{ color: "var(--ink-3)", whiteSpace: "nowrap" }}
-        title={transaction.payment_date && transaction.payment_date !== transaction.transaction_date ? `Compra: ${dateLabel(transaction.transaction_date)} · Pagamento: ${dateLabel(transaction.payment_date)}` : undefined}
+        title={transaction.invoice_due_date ? `Compra: ${dateLabel(transaction.transaction_date)} · Fatura vence: ${dateLabel(transaction.invoice_due_date)}` : undefined}
       >
-        {dateLabel(transaction.payment_date ?? transaction.transaction_date)}
+        <div>{dateLabel(transaction.transaction_date)}</div>
+        {transaction.invoice_due_date && (
+          <div className="t-sub" style={{ fontSize: 10.5 }}>fatura {faturaMonthLabel(transaction.invoice_due_date)}</div>
+        )}
       </td>
       <td>
-        <span className="t-desc">{transaction.description}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <span className="t-desc">{transaction.description}</span>
+          {!hasCategory && transaction.direction === "debit" && <span className="badge b-warn" style={{ fontSize: 10 }}><TIcon name="alert" size={10} />Sem categoria</span>}
+          {showInstallments && installmentLabel(transaction) !== "-" && <span className="pill" style={{ fontFamily: "var(--font-mono)", fontSize: 10 }}>{installmentLabel(transaction)}</span>}
+        </div>
         {transaction.description !== transaction.raw_description ? <div className="t-sub">{transaction.raw_description}</div> : null}
       </td>
-      <CategoryCells categoryGroups={categoryGroups} onCategorized={onCategorized} session={session} transaction={transaction} />
-      <td style={{ whiteSpace: "nowrap" }}><span className="t-sub">{acctText}</span></td>
-      <td>
-        <span className="pill" style={{ fontFamily: "var(--font-mono)", fontSize: 10.5 }}>{srcLabel}</span>
+      <td><CategoryPicker categoryGroups={categoryGroups} onCategorized={onCategorized} session={session} transaction={transaction} /></td>
+      <td style={{ whiteSpace: "nowrap" }}>
+        <div className="t-sub">{acctText}</div>
+        <span className="pill" style={{ fontFamily: "var(--font-mono)", fontSize: 10 }}>{srcLabel}</span>
       </td>
-      {showInstallments ? <td>{installmentLabel(transaction)}</td> : null}
       <td className="num" style={{ fontWeight: 700, color: isCredit ? "var(--acc)" : "var(--ink)" }}>
         {isCredit ? "+" : ""}{moneyAbs(transaction.amount)}
-      </td>
-      <td>
-        {hasCategory
-          ? <span className="badge b-real"><TIcon name="check" size={11} />Revisada</span>
-          : transaction.direction === "debit"
-            ? <span className="badge b-warn"><TIcon name="alert" size={11} />Sem categoria</span>
-            : <span className="badge b-info"><TIcon name="clock" size={11} />Pendente</span>
-        }
       </td>
       <td>
         <div style={{ display: "flex", gap: 4 }}>
@@ -389,6 +424,10 @@ function TransactionDetail({ transaction, categories, categoryGroups, deleting =
         <QRow label="Data de pagamento" value={dateLabel(transaction.payment_date)} />
       )}
       <QRow label="Origem" value={sourceTypeLabel(transaction.source_type)} />
+      {transaction.account_or_card && <QRow label="Conta/Cartão" value={transaction.account_or_card} />}
+      {transaction.invoice_due_date && (
+        <QRow label="Fatura" value={`${transaction.invoice_closing_date ? `fecha ${dateLabel(transaction.invoice_closing_date)} · ` : ""}vence ${dateLabel(transaction.invoice_due_date)}`} />
+      )}
       <QRow label="Arquivo" value={transaction.source_file_id} />
       <QRow label="Importação" value={transaction.import_job_id} />
       <QRow label="Linha" value={transaction.source_line ?? "—"} />
@@ -826,6 +865,88 @@ function FlatMultiSelect({ placeholder, options, selected, onChange, emptyLabel 
   );
 }
 
+// Date range for a period preset (local-time safe, avoids UTC off-by-one).
+function isoLocal(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+const PERIOD_OPTIONS: { id: string; label: string }[] = [
+  { id: "all", label: "Todo o período" },
+  { id: "current_month", label: "Mês atual" },
+  { id: "previous_month", label: "Mês passado" },
+  { id: "last_30", label: "Últimos 30 dias" },
+  { id: "last_90", label: "Últimos 90 dias" },
+  { id: "current_year", label: "Este ano" },
+  { id: "custom", label: "Personalizado" },
+];
+function rangeForPreset(p: string): { from: string; to: string } {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  const day = 86400000;
+  switch (p) {
+    case "current_month": return { from: isoLocal(new Date(y, m, 1)), to: isoLocal(now) };
+    case "previous_month": return { from: isoLocal(new Date(y, m - 1, 1)), to: isoLocal(new Date(y, m, 0)) };
+    case "last_30": return { from: isoLocal(new Date(now.getTime() - 29 * day)), to: isoLocal(now) };
+    case "last_90": return { from: isoLocal(new Date(now.getTime() - 89 * day)), to: isoLocal(now) };
+    case "current_year": return { from: isoLocal(new Date(y, 0, 1)), to: isoLocal(now) };
+    default: return { from: "", to: "" };
+  }
+}
+
+// True on narrow viewports — drives the card layout (vs the wide table).
+function useIsMobile(maxWidth = 720) {
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== "undefined" && window.matchMedia(`(max-width:${maxWidth}px)`).matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width:${maxWidth}px)`);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, [maxWidth]);
+  return isMobile;
+}
+
+// Mobile-friendly card for one transaction: tap opens the detail drawer; the
+// checkbox selects (for bulk actions); category is editable inline.
+function TransactionCard({ transaction, categoryGroups, session, selected, onToggleSelect, onSelect, onCategorized }: {
+  transaction: TransactionRead;
+  categoryGroups: CategoryGroup[];
+  session: ApiSession;
+  selected: boolean;
+  onToggleSelect: (id: string) => void;
+  onSelect: () => void;
+  onCategorized?: (transaction: TransactionRead, categoryId: string | null) => void;
+}) {
+  const isCredit = transaction.direction === "credit";
+  const hasCategory = !!transaction.category;
+  const inst = installmentSummaryLabel(transaction);
+  return (
+    <div className="tx-card" onClick={onSelect} style={{ borderColor: selected ? "var(--acc)" : undefined }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+        <input type="checkbox" checked={selected} onClick={(e) => e.stopPropagation()} onChange={() => onToggleSelect(transaction.id)} style={{ marginTop: 2 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="t-desc" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{transaction.description}</div>
+          <div className="t-sub mono" style={{ fontSize: 11.5 }}>
+            {dateLabel(transaction.transaction_date)}
+            {transaction.invoice_due_date ? ` · fatura ${faturaMonthLabel(transaction.invoice_due_date)}` : ""}
+            {inst && inst !== "-" ? ` · ${inst}` : ""}
+          </div>
+        </div>
+        <div className="mono" style={{ fontWeight: 700, whiteSpace: "nowrap", color: isCredit ? "var(--acc)" : "var(--ink)" }}>
+          {isCredit ? "+" : ""}{moneyAbs(transaction.amount)}
+        </div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }} onClick={(e) => e.stopPropagation()}>
+        <CategoryPicker categoryGroups={categoryGroups} transaction={transaction} session={session} onCategorized={onCategorized} />
+        {!hasCategory && transaction.direction === "debit" && (
+          <span className="badge b-warn" style={{ flexShrink: 0 }}><TIcon name="alert" size={11} />Sem categoria</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
@@ -867,6 +988,7 @@ export function TransactionExplorer({
 }) {
   const [searchInput, setSearchInput] = useState(initialSearch);
   const [search, setSearch] = useState(initialSearch);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [sourceType, setSourceType] = useState(initialSourceType);
   const [cardBrand, setCardBrand] = useState("");
   const [direction, setDirection] = useState(initialDirection);
@@ -882,10 +1004,19 @@ export function TransactionExplorer({
   const [amountMin, setAmountMin] = useState("");
   const [amountMax, setAmountMax] = useState("");
   const [importJobId] = useState(initialImportJobId);
-  const [sourceFileId] = useState(initialSourceFileId);
+  const [sourceFileId, setSourceFileId] = useState(initialSourceFileId);
   const [periodPreset, setPeriodPreset] = useState<TransactionPeriodPreset>(initialPeriodPreset);
   const [dateFrom, setDateFrom] = useState(initialDateFrom);
   const [dateTo, setDateTo] = useState(initialDateTo);
+  // Whether the date range filters by purchase date ("compra") or invoice date ("fatura").
+  // Period preset selected in the filter bar (drives dateFrom/dateTo).
+  const [periodSel, setPeriodSel] = useState<string>(initialDateFrom || initialDateTo ? "custom" : "all");
+  // Optional filters explicitly added via "+ Filtro" (shown even before having a value).
+  const [addedFilters, setAddedFilters] = useState<Set<string>>(new Set());
+  // Saved filter views (D), persisted in localStorage.
+  const [savedViews, setSavedViews] = useState<{ name: string; snap: Record<string, unknown> }[]>(() => {
+    try { return JSON.parse(localStorage.getItem("scf-tx-views") || "[]"); } catch { return []; }
+  });
   const [weekday] = useState<number | undefined>(initialWeekday);
   const [sortBy, setSortBy] = useState("transaction_date");
   const [sortDir, setSortDir] = useState("desc");
@@ -895,7 +1026,18 @@ export function TransactionExplorer({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showDuplicates, setShowDuplicates] = useState(false);
   const [showAccounts, setShowAccounts] = useState(false);
-  const [showFilters, setShowFilters] = useState(false);
+  // "Categorizar em grupo" mode (agrupa pendentes por comerciante).
+  const [groupMode, setGroupMode] = useState(false);
+  const [groupSortBy, setGroupSortBy] = useState<"name" | "count" | "total">("count");
+  const [groupSortDir, setGroupSortDir] = useState<"asc" | "desc">("desc");
+  const [groupCreateRule, setGroupCreateRule] = useState(true);
+  const [groupPage, setGroupPage] = useState(0);
+  const [groupPageSize, setGroupPageSize] = useState(50);
+  // "Revisar 1 a 1" focused mode + current index in the review queue.
+  const [reviewOne, setReviewOne] = useState(false);
+  const [reviewIdx, setReviewIdx] = useState(0);
+  const [reviewOffset, setReviewOffset] = useState(0);
+  const [ruleTx, setRuleTx] = useState<TransactionRead | null>(null);
   const [duplicatePage, setDuplicatePage] = useState(0);
   const [activeReviewGroup, setActiveReviewGroup] = useState<DuplicateTransactionGroup | null>(null);
   const [keepId, setKeepId] = useState("");
@@ -906,6 +1048,34 @@ export function TransactionExplorer({
   const duplicatePageSize = 10;
   const categories = useCategories(session);
   const categoryOptions = useMemo(() => orderedCategoryOptions(categories.data?.items ?? []), [categories.data?.items]);
+  // Inline category creation: a select asks to create one, we remember which
+  // target to apply the new category to, then open the shared CatModal.
+  const [newCat, setNewCat] = useState<{ apply: (categoryId: string) => void } | null>(null);
+  const openNewCategory = useMemo(() => (apply: (categoryId: string) => void) => setNewCat({ apply }), []);
+  // Mirrors the Categories page creation: a category (with color/icon and any
+  // initial subs) or a single subcategory — then applies the new id to the target.
+  const createCategoryInline = useMutation({
+    mutationFn: async (
+      input:
+        | { kind: "cat"; payload: { name: string; color: string; icon: string; subs: string[] } }
+        | { kind: "sub"; name: string; parentId: string },
+    ): Promise<string> => {
+      if (input.kind === "sub") {
+        const sub = await createCategory(session, input.name, input.parentId);
+        return sub.id;
+      }
+      const { name, color, icon, subs } = input.payload;
+      const parent = await createCategory(session, name, null, { color, icon });
+      for (const subName of subs) await createCategory(session, subName, parent.id, { color });
+      return parent.id;
+    },
+    onSuccess: (applyId, _input, ctx) => {
+      void queryClient.invalidateQueries({ queryKey: ["categories"] });
+      (ctx as { apply?: (id: string) => void } | undefined)?.apply?.(applyId);
+      setNewCat(null);
+    },
+    onMutate: () => ({ apply: newCat?.apply }),
+  });
 
   // Card brands for the "Bandeira" filter.
   const creditCards = useQuery({ queryKey: ["credit-cards", session.token], queryFn: () => getCreditCards(session), staleTime: 5 * 60 * 1000 });
@@ -913,6 +1083,22 @@ export function TransactionExplorer({
     () => [...new Set((creditCards.data?.items ?? []).map((c) => c.brand).filter((b): b is string => !!b))],
     [creditCards.data?.items],
   );
+
+  // Invoices (statements) for the "Fatura" filter — pick one to see exactly its
+  // transactions (filtered by the imported file). Labelled "<card> · mmm/aa · R$".
+  const statements = useQuery({ queryKey: ["credit-card-statements", session.token, "filter"], queryFn: () => getCreditCardStatements(session, ""), staleTime: 5 * 60 * 1000 });
+  const invoiceOptions = useMemo(() => {
+    const cardName = new Map((creditCards.data?.items ?? []).map((c) => [c.id, c.name]));
+    return (statements.data?.items ?? [])
+      .filter((s) => s.source_file_id)
+      .map((s) => {
+        const ref = s.due_date || s.statement_month;
+        const d = new Date(ref + "T00:00:00");
+        const my = Number.isNaN(d.getTime()) ? ref : `${d.toLocaleDateString("pt-BR", { month: "short" }).replace(".", "")}/${d.getFullYear()}`;
+        const total = s.total_amount ? ` · ${money(s.total_amount)}` : "";
+        return { id: s.source_file_id as string, label: `${cardName.get(s.credit_card_id) ?? "Cartão"} · ${my}${total}` };
+      });
+  }, [statements.data?.items, creditCards.data?.items]);
 
   // Two-level category filter: roots and (cascading) subcategories.
   const allCategories = categories.data?.items ?? [];
@@ -952,12 +1138,6 @@ export function TransactionExplorer({
     [allCategories],
   );
   // Subcategories of the selected categories (all subcategories when none selected).
-  const subcategoryOptions = useMemo(() => {
-    const parentName = new Map(allCategories.map((c) => [c.id, c.name]));
-    return allCategories
-      .filter((c) => c.parent_category_id && (categoryIds.size === 0 || categoryIds.has(c.parent_category_id)))
-      .map((c) => ({ id: c.id, name: `${parentName.get(c.parent_category_id!) ?? ""} › ${c.name}` }));
-  }, [allCategories, categoryIds]);
   // Effective ids sent to the API: selected subcategories, plus categories that
   // have no specific subcategory selected (backend expands a parent to its children).
   const effectiveCategoryIds = useMemo(() => {
@@ -970,6 +1150,7 @@ export function TransactionExplorer({
   }, [categoryIds, subcategoryIds, subParent]);
 
   const queryClient = useQueryClient();
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     const timer = setTimeout(() => { setSearch(searchInput); setPage(0); }, 300);
@@ -1017,6 +1198,78 @@ export function TransactionExplorer({
     return `?${params.toString()}`;
   }, [amountMax, amountMin, cardBrand, catSource, effectiveCategoryIds, dateFrom, dateTo, direction, fixedQuery, importJobId, reviewStatus, sourceFileId, page, pageSize, search, sortBy, sortDir, sourceType, statusFilter, weekday]);
   const transactions = useQuery({ queryKey: ["transactions", session.token, query], queryFn: () => getTransactions(session, query) });
+  // Review queue (modo Revisar 1 a 1): uncategorized OR pending suggestion.
+  const modeAmount = `${amountMin ? `&amount_min=${amountMin}` : ""}${amountMax ? `&amount_max=${amountMax}` : ""}`;
+  const uncategorizedGroups = useQuery({
+    queryKey: ["uncategorized-groups", session.token, groupPage, groupPageSize, groupSortBy, groupSortDir, search, amountMin, amountMax],
+    queryFn: () => getUncategorizedGroups(session, `?limit=${groupPageSize}&offset=${groupPage * groupPageSize}&sort_by=${groupSortBy}&sort_dir=${groupSortDir}${search ? `&q=${encodeURIComponent(search)}` : ""}${modeAmount}`),
+    enabled: groupMode,
+  });
+  const groupTotal = uncategorizedGroups.data?.total_groups ?? 0;
+  const groupPageCount = Math.max(1, Math.ceil(groupTotal / groupPageSize));
+  // Buscar tambem filtra os modos grupo/revisar; reinicia a paginacao ao mudar.
+  useEffect(() => { setGroupPage(0); setReviewOffset(0); setReviewIdx(0); }, [search, amountMin, amountMax]);
+  const categorizeGroup = useMutation({
+    mutationFn: async ({ ids, categoryId, rulePattern }: { ids: string[]; categoryId: string; rulePattern?: string }) => {
+      for (const id of ids) await updateTransactionCategory(session, id, categoryId);
+      if (rulePattern) {
+        await createRule(session, {
+          name: `Auto: ${rulePattern}`,
+          field: "description",
+          match_type: "contains",
+          pattern: rulePattern,
+          category_id: categoryId,
+          target_direction: null,
+          priority: 100,
+          active: true,
+        });
+      }
+      return { count: ids.length, rule: Boolean(rulePattern) };
+    },
+    onSuccess: ({ count, rule }) => {
+      setActionMessage(`Categoria aplicada em ${count} lançamento${count === 1 ? "" : "s"}${rule ? " · regra criada para futuras" : ""}.`);
+      void queryClient.invalidateQueries({ queryKey: ["uncategorized-groups"] });
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      void queryClient.invalidateQueries({ queryKey: ["rules"] });
+    },
+  });
+  // First significant words of a merchant description → a safe "contains" pattern.
+  const ruleTokens = (desc: string) => desc.split(/\s+/).filter((t) => t.length > 1).slice(0, 3).join(" ");
+  const REVIEW_BATCH = 100;
+  const reviewQueue = useQuery({
+    queryKey: ["transactions", "review-queue", session.token, reviewOffset, search, amountMin, amountMax],
+    queryFn: () => getTransactions(session, `?category_review_status=queue&sort_by=transaction_date&sort_dir=asc&limit=${REVIEW_BATCH}&offset=${reviewOffset}${search ? `&q=${encodeURIComponent(search)}` : ""}${modeAmount}`),
+    enabled: reviewOne,
+  });
+  const reviewItems = reviewQueue.data?.items ?? [];
+  const reviewTotal = reviewQueue.data?.total ?? reviewItems.length;
+  const reviewCurrent = reviewItems[Math.min(reviewIdx, Math.max(reviewItems.length - 1, 0))];
+  // Overall 1-based position across all batches.
+  const reviewPos = reviewOffset + Math.min(reviewIdx, Math.max(reviewItems.length - 1, 0)) + 1;
+  function reviewNext() {
+    if (reviewIdx < reviewItems.length - 1) { setReviewIdx((i) => i + 1); return; }
+    if (reviewOffset + reviewItems.length < reviewTotal) { setReviewOffset((o) => o + REVIEW_BATCH); setReviewIdx(0); }
+  }
+  function reviewPrev() {
+    if (reviewIdx > 0) { setReviewIdx((i) => i - 1); return; }
+    if (reviewOffset > 0) { setReviewOffset((o) => Math.max(o - REVIEW_BATCH, 0)); setReviewIdx(REVIEW_BATCH - 1); }
+  }
+  // After categorizing, the item leaves the queue: reload from the front.
+  function reviewAfterCategorize() {
+    setReviewOffset(0); setReviewIdx(0);
+    void reviewQueue.refetch();
+    void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+  }
+  useEffect(() => {
+    if (!reviewOne) return;
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "ArrowRight") reviewNext();
+      if (e.key === "ArrowLeft") reviewPrev();
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [reviewOne, reviewItems.length, reviewOffset, reviewIdx, reviewTotal]);
   const duplicatesQuery = `?limit=${duplicatePageSize}&offset=${duplicatePage * duplicatePageSize}`;
   const duplicates = useQuery({ queryKey: ["transaction-duplicates", session.token, duplicatesQuery], queryFn: () => getTransactionDuplicates(session, duplicatesQuery), enabled: showDuplicates });
   const activeAccounts = useQuery({ queryKey: ["active-accounts", session.token], queryFn: () => getActiveAccounts(session), staleTime: 2 * 60 * 1000 });
@@ -1134,7 +1387,7 @@ export function TransactionExplorer({
   const pagePayments = visibleTransactions.filter((t) => t.direction === "payment").reduce((total, t) => total + Math.abs(Number(t.amount)), 0);
   const pagePending = visibleTransactions.filter((t) => !t.category).length;
   const pageBalance = pageIncome - pageExpenses;
-  const hasInstallments = visibleTransactions.some((t) => t.installment_current != null && t.installment_total != null);
+  const hasInstallments = visibleTransactions.some((t) => t.installment_current != null);
   void pagePayments; void pageBalance;
   const allPageSelected = visibleTransactions.length > 0 && visibleTransactions.every((t) => selectedIds.has(t.id));
   const somePageSelected = selectedIds.size > 0;
@@ -1176,18 +1429,93 @@ export function TransactionExplorer({
     );
   };
 
-  function applyPeriodPreset(nextPreset: TransactionPeriodPreset) {
-    setPeriodPreset(nextPreset); setPage(0);
-    const range = periodRange(nextPreset);
-    setDateFrom(range.dateFrom); setDateTo(range.dateTo);
+  function clearFilters() { setSearchInput(""); setSearch(""); setSourceType(""); setCardBrand(""); setSourceFileId(""); setDirection(""); setStatusFilter(""); setCatSource(""); setReviewStatus(""); setCategoryIds(new Set()); setSubcategoryIds(new Set()); setAmountMin(""); setAmountMax(""); setPeriodPreset("all"); setDateFrom(""); setDateTo(""); setPeriodSel("all"); setAddedFilters(new Set()); setPage(0); setTab("all"); setAccountFilter("all"); }
+  function applyPeriodPreset(id: string) {
+    setPeriodSel(id);
+    if (id === "custom") return;
+    const r = rangeForPreset(id);
+    setDateFrom(r.from); setDateTo(r.to); setPage(0);
   }
-  void applyPeriodPreset;
+  function addFilter(id: string) { setAddedFilters((prev) => new Set([...prev, id])); }
+  function removeFilter(id: string, clear: () => void) { clear(); setAddedFilters((prev) => { const n = new Set(prev); n.delete(id); return n; }); setPage(0); }
+  // Saved views (D) — persisted in localStorage.
+  function applyView(snap: Record<string, unknown>) {
+    const s = snap as Record<string, string | string[] | undefined>;
+    setSearchInput((s.search as string) || ""); setSearch((s.search as string) || "");
+    setSourceType((s.sourceType as string) || ""); setCardBrand((s.cardBrand as string) || ""); setSourceFileId((s.sourceFileId as string) || "");
+    setAccountFilter((s.accountFilter as string) || "all"); setCatSource((s.catSource as string) || ""); setReviewStatus((s.reviewStatus as string) || "");
+    setCategoryIds(new Set((s.categoryIds as string[]) || [])); setSubcategoryIds(new Set((s.subcategoryIds as string[]) || []));
+    setAmountMin((s.amountMin as string) || ""); setAmountMax((s.amountMax as string) || "");
+    setDateFrom((s.dateFrom as string) || ""); setDateTo((s.dateTo as string) || ""); setPeriodSel((s.periodSel as string) || "all");
+    setPage(0);
+  }
+  function saveCurrentView() {
+    const name = window.prompt("Nome desta visão:");
+    if (!name?.trim()) return;
+    const snap = { search: searchInput, sourceType, cardBrand, sourceFileId, accountFilter, catSource, reviewStatus, categoryIds: [...categoryIds], subcategoryIds: [...subcategoryIds], amountMin, amountMax, dateFrom, dateTo, periodSel };
+    const next = [...savedViews.filter((v) => v.name !== name.trim()), { name: name.trim(), snap }];
+    setSavedViews(next);
+    try { localStorage.setItem("scf-tx-views", JSON.stringify(next)); } catch { /* ignore */ }
+  }
+  function deleteView(name: string) {
+    const next = savedViews.filter((v) => v.name !== name);
+    setSavedViews(next);
+    try { localStorage.setItem("scf-tx-views", JSON.stringify(next)); } catch { /* ignore */ }
+  }
+  // Filter fields shown as chips with inline controls. A field appears when it has
+  // a value OR was explicitly added via "+ Filtro"; "+ Filtro" lists the rest.
+  const fInput: React.CSSProperties = { padding: "6px 8px", borderRadius: 7, border: "1px solid var(--line)", background: "var(--card-2)", fontSize: 12.5, color: "var(--ink)" };
+  const cardOk = sourceType === "" || sourceType === "credit_card_statement";
+  const chipSelect: React.CSSProperties = { padding: "5px 8px", maxWidth: 190 };
+  const fieldDefs: { id: string; label: string; has: boolean; show: boolean; control: React.ReactNode; clear: () => void }[] = [
+    { id: "categoria", label: "Categoria", has: categoryIds.size + subcategoryIds.size > 0, show: true,
+      control: (<FlatMultiSelect placeholder="Todas" options={rootCategoryOptions} selected={categoryIds} onChange={(next) => { setSubcategoryIds((prev) => { if (next.size === 0) return prev; return new Set([...prev].filter((sid) => next.has(subParent.get(sid) ?? ""))); }); setCategoryIds(next); setPage(0); }} />),
+      clear: () => { setCategoryIds(new Set()); setSubcategoryIds(new Set()); } },
+    { id: "conta", label: "Conta", has: accountFilter !== "all", show: true,
+      control: (<select className="cat-select" style={chipSelect} value={accountFilter} onChange={(e) => { setAccountFilter(e.target.value); setPage(0); }}><option value="all">Todas</option>{accountOptions.map((a) => <option key={a} value={a}>{a}</option>)}</select>),
+      clear: () => setAccountFilter("all") },
+    { id: "tipo", label: "Tipo", has: sourceType !== "", show: true,
+      control: (<select className="cat-select" style={chipSelect} value={sourceType} onChange={(e) => { const v = e.target.value; setSourceType(v); if (v && v !== "credit_card_statement") { setCardBrand(""); setSourceFileId(""); } setPage(0); }}><option value="">Todas</option><option value="bank_statement">Conta corrente</option><option value="credit_card_statement">Cartão</option><option value="unknown">Manual/Outras</option></select>),
+      clear: () => { setSourceType(""); setCardBrand(""); setSourceFileId(""); } },
+    { id: "bandeira", label: "Bandeira", has: cardBrand !== "", show: cardOk && cardBrands.length > 0,
+      control: (<select className="cat-select" style={chipSelect} value={cardBrand} onChange={(e) => { setCardBrand(e.target.value); setPage(0); }}><option value="">Todas</option>{cardBrands.map((b) => <option key={b} value={b}>{b}</option>)}</select>),
+      clear: () => setCardBrand("") },
+    { id: "fatura", label: "Fatura", has: sourceFileId !== "", show: cardOk && invoiceOptions.length > 0,
+      control: (<select className="cat-select" style={chipSelect} value={sourceFileId} onChange={(e) => { setSourceFileId(e.target.value); setPage(0); }}><option value="">Todas</option>{invoiceOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}</select>),
+      clear: () => setSourceFileId("") },
+    { id: "valor", label: "Valor", has: !!(amountMin || amountMax), show: true,
+      control: (<span style={{ display: "inline-flex", gap: 4 }}><input type="number" placeholder="0" value={amountMin} min="0" onChange={(e) => { setAmountMin(e.target.value); setPage(0); }} style={{ ...fInput, width: 70 }} /><input type="number" placeholder="∞" value={amountMax} min="0" onChange={(e) => { setAmountMax(e.target.value); setPage(0); }} style={{ ...fInput, width: 70 }} /></span>),
+      clear: () => { setAmountMin(""); setAmountMax(""); } },
+    { id: "categorizacao", label: "Categorização", has: catSource !== "", show: true,
+      control: (<select className="cat-select" style={chipSelect} value={catSource} onChange={(e) => { setCatSource(e.target.value); setPage(0); }}><option value="">Todas</option><option value="rule">Por regra</option><option value="embedding">Por memória</option><option value="llm">Por IA</option><option value="manual">Manual</option><option value="__none__">Sem categoria</option></select>),
+      clear: () => setCatSource("") },
+    { id: "revisao", label: "Revisão", has: reviewStatus !== "", show: true,
+      control: (<select className="cat-select" style={chipSelect} value={reviewStatus} onChange={(e) => { setReviewStatus(e.target.value); setPage(0); }}><option value="">Todas</option><option value="queue">A revisar</option><option value="pending">Pendentes</option><option value="accepted">Confirmadas</option></select>),
+      clear: () => setReviewStatus("") },
+  ];
+  const visibleFields = fieldDefs.filter((f) => f.show && (f.has || addedFilters.has(f.id)));
+  const availableFields = fieldDefs.filter((f) => f.show && !(f.has || addedFilters.has(f.id)));
 
-  function updateDateFrom(value: string) { setPeriodPreset("custom"); setDateFrom(value); setPage(0); }
-  function updateDateTo(value: string) { setPeriodPreset("custom"); setDateTo(value); setPage(0); }
-  void updateDateFrom; void updateDateTo;
+  // Smart-search suggestions: text search stays live; this dropdown offers
+  // structured filters (valor, categoria, atalhos) the user clicks to apply.
+  const sq = searchInput.trim();
+  const sqNum = Number(sq.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", "."));
+  const sqHasNumber = sq !== "" && !Number.isNaN(sqNum) && sqNum > 0;
+  const searchSuggestions: { key: string; label: string; apply: () => void }[] = [];
+  if (sq) {
+    if (sqHasNumber) {
+      searchSuggestions.push({ key: "amin", label: `Valor a partir de R$ ${sqNum.toLocaleString("pt-BR")}`, apply: () => { setAmountMin(String(sqNum)); setSearchInput(""); setSearch(""); setPage(0); setSearchOpen(false); } });
+      searchSuggestions.push({ key: "amax", label: `Valor até R$ ${sqNum.toLocaleString("pt-BR")}`, apply: () => { setAmountMax(String(sqNum)); setSearchInput(""); setSearch(""); setPage(0); setSearchOpen(false); } });
+    }
+    const low = sq.toLowerCase();
+    rootCategoryOptions
+      .filter((o) => o.name.toLowerCase().includes(low))
+      .slice(0, 4)
+      .forEach((o) => searchSuggestions.push({ key: `cat-${o.id}`, label: `Categoria: ${o.name}`, apply: () => { setCategoryIds(new Set([o.id])); setSubcategoryIds(new Set()); setSearchInput(""); setSearch(""); setPage(0); setSearchOpen(false); } }));
+    if ("sem categoria".includes(low)) searchSuggestions.push({ key: "nocat", label: "Sem categoria", apply: () => { setCatSource("__none__"); setSearchInput(""); setSearch(""); setPage(0); setSearchOpen(false); } });
+    if ("cartao".includes(low) || "cartão".includes(low)) searchSuggestions.push({ key: "card", label: "Só cartão de crédito", apply: () => { setSourceType("credit_card_statement"); setSearchInput(""); setSearch(""); setPage(0); setSearchOpen(false); } });
+  }
 
-  function clearFilters() { setSearchInput(""); setSearch(""); setSourceType(""); setCardBrand(""); setDirection(""); setStatusFilter(""); setCatSource(""); setReviewStatus(""); setCategoryIds(new Set()); setSubcategoryIds(new Set()); setAmountMin(""); setAmountMax(""); setPeriodPreset("all"); setDateFrom(""); setDateTo(""); setPage(0); setTab("all"); setAccountFilter("all"); }
   function openGroupReview(group: DuplicateTransactionGroup) { setActiveReviewGroup(group); setKeepId(duplicatePrimaryId(group)); }
   function resolveGroup() { if (!activeReviewGroup || !keepId) return; const deleteIds = activeReviewGroup.items.map((i) => i.id).filter((id) => id !== keepId); if (!deleteIds.length) return; removeDuplicateReviewItems.mutate(deleteIds); }
   function autoResolveAllGroups() {
@@ -1217,11 +1545,18 @@ export function TransactionExplorer({
     ? `${pagePending} transações precisam de revisão.`
     : `Consulte, filtre, revise e categorize.${pagePending > 0 ? ` ${pagePending} transações precisam de revisão.` : " Tudo revisado."}`;
 
-  const fGroup: React.CSSProperties = { display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 };
-  const fLabel: React.CSSProperties = { fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: "var(--ink-3)", minWidth: 78, flex: "none", whiteSpace: "nowrap" };
-  const fInput: React.CSSProperties = { padding: "6px 8px", borderRadius: 7, border: "1px solid var(--line)", background: "var(--card-2)", fontSize: 12.5, color: "var(--ink)" };
 
   return (
+    <NewCategoryContext.Provider value={openNewCategory}>
+    {newCat ? (
+      <CatModal
+        state={{ kind: "cat" }}
+        categories={allCategories}
+        onClose={() => setNewCat(null)}
+        onSaveCat={(payload) => createCategoryInline.mutate({ kind: "cat", payload: { name: payload.name, color: payload.color, icon: payload.icon, subs: payload.subs } })}
+        onSaveSub={(name, parentId) => createCategoryInline.mutate({ kind: "sub", name, parentId })}
+      />
+    ) : null}
     <div className="canvas stg">
       {/* ── Page header ── */}
       <div style={{ marginBottom: 18 }}>
@@ -1242,7 +1577,7 @@ export function TransactionExplorer({
       </div>
 
       {/* ── KPI deck (4 tiles, reflect the active filters) ── */}
-      {!reviewMode && (
+      {!reviewMode && !showDuplicates && !reviewOne && !groupMode && (
         <div className="grid cols-4" style={{ marginBottom: 16 }}>
           {/* Quantidade */}
           <div className="kpi">
@@ -1262,7 +1597,7 @@ export function TransactionExplorer({
               <span className="kpi-label">Entradas</span>
             </div>
             <div className="kpi-val" style={{ color: "var(--acc)" }}>
-              <span className="cur">R$</span>{compactMoneyAbs(kpiIncome)}
+              <span className="cur">R$</span>{compactValueAbs(kpiIncome)}
             </div>
             <div className="kpi-sub">Total de entradas</div>
           </div>
@@ -1273,7 +1608,7 @@ export function TransactionExplorer({
               <span className="kpi-label">Saídas</span>
             </div>
             <div className="kpi-val" style={{ color: "var(--ink)" }}>
-              <span className="cur">R$</span>{compactMoneyAbs(kpiExpenses)}
+              <span className="cur">R$</span>{compactValueAbs(kpiExpenses)}
             </div>
             <div className="kpi-sub">Total de saídas</div>
           </div>
@@ -1284,7 +1619,7 @@ export function TransactionExplorer({
               <span className="kpi-label">Resultado</span>
             </div>
             <div className="kpi-val" style={{ color: kpiResult >= 0 ? "var(--acc)" : "var(--neg)" }}>
-              <span className="cur">R$</span>{compactMoneyAbs(kpiResult)}
+              <span className="cur">R$</span>{compactValueAbs(kpiResult)}
             </div>
             <div className="kpi-sub">Entradas − saídas</div>
           </div>
@@ -1302,8 +1637,10 @@ export function TransactionExplorer({
             </span>
             <input
               value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="Buscar por descrição…"
+              onChange={(e) => { setSearchInput(e.target.value); setSearchOpen(true); }}
+              onFocus={() => setSearchOpen(true)}
+              onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
+              placeholder="Buscar: descrição, valor, categoria…"
               style={{ width: "100%", padding: "8px 12px 8px 34px", borderRadius: 9, border: "1px solid var(--line)", fontSize: 13, background: "var(--card-2)", color: "var(--ink)" }}
             />
             {searchInput ? (
@@ -1313,6 +1650,16 @@ export function TransactionExplorer({
                 style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--ink-3)", fontSize: 16, lineHeight: 1 }}
               >×</button>
             ) : null}
+            {searchOpen && searchSuggestions.length > 0 && (
+              <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 30, background: "var(--card)", border: "1px solid var(--line)", borderRadius: 10, boxShadow: "var(--sh-pop)", overflow: "hidden" }}>
+                <div style={{ padding: "6px 12px", fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".5px", color: "var(--ink-faint)" }}>Filtrar por</div>
+                {searchSuggestions.map((s) => (
+                  <button key={s.key} type="button" onMouseDown={(e) => { e.preventDefault(); s.apply(); }} style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 12px", background: "none", border: "none", borderTop: "1px solid var(--line)", cursor: "pointer", fontSize: 13, color: "var(--ink)" }}>
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           {/* Segment tabs */}
           <div className="seg">
@@ -1338,20 +1685,68 @@ export function TransactionExplorer({
           {/* Filters + advanced toggles */}
           {!reviewMode && (
             <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
-              <button className={`btn btn-sm ${showFilters || activeFilterCount > 0 ? "btn-primary" : "btn-ghost"}`} onClick={() => setShowFilters((c) => !c)} type="button">
-                <TIcon name="filter" size={13} /> Filtros
-                {activeFilterCount > 0 ? <span className="badge" style={{ marginLeft: 5, padding: "1px 6px", fontSize: 10, background: "rgba(255,255,255,.25)" }}>{activeFilterCount}</span> : null}
+              <button className={`btn btn-sm ${groupMode ? "btn-primary" : "btn-ghost"}`} onClick={() => { setGroupMode((c) => !c); setReviewOne(false); setShowDuplicates(false); }} type="button">
+                <TIcon name="list" size={13} /> Categorizar em grupo
               </button>
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowDuplicates((c) => !c)} type="button">
+              <button className={`btn btn-sm ${reviewOne ? "btn-primary" : "btn-ghost"}`} onClick={() => { setReviewOne((c) => !c); setGroupMode(false); setShowDuplicates(false); setReviewIdx(0); }} type="button">
+                <TIcon name="check" size={13} /> Revisar 1 a 1
+              </button>
+              <button className={`btn btn-sm ${showDuplicates ? "btn-primary" : "btn-ghost"}`} onClick={() => { setShowDuplicates((c) => !c); setGroupMode(false); setReviewOne(false); setShowAccounts(false); }} type="button">
                 <TIcon name="filter" size={13} /> Duplicados
                 {duplicates.data?.total_groups ? <span className="badge b-warn" style={{ marginLeft: 4, padding: "1px 6px", fontSize: 10 }}>{duplicates.data.total_groups}</span> : null}
               </button>
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowAccounts((c) => !c)} type="button">
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowAccounts(true)} type="button">
                 <TIcon name="info" size={13} /> Contas
               </button>
             </div>
           )}
         </div>
+
+        {/* Filter bar: período + visões salvas + filtros (chips com controle) + "+ Filtro" */}
+        {!reviewMode && !showDuplicates && !reviewOne && !groupMode && (
+          <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8, padding: "10px 14px", borderBottom: "1px solid var(--line)" }}>
+            {/* Período */}
+            <div className="fbox">
+              <span className="fbox-lbl">Período</span>
+              <select className="cat-select" style={{ padding: "5px 8px" }} value={periodSel} onChange={(e) => applyPeriodPreset(e.target.value)}>
+                {PERIOD_OPTIONS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+              </select>
+              {periodSel === "custom" && (
+                <DateRangePicker from={dateFrom} to={dateTo} onChange={(f, t) => { setDateFrom(f); setDateTo(t); setPage(0); }} />
+              )}
+            </div>
+
+            {/* Visões salvas */}
+            {savedViews.map((v) => (
+              <span key={v.name} className="chip" onClick={() => applyView(v.snap)} title="Aplicar visão" style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <TIcon name="star" size={12} />{v.name}
+                <span aria-hidden onClick={(e) => { e.stopPropagation(); deleteView(v.name); }} style={{ opacity: 0.6 }}>✕</span>
+              </span>
+            ))}
+
+            {/* Filtros ativos/adicionados, cada um com seu controle */}
+            {visibleFields.map((f) => (
+              <div key={f.id} className="fbox">
+                <span className="fbox-lbl">{f.label}</span>
+                {f.control}
+                <button type="button" className="fbox-x" title="Remover filtro" onClick={() => removeFilter(f.id, f.clear)}>✕</button>
+              </div>
+            ))}
+
+            {/* + Filtro */}
+            {availableFields.length > 0 && (
+              <select className="chip" style={{ cursor: "pointer" }} value="" onChange={(e) => { if (e.target.value) addFilter(e.target.value); }}>
+                <option value="">+ Filtro</option>
+                {availableFields.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+              </select>
+            )}
+
+            <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+              <button type="button" className="btn btn-quiet btn-sm" onClick={saveCurrentView}>Salvar visão</button>
+              {activeFilterCount > 0 && <button type="button" className="btn btn-quiet btn-sm" onClick={clearFilters}>Limpar</button>}
+            </div>
+          </div>
+        )}
 
         {/* Advanced filter panels (collapsible) */}
         {showDuplicates && !reviewMode && (
@@ -1372,99 +1767,151 @@ export function TransactionExplorer({
             />
           </div>
         )}
-        {showAccounts && !reviewMode && (
-          <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--line)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-              <TIcon name="info" size={14} />
-              <span style={{ fontWeight: 700, fontSize: 13.5, color: "var(--ink)" }}>Contas e cartões</span>
-              <span style={{ fontSize: 12, color: "var(--ink-3)", marginLeft: 4 }}>Detectados nos arquivos importados</span>
-            </div>
-            <ActiveAccountsPanel accounts={activeAccounts.data?.items ?? []} loading={activeAccounts.isLoading} />
+
+        {/* Modo Revisar 1 a 1 */}
+        {reviewOne && !reviewMode && (
+          <div style={{ padding: "20px 14px" }}>
+            {reviewQueue.isLoading ? (
+              <div className="state"><div className="state-ic"><TIcon name="refresh" size={22} /></div><h4>Carregando fila…</h4></div>
+            ) : reviewItems.length === 0 ? (
+              <div className="state"><div className="state-ic"><TIcon name="check" size={22} /></div><h4>Tudo revisado! 🎉</h4><p>Nenhuma transação pendente de categoria.</p>
+                <button className="btn btn-primary btn-sm" type="button" style={{ marginTop: 10 }} onClick={() => setReviewOne(false)}>Sair do modo revisar</button>
+              </div>
+            ) : reviewCurrent ? (
+              <div className="card card-pad" style={{ maxWidth: 560, margin: "0 auto", display: "flex", flexDirection: "column", gap: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span className="t-sub">Revisando {reviewPos} de {reviewTotal} a revisar</span>
+                  <button className="btn btn-quiet btn-sm" type="button" onClick={() => setReviewOne(false)}>Sair</button>
+                </div>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: "var(--ink)" }}>{reviewCurrent.description}</div>
+                  {reviewCurrent.raw_description !== reviewCurrent.description && <div className="t-sub">{reviewCurrent.raw_description}</div>}
+                </div>
+                <div style={{ display: "flex", gap: 18, flexWrap: "wrap", fontSize: 13 }}>
+                  <div><div className="t-sub">Valor</div><div className="mono" style={{ fontWeight: 700, color: reviewCurrent.direction === "credit" ? "var(--acc)" : "var(--ink)" }}>{reviewCurrent.direction === "credit" ? "+" : "-"}{moneyAbs(reviewCurrent.amount)}</div></div>
+                  <div><div className="t-sub">Data</div><div className="mono">{dateLabel(reviewCurrent.transaction_date)}</div></div>
+                  {reviewCurrent.account_or_card && <div><div className="t-sub">Conta/Cartão</div><div>{reviewCurrent.account_or_card}</div></div>}
+                </div>
+                <div>
+                  <div className="t-sub" style={{ marginBottom: 4 }}>Categoria</div>
+                  <CategoryPicker categoryGroups={categoryGroups} session={session} transaction={reviewCurrent} onCategorized={reviewAfterCategorize} />
+                  {reviewCurrent.category && (
+                    <button className="btn btn-quiet btn-sm" type="button" style={{ marginTop: 8 }} onClick={() => setRuleTx(reviewCurrent)}>
+                      <TIcon name="tag" size={13} /> Criar regra (aplicar a parecidas)
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <button className="btn btn-ghost btn-sm" type="button" disabled={reviewOffset === 0 && reviewIdx === 0} onClick={reviewPrev}><TIcon name="chevL" size={13} /> Anterior</button>
+                  <button className="btn btn-ghost btn-sm" type="button" disabled={reviewPos >= reviewTotal} onClick={reviewNext}>Pular <TIcon name="chevR" size={13} /></button>
+                  <span className="t-sub" style={{ marginLeft: "auto", fontSize: 11.5 }}>← → para navegar</span>
+                </div>
+              </div>
+            ) : null}
           </div>
         )}
 
-        {/* Filters panel (grouped, collapsible) */}
-        {!reviewMode && (showFilters || activeFilterCount > 0) && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "12px 14px", borderBottom: "1px solid var(--line)" }}>
-            {/* Categoria */}
-            <div style={fGroup}>
-              <span style={fLabel}>Categoria</span>
-              <FlatMultiSelect
-                placeholder="Todas as categorias"
-                options={rootCategoryOptions}
-                selected={categoryIds}
-                onChange={(next) => {
-                  setSubcategoryIds((prev) => {
-                    if (next.size === 0) return prev;
-                    return new Set([...prev].filter((sid) => next.has(subParent.get(sid) ?? "")));
-                  });
-                  setCategoryIds(next);
-                  setPage(0);
-                }}
-              />
-              <FlatMultiSelect
-                placeholder="Todas as subcategorias"
-                options={subcategoryOptions}
-                selected={subcategoryIds}
-                onChange={(next) => { setSubcategoryIds(next); setPage(0); }}
-                emptyLabel={categoryIds.size > 0 ? "Sem subcategorias nesta categoria" : "Selecione categorias ou veja todas"}
-              />
-              <select className={`cat-select${catSource ? " active" : ""}`} value={catSource} onChange={(e) => { setCatSource(e.target.value); setPage(0); }} style={{ padding: "7px 10px" }} title="Como a transação foi categorizada">
-                <option value="">Categorizado por (todos)</option>
-                <option value="rule">Por regra</option>
-                <option value="embedding">Por memória (similaridade)</option>
-                <option value="llm">Por IA</option>
-                <option value="manual">Manual</option>
-                <option value="__none__">Sem categoria</option>
-              </select>
-              <select className={`cat-select${reviewStatus ? " active" : ""}`} value={reviewStatus} onChange={(e) => { setReviewStatus(e.target.value); setPage(0); }} style={{ padding: "7px 10px" }} title="Status de revisão da categorização">
-                <option value="">Revisão: todas</option>
-                <option value="queue">A revisar (fila)</option>
-                <option value="pending">Sugestões pendentes</option>
-                <option value="accepted">Confirmadas</option>
-              </select>
+        {/* Modo Categorizar em grupo (por comerciante) */}
+        {groupMode && !reviewMode && (
+          <div style={{ padding: "16px 14px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>Categorizar em grupo</div>
+                <div className="t-sub" style={{ fontSize: 12 }}>Lançamentos sem categoria agrupados por comerciante — categorize vários de uma vez.</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, cursor: "pointer" }} title="Cria uma regra que categoriza automaticamente futuras importações deste comerciante">
+                  <input type="checkbox" checked={groupCreateRule} onChange={(e) => setGroupCreateRule(e.target.checked)} />
+                  Criar regra para futuras
+                </label>
+                {uncategorizedGroups.data ? <span className="t-sub">{uncategorizedGroups.data.total_groups} grupos</span> : null}
+              </div>
             </div>
-            {/* Origem */}
-            <div style={fGroup}>
-              <span style={fLabel}>Origem</span>
-              <select value={accountFilter} onChange={(e) => { setAccountFilter(e.target.value); setPage(0); }} className={`cat-select${accountFilter !== "all" ? " active" : ""}`} style={{ padding: "7px 10px" }}>
-                <option value="all">Todas as contas</option>
-                {accountOptions.map((a) => <option key={a} value={a}>{a}</option>)}
-              </select>
-              <select className={`cat-select${sourceType ? " active" : ""}`} value={sourceType} onChange={(e) => { setSourceType(e.target.value); setPage(0); }} style={{ padding: "7px 10px" }}>
-                <option value="">Todas as origens</option>
-                <option value="bank_statement">Conta corrente</option>
-                <option value="credit_card_statement">Cartão de crédito</option>
-                <option value="unknown">Manual / Outras</option>
-              </select>
-              {cardBrands.length > 0 && (
-                <select className={`cat-select${cardBrand ? " active" : ""}`} value={cardBrand} onChange={(e) => { setCardBrand(e.target.value); setPage(0); }} style={{ padding: "7px 10px" }}>
-                  <option value="">Todas as bandeiras</option>
-                  {cardBrands.map((b) => <option key={b} value={b}>{b}</option>)}
-                </select>
-              )}
-            </div>
-            {/* Período + Valor */}
-            <div style={fGroup}>
-              <span style={fLabel}>Período</span>
-              <input type="date" value={dateFrom} onChange={(e) => { setPeriodPreset("custom"); setDateFrom(e.target.value); setPage(0); }} style={fInput} placeholder="De" />
-              <span style={{ color: "var(--ink-faint)", fontSize: 12 }}>até</span>
-              <input type="date" value={dateTo} onChange={(e) => { setPeriodPreset("custom"); setDateTo(e.target.value); setPage(0); }} style={fInput} placeholder="Até" />
-              <span style={{ ...fLabel, minWidth: "auto", marginLeft: 12 }}>Valor</span>
-              <input type="number" placeholder="De R$" value={amountMin} min="0" onChange={(e) => { setAmountMin(e.target.value); setPage(0); }} style={{ ...fInput, width: 90 }} />
-              <input type="number" placeholder="Até R$" value={amountMax} min="0" onChange={(e) => { setAmountMax(e.target.value); setPage(0); }} style={{ ...fInput, width: 90 }} />
-              {activeFilterCount > 0 && (
-                <button className="btn btn-quiet btn-sm" onClick={clearFilters} type="button" style={{ marginLeft: "auto" }}>Limpar filtros ({activeFilterCount})</button>
-              )}
-            </div>
+            {uncategorizedGroups.isLoading ? (
+              <div className="state"><div className="state-ic"><TIcon name="refresh" size={22} /></div><h4>Agrupando…</h4></div>
+            ) : (uncategorizedGroups.data?.groups.length ?? 0) === 0 ? (
+              <div className="state"><div className="state-ic"><TIcon name="check" size={22} /></div><h4>Nada sem categoria! 🎉</h4></div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table className="tbl">
+                  <thead><tr>
+                    {([["name", "Comerciante", ""], ["count", "Lançamentos", "num"], ["total", "Total", "num"]] as const).map(([col, label, cls]) => (
+                      <th
+                        key={col}
+                        className={cls}
+                        onClick={() => { if (groupSortBy === col) setGroupSortDir((d) => (d === "asc" ? "desc" : "asc")); else { setGroupSortBy(col); setGroupSortDir(col === "name" ? "asc" : "desc"); } setGroupPage(0); }}
+                        style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}
+                      >
+                        {label} <span style={{ fontSize: 10, color: groupSortBy === col ? "var(--acc)" : "var(--ink-faint)" }}>{groupSortBy === col ? (groupSortDir === "asc" ? "▲" : "▼") : "⇅"}</span>
+                      </th>
+                    ))}
+                    <th style={{ minWidth: 220 }}>Categoria</th>
+                  </tr></thead>
+                  <tbody>
+                    {(uncategorizedGroups.data?.groups ?? []).map((g) => (
+                      <tr key={g.key}>
+                        <td><span className="t-desc">{g.sample_description}</span></td>
+                        <td className="num mono">{g.count}</td>
+                        <td className="num mono" style={{ color: "var(--neg)" }}>{moneyAbs(g.total)}</td>
+                        <td>
+                          <select
+                            className="cat-select"
+                            style={{ width: "100%" }}
+                            disabled={categorizeGroup.isPending}
+                            value=""
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              if (!value) return;
+                              const rulePattern = groupCreateRule ? ruleTokens(g.sample_description) : undefined;
+                              if (value === NEW_CATEGORY_VALUE) { setNewCat({ apply: (id) => categorizeGroup.mutate({ ids: g.ids, categoryId: id, rulePattern }) }); return; }
+                              categorizeGroup.mutate({ ids: g.ids, categoryId: value, rulePattern });
+                            }}
+                          >
+                            <option value="">{categorizeGroup.isPending ? "Aplicando…" : `Categorizar ${g.count} →`}</option>
+                            {categoryOptions.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                            <option value={NEW_CATEGORY_VALUE}>＋ Nova categoria…</option>
+                          </select>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {groupTotal > 0 && (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                    <span className="t-sub" style={{ fontSize: 12 }}>{groupPage * groupPageSize + 1}–{Math.min((groupPage + 1) * groupPageSize, groupTotal)} de {groupTotal} grupos</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <button className="btn btn-ghost btn-sm" type="button" disabled={groupPage === 0 || uncategorizedGroups.isFetching} onClick={() => setGroupPage((p) => Math.max(p - 1, 0))}><TIcon name="chevL" size={13} /></button>
+                      <span className="t-sub" style={{ fontSize: 12 }}>{groupPage + 1}/{groupPageCount}</span>
+                      <button className="btn btn-ghost btn-sm" type="button" disabled={groupPage + 1 >= groupPageCount || uncategorizedGroups.isFetching} onClick={() => setGroupPage((p) => p + 1)}><TIcon name="chevR" size={13} /></button>
+                      <select value={groupPageSize} onChange={(e) => { setGroupPageSize(Number(e.target.value)); setGroupPage(0); }} className="cat-select" style={{ padding: "4px 8px" }}>
+                        <option value={25}>25 / pág</option>
+                        <option value={50}>50 / pág</option>
+                        <option value={100}>100 / pág</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
+
+        {showAccounts && !reviewMode && (
+          <SimpleDrawer title="Contas e cartões" onClose={() => setShowAccounts(false)}>
+            <div style={{ padding: "16px 20px" }}>
+              <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 12 }}>Detectados nos arquivos importados.</div>
+              <ActiveAccountsPanel accounts={activeAccounts.data?.items ?? []} loading={activeAccounts.isLoading} />
+            </div>
+          </SimpleDrawer>
+        )}
+
 
         {/* Action message */}
         {actionMessage ? (
           <div style={{ padding: "0 14px" }}><InlineSuccess message={actionMessage} /></div>
         ) : null}
 
+        {!showDuplicates && !reviewOne && !groupMode && (<>
         {/* Selection bar */}
         {somePageSelected ? (
           <div className="selbar">
@@ -1476,11 +1923,13 @@ export function TransactionExplorer({
               onChange={(e) => {
                 const val = e.target.value;
                 if (val === "__placeholder__") return;
+                if (val === NEW_CATEGORY_VALUE) { const ids = [...selectedIds]; setNewCat({ apply: (id) => bulkCategorize.mutate({ ids, categoryId: id }) }); return; }
                 bulkCategorize.mutate({ ids: [...selectedIds], categoryId: val === "__remove__" ? null : val });
               }}
               style={{ padding: "5px 8px" }}
             >
               <option value="__placeholder__">{bulkCategorize.isPending ? "Aplicando…" : "Categorizar em lote"}</option>
+              <option value={NEW_CATEGORY_VALUE}>＋ Nova categoria…</option>
               <option value="__remove__">— Remover categoria</option>
               {categoryOptions.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
             </select>
@@ -1522,6 +1971,24 @@ export function TransactionExplorer({
               <div className="state-ic"><TIcon name="search" size={22} /></div>
               <h4>Nenhuma transação encontrada</h4>
               <p>{emptyMessage}</p>
+              {activeFilterCount > 0 && (
+                <button className="btn btn-primary btn-sm" type="button" onClick={clearFilters} style={{ marginTop: 10 }}>Limpar filtros</button>
+              )}
+            </div>
+          ) : isMobile ? (
+            <div className="tx-card-list">
+              {visibleTransactions.map((transaction) => (
+                <TransactionCard
+                  key={transaction.id}
+                  categoryGroups={categoryGroups}
+                  session={session}
+                  transaction={transaction}
+                  selected={selectedIds.has(transaction.id)}
+                  onSelect={() => onSelect(selected?.id === transaction.id ? null : transaction)}
+                  onCategorized={handleCategoryChanged}
+                  onToggleSelect={(id) => { setSelectedIds((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; }); }}
+                />
+              ))}
             </div>
           ) : (
             <table className="tbl">
@@ -1535,15 +2002,11 @@ export function TransactionExplorer({
                       onChange={(e) => { if (e.target.checked) setSelectedIds(new Set(visibleTransactions.map((t) => t.id))); else setSelectedIds(new Set()); }}
                     />
                   </th>
-                  {sortTh("Data", "transaction_date")}
+                  {sortTh("Data / Fatura", "transaction_date")}
                   {sortTh("Descrição", "description")}
                   <th>Categoria</th>
-                  <th>Subcategoria</th>
                   <th>Conta</th>
-                  {sortTh("Origem", "source_type")}
-                  {hasInstallments ? <th>Parcela</th> : null}
                   {sortTh("Valor", "amount", "num")}
-                  <th>Status</th>
                   <th style={{ width: 72 }} />
                 </tr>
               </thead>
@@ -1585,6 +2048,7 @@ export function TransactionExplorer({
             </select>
           </div>
         </div>
+        </>)}
       </div>
 
       {/* Error banners */}
@@ -1593,6 +2057,9 @@ export function TransactionExplorer({
       {bulkDelete.isError ? <InlineError message={apiErrorMessage(bulkDelete.error, "Falha ao excluir transações selecionadas.")} /> : null}
 
       {/* ── Drawers ── */}
+      {ruleTx ? (
+        <RuleFromTxModal transaction={ruleTx} categories={categories.data?.items ?? []} session={session} onClose={() => setRuleTx(null)} />
+      ) : null}
       {selected ? (
         <SimpleDrawer title="Detalhe da transação" onClose={() => onSelect(null)}>
           <TransactionDetail
@@ -1632,5 +2099,6 @@ export function TransactionExplorer({
         </SimpleDrawer>
       ) : null}
     </div>
+    </NewCategoryContext.Provider>
   );
 }

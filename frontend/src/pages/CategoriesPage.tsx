@@ -5,27 +5,39 @@ import {
   applyRules,
   categorizePending,
   createCategory,
+  createMerchantAlias,
   createRule,
   deleteCategory,
+  deleteMerchantAlias,
   deleteRule,
   getCategoryRanking,
   getDataQuality,
+  getMerchantAliases,
   getSubcategoryRanking,
   getRulePreview,
   getRules,
+  normalizeTransactionDescriptions,
   updateCategory,
+  updateMerchantAlias,
   updateRule,
 } from "../lib/api";
 import {
   apiErrorMessage,
   categoryChartColor,
-  CATEGORY_HEX_PALETTE,
   categoryPath,
   dateLabel,
   directionLabel,
   moneyAbs,
   orderedCategoryOptions,
 } from "../lib/utils";
+import {
+  CatModal,
+  CIcon,
+  CAT_PALETTE,
+  CAT_ICON_OPTIONS,
+  defaultCatIcon,
+} from "../components/CatModal";
+import type { CatModalState } from "../components/CatModal";
 import { Tags } from "lucide-react";
 import { useCategories, useHasTransactions } from "../hooks";
 import {
@@ -43,90 +55,14 @@ import type {
   ApiSession,
   CategorizationRuleRead,
   CategoryRead,
+  MerchantAliasMatchType,
   RulePreview,
   TransactionRead,
 } from "../lib/api";
 import type { PeriodState, RuleFormState, TransactionDrilldown } from "../types";
 
-// ---------------------------------------------------------------------------
-// SVG Icons
-// ---------------------------------------------------------------------------
-
-const C_ICONS: Record<string, string> = {
-  tag:     "M12 2H7a1 1 0 0 0-1 1v5l9.29 9.29a1 1 0 0 0 1.41 0l4.3-4.3a1 1 0 0 0 0-1.41L12 2z M7 7h.01",
-  folder:  "M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z",
-  plus:    "M12 5v14 M5 12h14",
-  search:  "M10 10m-6 0a6 6 0 1 0 12 0a6 6 0 1 0-12 0 M16 16l4 4",
-  edit:    "M11 4H4a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7 M18.5 2.5a2 2 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z",
-  trash:   "M4 7h16 M10 11v6 M14 11v6 M5 7l1 12a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1l1-12 M9 7V4h6v3",
-  check:   "M5 12l5 5 9-10",
-  x:       "M18 6L6 18 M6 6l12 12",
-  alert:   "M12 9v4 M12 17h.01 M10.3 4l-7 12a2 2 0 0 0 1.7 3h14a2 2 0 0 0 1.7-3l-7-12a2 2 0 0 0-3.4 0z",
-  arrowUR: "M7 17L17 7 M8 7h9v9",
-  arrowDR: "M7 7l10 10 M17 8v9H8",
-  list:    "M9 6h10 M9 12h10 M9 18h10 M5 6h.01 M5 12h.01 M5 18h.01",
-  chevR:   "M9 18l6-6-6-6",
-  chevL:   "M15 18l-6-6 6-6",
-  chevD:   "M6 9l6 6 6-6",
-  info:    "M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0 M12 11v5 M12 8h.01",
-  zap:     "M13 3l-8 10h6l-1 8 8-10h-6z",
-  refresh: "M4 12a8 8 0 0 1 14.93-4 M20 12a8 8 0 0 1-14.93 4 M3 3v5h5 M21 21v-5h-5",
-  clock:   "M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0 M12 7v5l3 2",
-  // Prototype category icons
-  home:     "M4 11l8-6 8 6 M6 10v9a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-9 M10 20v-5h4v5",
-  wallet:   "M3 7h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a2 2 0 0 1 2-2h11 M16 12h.01",
-  coins:    "M9 9m-6 0a6 3 0 1 0 12 0a6 3 0 1 0-12 0 M3 9v5c0 1.66 2.7 3 6 3 M3 11.5c0 1.66 2.7 3 6 3 M15 6c3.3 0 6 1.34 6 3v6c0 1.66-2.7 3-6 3-1.1 0-2.13-.15-3-.41",
-  car:      "M5 13l1.5-4.5A2 2 0 0 1 8.4 7h7.2a2 2 0 0 1 1.9 1.5L19 13 M4 13h16v4H4z M7 17v1.5 M17 17v1.5 M6.5 14.5h.01 M17.5 14.5h.01",
-  cap:      "M3 9l9-4 9 4-9 4z M6 11v4c0 1.5 2.7 3 6 3s6-1.5 6-3v-4 M21 9v4",
-  shield:   "M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z M9 12l2 2 4-4",
-  plane:    "M10 19l1-5-4 1v-2l5-2 1-6a1.3 1.3 0 0 1 2.6 0l1 6 5 2v2l-4-1 1 5-2 1-2-3-2 3z",
-  spark:    "M12 3l1.6 4.8L18 9.4l-4.4 1.6L12 16l-1.6-5L6 9.4l4.4-1.6z M18 16l.7 2 .3.7 2 .3-2 .8-.7 2-.8-2-2-.3 2-.8z",
-  flag:     "M5 21V4 M5 4h11l-2 3 2 3H5",
-  target:   "M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0 M12 12m-5 0a5 5 0 1 0 10 0a5 5 0 1 0-10 0 M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0-2 0",
-  building: "M4 21V5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v16 M15 9h4a1 1 0 0 1 1 1v11 M4 21h17 M8 8h3 M8 12h3 M8 16h3",
-  receipt:  "M5 3h14v18l-2.5-1.5L14 21l-2-1.5L10 21l-2.5-1.5L5 21z M9 8h6 M9 12h6 M9 16h3",
-  star:     "M12 4l2.4 5.4 5.6.5-4.2 3.7 1.3 5.4L12 16.6 6.9 19.5l1.3-5.4L4 10.4l5.6-.5z",
-  globe:    "M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0 M3 12h18 M12 3a14 14 0 0 1 0 18 M12 3a14 14 0 0 0 0 18",
-  repeat:   "M4 9l3-3 3 3 M7 6v9a2 2 0 0 0 2 2h11 M20 15l-3 3-3-3 M17 18V9a2 2 0 0 0-2-2H4",
-};
-
-function CIcon({ name, size = 15 }: { name: string; size?: number }) {
-  const d = C_ICONS[name];
-  if (!d) return null;
-  const segs = d.split(" M");
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-      stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round"
-      style={{ flex: "none" }}>
-      {segs.map((seg, i) => <path key={i} d={i === 0 ? seg : "M" + seg} />)}
-    </svg>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const CAT_PALETTE = CATEGORY_HEX_PALETTE;
-
-const CAT_ICON_OPTIONS = [
-  "home", "wallet", "coins", "car", "cap", "shield", "plane", "spark",
-  "flag", "target", "building", "receipt", "tag", "star", "zap", "globe",
-];
-
-// Default icon by category name, used when no icon was saved (mirrors prototype).
-function defaultCatIcon(name: string): string {
-  const n = name.toLowerCase();
-  const map: [string, string][] = [
-    ["moradia", "home"], ["aliment", "wallet"], ["mercado", "tag"],
-    ["educa", "cap"], ["transporte", "car"], ["saude", "shield"], ["saúde", "shield"],
-    ["lazer", "plane"], ["assinatura", "repeat"], ["servi", "receipt"],
-    ["invest", "coins"], ["renda", "coins"], ["receita", "coins"],
-    ["cart", "wallet"], ["imposto", "building"], ["filho", "spark"],
-  ];
-  for (const [k, v] of map) if (n.includes(k)) return v;
-  return "folder";
-}
+// Category icons, palette and the CatModal form now live in ../components/CatModal
+// (shared with the inline categorize flow so there's a single registration form).
 
 // Per-category stats derived from the dashboard ranking endpoints.
 type CatStats = { value: number; pct: number; count: number; delta: number | null; lastDate: string | null };
@@ -222,225 +158,6 @@ const emptyRuleForm: RuleFormState = {
   day_max: "",
   direction_filter: "",
 };
-
-// ---------------------------------------------------------------------------
-// Category modal
-// ---------------------------------------------------------------------------
-
-interface CatModalState {
-  kind: "cat" | "sub";
-  editing?: CategoryRead;
-  parentId?: string;
-}
-
-interface CatModalProps {
-  state: CatModalState;
-  categories: CategoryRead[];
-  onClose: () => void;
-  onSaveCat: (payload: { name: string; parentId: string | null; color: string; icon: string; subs: string[] }) => void;
-  onSaveSub: (name: string, parentId: string) => void;
-}
-
-function CatModal({ state, categories, onClose, onSaveCat, onSaveSub }: CatModalProps) {
-  const [kind, setKind] = useState<"cat" | "sub">(state.kind);
-  const [name, setName] = useState(state.editing?.name ?? "");
-  const [parentId, setParentId] = useState(
-    state.parentId ??
-    state.editing?.parent_category_id ??
-    (categories.find((c) => !c.parent_category_id)?.id ?? "")
-  );
-  const [color, setColor] = useState(CAT_PALETTE[0]);
-  const [iconName, setIconName] = useState("folder");
-  const [subsText, setSubsText] = useState("");
-  const [err, setErr] = useState("");
-
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, [onClose]);
-
-  const rootCategories = categories.filter((c) => !c.parent_category_id);
-  const parentCat = categories.find((c) => c.id === parentId);
-  const subsOfParent = categories.filter((c) => c.parent_category_id === parentId);
-
-  const previewSubs = subsText.split(",").map((s) => s.trim()).filter(Boolean);
-
-  function submit() {
-    const n = name.trim();
-    if (!n) { setErr("Informe um nome."); return; }
-    if (kind === "cat") {
-      onSaveCat({ name: n, parentId: null, color, icon: iconName, subs: previewSubs });
-    } else {
-      if (!parentId) { setErr("Escolha uma categoria principal."); return; }
-      onSaveSub(n, parentId);
-    }
-  }
-
-  return (
-    <div className="mdl-backdrop" onClick={onClose}>
-      <div className="mdl" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-        {/* Head */}
-        <div className="mdl-head">
-          <span className="mh-ic">
-            <CIcon name={kind === "cat" ? "folder" : "tag"} size={17} />
-          </span>
-          <div style={{ minWidth: 0 }}>
-            <div className="mh-ttl">{kind === "cat" ? "Nova categoria" : "Nova subcategoria"}</div>
-            <div className="mh-sub">
-              {kind === "cat"
-                ? "Defina nome e visual. Você pode cadastrar subcategorias depois."
-                : "Subcategorias detalham onde o dinheiro vai dentro de uma categoria."}
-            </div>
-          </div>
-          <button className="mh-close" onClick={onClose} aria-label="Fechar">
-            <CIcon name="x" size={18} />
-          </button>
-        </div>
-
-        {/* Body */}
-        <div className="mdl-body">
-          {/* Kind toggle */}
-          <div className="kind-toggle">
-            <button className={kind === "cat" ? "on" : ""} onClick={() => setKind("cat")}>
-              <CIcon name="folder" size={14} /> Categoria
-            </button>
-            <button className={kind === "sub" ? "on" : ""} onClick={() => setKind("sub")}>
-              <CIcon name="tag" size={14} /> Subcategoria
-            </button>
-          </div>
-
-          {/* Sub: choose parent */}
-          {kind === "sub" && (
-            <label className="fld">
-              <span className="fld-label">Categoria principal</span>
-              <select
-                className="fld-select"
-                value={parentId}
-                onChange={(e) => setParentId(e.target.value)}
-              >
-                <option value="">Escolha uma categoria</option>
-                {rootCategories.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-              {parentCat && (
-                <span className="fld-help">
-                  {subsOfParent.length} subcategorias atuais
-                </span>
-              )}
-            </label>
-          )}
-
-          {/* Name */}
-          <label className="fld">
-            <span className="fld-label">Nome</span>
-            <input
-              className="fld-input"
-              autoFocus
-              value={name}
-              onChange={(e) => { setName(e.target.value); setErr(""); }}
-              placeholder={kind === "cat" ? "Ex.: Pets, Filhos, Trabalho remoto…" : "Ex.: Ração, Veterinário…"}
-            />
-          </label>
-
-          {/* Cat-only fields */}
-          {kind === "cat" && (
-            <>
-              {/* Color */}
-              <label className="fld">
-                <span className="fld-label">Cor</span>
-                <div className="swatch-row">
-                  {CAT_PALETTE.map((p) => (
-                    <button
-                      key={p}
-                      className={"swatch" + (color === p ? " on" : "")}
-                      style={{ background: p }}
-                      onClick={() => setColor(p)}
-                      aria-label={p}
-                    />
-                  ))}
-                </div>
-              </label>
-
-              {/* Icon */}
-              <label className="fld">
-                <span className="fld-label">Ícone</span>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {CAT_ICON_OPTIONS.map((ic) => (
-                    <button
-                      key={ic}
-                      onClick={() => setIconName(ic)}
-                      style={{
-                        width: 34, height: 34, borderRadius: 9,
-                        display: "grid", placeItems: "center",
-                        border: "1px solid " + (iconName === ic ? color : "var(--line)"),
-                        background: iconName === ic ? color : "var(--card-2)",
-                        color: iconName === ic ? "#fff" : "var(--ink-2)",
-                        transition: "all .12s",
-                      }}
-                      aria-label={ic}
-                    >
-                      <CIcon name={ic} size={16} />
-                    </button>
-                  ))}
-                </div>
-              </label>
-
-              {/* Initial subcategories */}
-              <label className="fld">
-                <span className="fld-label">Subcategorias iniciais (opcional)</span>
-                <input
-                  className="fld-input"
-                  value={subsText}
-                  onChange={(e) => setSubsText(e.target.value)}
-                  placeholder="Separe por vírgula. Ex.: Ração, Veterinário, Banho"
-                />
-                <span className="fld-help">Você pode adicionar mais depois — sem limite.</span>
-              </label>
-
-              {/* Preview */}
-              <div style={{
-                padding: 12, borderRadius: 10, border: "1px dashed var(--line-strong)",
-                display: "flex", alignItems: "center", gap: 12,
-              }}>
-                <span
-                  className="cc-mark"
-                  style={{ background: color, width: 32, height: 32, borderRadius: 9, display: "grid", placeItems: "center", color: "#fff", flexShrink: 0 }}
-                >
-                  <CIcon name={iconName} size={15} />
-                </span>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontFamily: "var(--font-display)", fontSize: 14 }}>
-                    {name || "Pré-visualização"}
-                  </div>
-                  <div style={{ fontSize: 11.5, color: "var(--ink-3)" }}>
-                    Categoria · {previewSubs.length} subcategorias
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
-
-          {err && <div className="fld-error">{err}</div>}
-        </div>
-
-        {/* Footer */}
-        <div className="mdl-foot">
-          <span style={{ fontSize: 11.5, color: "var(--ink-faint)" }}>
-            Atalho: <span style={{ fontFamily: "var(--font-mono)", background: "var(--bg-sunken)", padding: "1px 6px", borderRadius: 5 }}>Esc</span> para fechar
-          </span>
-          <span style={{ flex: 1 }} />
-          <button className="btn btn-quiet" onClick={onClose}>Cancelar</button>
-          <button className="btn btn-primary" onClick={submit}>
-            <CIcon name="check" size={14} />
-            {kind === "cat" ? "Cadastrar categoria" : "Cadastrar subcategoria"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Category edit modal
@@ -1449,6 +1166,7 @@ function RuleFormModal({
   error,
   onClose,
   onSubmit,
+  onRequestNewCategory,
 }: {
   form: RuleFormState;
   setForm: (f: RuleFormState) => void;
@@ -1457,6 +1175,7 @@ function RuleFormModal({
   error: string;
   onClose: () => void;
   onSubmit: () => void;
+  onRequestNewCategory: () => void;
 }) {
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -1604,11 +1323,19 @@ function RuleFormModal({
 
           <label className="fld">
             <span className="fld-label">Categoria</span>
-            <select className="fld-select" value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}>
+            <select
+              className="fld-select"
+              value={form.category_id}
+              onChange={(e) => {
+                if (e.target.value === "__new__") { onRequestNewCategory(); return; }
+                setForm({ ...form, category_id: e.target.value });
+              }}
+            >
               <option value="">Não alterar categoria</option>
               {categoryOptions.map((c) => (
                 <option key={c.id} value={c.id}>{c.label}</option>
               ))}
+              <option value="__new__">＋ Nova categoria…</option>
             </select>
           </label>
 
@@ -1659,10 +1386,16 @@ function RuleFormModal({
   );
 }
 
+function aliasMatchLabel(matchType: MerchantAliasMatchType): string {
+  if (matchType === "equals") return "Igual";
+  if (matchType === "token") return "Token";
+  return "Contém";
+}
+
 export function RulesPage({ session, embedded = false }: { session: ApiSession; embedded?: boolean }) {
   const queryClient = useQueryClient();
   const categories = useCategories(session);
-  const [tab, setTab] = useState<"rules" | "merchants" | "aliases">("rules");
+  const [tab, setTab] = useState<"rules" | "aliases">("rules");
   const [ruleSearch, setRuleSearch] = useState("");
   const [rulePage, setRulePage] = useState(0);
   const [rulePageSize, setRulePageSize] = useState(10);
@@ -1731,6 +1464,59 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
   const remove = useMutation({
     mutationFn: (id: string) => deleteRule(session, id),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["rules"] }),
+  });
+
+  // ── Apelidos (merchant aliases) ───────────────────────────────────────────
+  const aliases = useQuery({
+    queryKey: ["merchant-aliases", session.token],
+    queryFn: () => getMerchantAliases(session),
+  });
+  const [aliasPattern, setAliasPattern] = useState("");
+  const [aliasReplacement, setAliasReplacement] = useState("");
+  const [aliasMatchType, setAliasMatchType] = useState<MerchantAliasMatchType>("contains");
+  const invalidateAliases = () => void queryClient.invalidateQueries({ queryKey: ["merchant-aliases"] });
+  const createAlias = useMutation({
+    mutationFn: () => createMerchantAlias(session, { pattern: aliasPattern, replacement: aliasReplacement, match_type: aliasMatchType }),
+    onSuccess: () => { setAliasPattern(""); setAliasReplacement(""); setAliasMatchType("contains"); invalidateAliases(); },
+  });
+  const toggleAlias = useMutation({
+    mutationFn: (vars: { id: string; active: boolean }) => updateMerchantAlias(session, vars.id, { active: vars.active }),
+    onSuccess: invalidateAliases,
+  });
+  const removeAlias = useMutation({
+    mutationFn: (id: string) => deleteMerchantAlias(session, id),
+    onSuccess: invalidateAliases,
+  });
+  const applyAliasesNow = useMutation({
+    mutationFn: () => normalizeTransactionDescriptions(session),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+    },
+  });
+
+  // Inline category creation from the rule form (same CatModal used everywhere).
+  const [showRuleCatModal, setShowRuleCatModal] = useState(false);
+  const createRuleCategory = useMutation({
+    mutationFn: async (
+      input:
+        | { kind: "cat"; payload: { name: string; color: string; icon: string; subs: string[] } }
+        | { kind: "sub"; name: string; parentId: string },
+    ): Promise<string> => {
+      if (input.kind === "sub") {
+        const sub = await createCategory(session, input.name, input.parentId);
+        return sub.id;
+      }
+      const { name, color, icon, subs } = input.payload;
+      const parent = await createCategory(session, name, null, { color, icon });
+      for (const subName of subs) await createCategory(session, subName, parent.id, { color });
+      return parent.id;
+    },
+    onSuccess: (categoryId) => {
+      void queryClient.invalidateQueries({ queryKey: ["categories"] });
+      setForm((prev) => ({ ...prev, category_id: categoryId }));
+      setShowRuleCatModal(false);
+    },
   });
   const apply = useMutation({
     mutationFn: () => applyRules(session),
@@ -1884,8 +1670,7 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
         <div className="card-head" style={{ flexWrap: "wrap", gap: 8 }}>
           <div className="seg">
             <button className={tab === "rules" ? "on" : ""} onClick={() => setTab("rules")}>Regras</button>
-            <button className={tab === "merchants" ? "on" : ""} onClick={() => setTab("merchants")}>Normalização de Merchants</button>
-            <button className={tab === "aliases" ? "on" : ""} onClick={() => setTab("aliases")}>Apelidos / Alias</button>
+            <button className={tab === "aliases" ? "on" : ""} onClick={() => setTab("aliases")}>Apelidos</button>
           </div>
           <span style={{ flex: 1 }} />
           {tab === "rules" && (
@@ -2078,27 +1863,88 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
           </>
         ))}
 
-        {tab === "merchants" && (
-          <div style={{ textAlign: "center", padding: 40 }}>
-            <div style={{ color: "var(--ink-faint)", marginBottom: 8 }}><CIcon name="spark" size={32} /></div>
-            <div style={{ fontWeight: 600 }}>Normalização de Merchants</div>
-            <div style={{ fontSize: 13, color: "var(--ink-3)", marginTop: 4, maxWidth: 440, marginInline: "auto" }}>
-              A normalização de descrições (ex.: “IFOOD *PIZZARIA NAPOLI” → “iFood — Pizzaria Napoli”)
-              já é aplicada automaticamente nas importações. O gerenciamento manual de padrões chega em breve.
-            </div>
-            <button className="btn btn-ghost btn-sm" style={{ marginTop: 14 }} onClick={() => apply.mutate()} disabled={apply.isPending}>
-              <CIcon name="refresh" size={14} /> Reprocessar agora
-            </button>
-          </div>
-        )}
-
         {tab === "aliases" && (
-          <div style={{ textAlign: "center", padding: 40 }}>
-            <div style={{ color: "var(--ink-faint)", marginBottom: 8 }}><CIcon name="tag" size={32} /></div>
-            <div style={{ fontWeight: 600 }}>Apelidos / Alias</div>
-            <div style={{ fontSize: 13, color: "var(--ink-3)", marginTop: 4, maxWidth: 440, marginInline: "auto" }}>
-              Apelidos para instituições e estabelecimentos (ex.: “BANCO ITAU SA” → “Itaú”)
-              estarão disponíveis em breve.
+          <div style={{ padding: "14px 16px 18px" }}>
+            <div className="t-sub" style={{ marginBottom: 12, lineHeight: 1.5 }}>
+              Dê um nome limpo a descrições bagunçadas. O <strong>tipo</strong> define como casa:
+              <strong> Contém</strong> (renomeia tudo quando acha o texto, ex.: “BANCO ITAU SA” → “Itaú”),
+              <strong> Igual</strong> (só quando a descrição é exatamente o texto) ou
+              <strong> Token</strong> (troca só a palavra, ex.: “IFD” → “iFood”, mantendo o resto).
+              Vale para importações novas; use “Aplicar nas existentes” para reprocessar o histórico.
+            </div>
+
+            <form
+              onSubmit={(e) => { e.preventDefault(); if (aliasPattern.trim() && aliasReplacement.trim()) createAlias.mutate(); }}
+              style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 14 }}
+            >
+              <label className="fld" style={{ flex: "0 0 130px", margin: 0 }}>
+                <span className="fld-label">Tipo</span>
+                <select className="fld-select" value={aliasMatchType} onChange={(e) => setAliasMatchType(e.target.value as MerchantAliasMatchType)}>
+                  <option value="contains">Contém</option>
+                  <option value="equals">Igual</option>
+                  <option value="token">Token</option>
+                </select>
+              </label>
+              <label className="fld" style={{ flex: "2 1 200px", margin: 0 }}>
+                <span className="fld-label">Texto na descrição</span>
+                <input className="fld-input" placeholder={aliasMatchType === "token" ? "Ex.: IFD" : "Ex.: BANCO ITAU SA"} value={aliasPattern} onChange={(e) => setAliasPattern(e.target.value)} />
+              </label>
+              <label className="fld" style={{ flex: "1 1 150px", margin: 0 }}>
+                <span className="fld-label">{aliasMatchType === "token" ? "Trocar por" : "Apelido"}</span>
+                <input className="fld-input" placeholder={aliasMatchType === "token" ? "Ex.: iFood" : "Ex.: Itaú"} value={aliasReplacement} onChange={(e) => setAliasReplacement(e.target.value)} />
+              </label>
+              <button className="btn btn-primary" type="submit" disabled={createAlias.isPending || !aliasPattern.trim() || !aliasReplacement.trim()}>
+                <CIcon name="plus" size={14} /> {createAlias.isPending ? "Adicionando…" : "Adicionar"}
+              </button>
+            </form>
+            {createAlias.isError && <InlineError message={apiErrorMessage(createAlias.error, "Não foi possível criar o apelido.")} />}
+
+            {aliases.isLoading ? (
+              <div style={{ textAlign: "center", padding: 24, color: "var(--ink-3)" }}>Carregando apelidos…</div>
+            ) : (aliases.data?.items ?? []).length === 0 ? (
+              <div style={{ textAlign: "center", padding: 28 }}>
+                <div style={{ color: "var(--ink-faint)", marginBottom: 8 }}><CIcon name="tag" size={32} /></div>
+                <div style={{ fontWeight: 600 }}>Nenhum apelido ainda</div>
+                <div style={{ fontSize: 13, color: "var(--ink-3)", marginTop: 4 }}>Adicione o primeiro acima.</div>
+              </div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table className="tbl">
+                  <thead><tr><th>Tipo</th><th>Texto na descrição</th><th>Apelido</th><th>Status</th><th></th></tr></thead>
+                  <tbody>
+                    {(aliases.data?.items ?? []).map((a) => (
+                      <tr key={a.id}>
+                        <td><span className="t-sub" style={{ fontSize: 12 }}>{aliasMatchLabel(a.match_type)}</span></td>
+                        <td><code style={{ background: "var(--bg-sunken)", padding: "1px 6px", borderRadius: 5, fontSize: 12 }}>{a.pattern}</code></td>
+                        <td><strong>{a.replacement}</strong></td>
+                        <td>{a.active ? <StatusBadge status="active" /> : <StatusBadge status="inactive" />}</td>
+                        <td>
+                          <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                            <button className="btn btn-quiet btn-sm" title={a.active ? "Desativar" : "Ativar"} onClick={() => toggleAlias.mutate({ id: a.id, active: !a.active })} disabled={toggleAlias.isPending}>
+                              <CIcon name={a.active ? "check" : "refresh"} size={13} />
+                            </button>
+                            <button className="btn btn-quiet btn-sm" style={{ color: "var(--neg)" }} title="Excluir" onClick={() => { if (window.confirm(`Excluir o apelido "${a.replacement}"?`)) removeAlias.mutate(a.id); }} disabled={removeAlias.isPending}>
+                              <CIcon name="trash" size={13} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+              <button className="btn btn-ghost btn-sm" onClick={() => applyAliasesNow.mutate()} disabled={applyAliasesNow.isPending}>
+                <CIcon name="refresh" size={14} /> {applyAliasesNow.isPending ? "Aplicando…" : "Aplicar nas existentes"}
+              </button>
+              {applyAliasesNow.isSuccess && (
+                <span style={{ fontSize: 12.5, color: "var(--pos)" }}>
+                  {applyAliasesNow.data?.changed_count ?? 0} descrição(ões) atualizada(s) ✓
+                </span>
+              )}
+              {applyAliasesNow.isError && <InlineError message={apiErrorMessage(applyAliasesNow.error, "Falha ao aplicar.")} />}
             </div>
           </div>
         )}
@@ -2147,6 +1993,18 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
           error={ruleFormError}
           onClose={() => { setShowModal(false); setForm(emptyRuleForm); setRuleFormError(""); }}
           onSubmit={handleSubmit}
+          onRequestNewCategory={() => setShowRuleCatModal(true)}
+        />
+      )}
+
+      {/* Create a category inline from the rule form (same form used everywhere) */}
+      {showRuleCatModal && (
+        <CatModal
+          state={{ kind: "cat" }}
+          categories={categories.data?.items ?? []}
+          onClose={() => setShowRuleCatModal(false)}
+          onSaveCat={(payload) => createRuleCategory.mutate({ kind: "cat", payload: { name: payload.name, color: payload.color, icon: payload.icon, subs: payload.subs } })}
+          onSaveSub={(name, parentId) => createRuleCategory.mutate({ kind: "sub", name, parentId })}
         />
       )}
 

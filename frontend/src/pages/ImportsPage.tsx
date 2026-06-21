@@ -197,6 +197,8 @@ function BatchUploadProgressSummary({ progress }: { progress: BatchUploadProgres
 }
 
 function BatchPreviewSummary({ disabled, onConfirm, recommendedLimit, results, selectedBatchIsLarge }: { disabled: boolean; onConfirm: () => void; recommendedLimit: number; results: BatchPreviewResult[]; selectedBatchIsLarge: boolean }) {
+  const [expandedFile, setExpandedFile] = useState<string | null>(null);
+  const [showAllItems, setShowAllItems] = useState<Set<string>>(new Set());
   const successCount = results.filter((item) => item.status === "success").length;
   const errorCount = results.length - successCount;
   const duplicateCount = results.filter((item) => item.status === "success" && item.preview.duplicate_file).length;
@@ -225,20 +227,73 @@ function BatchPreviewSummary({ disabled, onConfirm, recommendedLimit, results, s
           </div>
         </div>
       )}
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {results.map((item) => (
-          <div key={item.fileName} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 0", borderBottom: "1px solid var(--line)" }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="t-desc" style={{ fontSize: 12.5 }}>{item.fileName}</div>
-              <div className="t-sub">
-                {item.status === "success"
-                  ? `${sourceKindLabel(item.preview.source_kind)} · ${item.preview.valid_rows} válidas · ${item.preview.duplicate_rows} duplicadas · ${item.preview.error_rows} erros${item.preview.items.length ? ` · ${item.preview.items[0].description}` : ""}`
-                  : item.errorMessage}
+      <div style={{ display: "flex", flexDirection: "column" }}>
+        {results.map((item) => {
+          const isExpanded = expandedFile === item.fileName;
+          const badge = item.status === "error" ? "failed" : item.preview?.duplicate_file ? "duplicate_file" : item.preview?.error_rows ? "completed_with_errors" : "completed";
+          const firstError = item.status === "success" && item.preview.errors?.length ? item.preview.errors[0].message : null;
+          const subtitle = item.status === "success"
+            ? `${sourceKindLabel(item.preview.source_kind)} · ${item.preview.valid_rows} válidas · ${item.preview.duplicate_rows} duplicadas · ${item.preview.error_rows} erro${item.preview.error_rows === 1 ? "" : "s"}${firstError ? ` — ${firstError}` : ""}`
+            : item.errorMessage;
+          return (
+            <div key={item.fileName} style={{ borderBottom: "1px solid var(--line)" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 0" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="t-desc" style={{ fontSize: 12.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={item.fileName}>{item.fileName}</div>
+                  <div className="t-sub">{subtitle}</div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                  {item.status === "success" && item.preview.items.length > 0 && (
+                    <button className="btn btn-quiet btn-sm" type="button" onClick={() => {
+                      if (isExpanded) {
+                        setExpandedFile(null);
+                        setShowAllItems((prev) => { const s = new Set(prev); s.delete(item.fileName); return s; });
+                      } else {
+                        setExpandedFile(item.fileName);
+                      }
+                    }}>
+                      {isExpanded ? "Ocultar" : "Ver transações"}
+                    </button>
+                  )}
+                  <ImportStatusBadge status={badge} />
+                </div>
               </div>
+              {isExpanded && item.status === "success" && (
+                <div style={{ overflowX: "auto", marginBottom: 8 }}>
+                  <table className="tbl" style={{ fontSize: 12 }}>
+                    <thead><tr><th>Data</th><th>Descrição</th><th style={{ textAlign: "right" }}>Valor</th><th>Tipo</th><th></th></tr></thead>
+                    <tbody>
+                      {(showAllItems.has(item.fileName) ? item.preview.items : item.preview.items.slice(0, 30)).map((tx, idx) => (
+                        <tr key={idx} style={{ opacity: tx.duplicate ? 0.5 : 1 }}>
+                          <td className="mono t-sub" style={{ whiteSpace: "nowrap" }}>{String(tx.transaction_date)}</td>
+                          <td style={{ maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tx.description}</td>
+                          <td className="num mono" style={{ color: tx.direction === "credit" ? "var(--acc)" : "var(--neg)" }}>
+                            {tx.direction === "credit" ? "+" : "-"}{Number(tx.amount).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="t-sub">{tx.direction === "credit" ? "Crédito" : tx.direction === "debit" ? "Débito" : "Pgto"}</td>
+                          <td>{tx.duplicate && <span className="badge warn" style={{ fontSize: 10 }}>Duplicada</span>}</td>
+                        </tr>
+                      ))}
+                      {item.preview.items.length > 30 && !showAllItems.has(item.fileName) && (
+                        <tr>
+                          <td colSpan={5} style={{ textAlign: "center", padding: "6px 0" }}>
+                            <button
+                              className="btn btn-quiet btn-sm"
+                              type="button"
+                              onClick={() => setShowAllItems((prev) => new Set([...prev, item.fileName]))}
+                            >
+                              + {item.preview.items.length - 30} transações não exibidas — clique para ver todas
+                            </button>
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
-            <ImportStatusBadge status={item.status === "error" ? "failed" : item.preview.duplicate_file ? "duplicate_file" : item.preview.error_rows ? "completed_with_errors" : "completed"} />
-          </div>
-        ))}
+          );
+        })}
       </div>
       {importableCount === 0 && (
         <div className="alert warn" style={{ marginTop: 10 }}>
@@ -555,6 +610,10 @@ export function ImportsPage({
       void queryClient.invalidateQueries({ queryKey: ["transactions"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
       void queryClient.invalidateQueries({ queryKey: ["credit-card-statements"] });
+      void queryClient.invalidateQueries({ queryKey: ["credit-cards"] });
+      void queryClient.invalidateQueries({ queryKey: ["monthly-cashflow"] });
+      void queryClient.invalidateQueries({ queryKey: ["category-ranking"] });
+      void queryClient.invalidateQueries({ queryKey: ["data-quality"] });
     },
     onError: () => setUploadProgress(null),
   });
@@ -688,7 +747,7 @@ export function ImportsPage({
             </button>
             <input
               ref={fileInputRef}
-              accept=".txt,.csv,.xls,.xlsx,.ofx,text/plain,text/csv,application/vnd.ms-excel"
+              accept=".txt,.csv,.xls,.pdf,text/plain,text/csv,application/vnd.ms-excel,application/pdf"
               disabled={upload.isPending || previewMutation.isPending}
               multiple
               type="file"
@@ -834,7 +893,7 @@ export function ImportsPage({
                           <IIcon name="file" size={14} />
                         </span>
                         <div>
-                          <div className="t-desc mono" style={{ fontSize: 12.5 }}>
+                          <div className="t-desc mono" style={{ fontSize: 12.5, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={item.source_file?.original_filename}>
                             {item.source_file?.original_filename ?? "Arquivo"}
                           </div>
                           <div className="t-sub">

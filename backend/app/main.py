@@ -21,11 +21,14 @@ from app.api.routes import (
     workspaces,
 )
 from app.core.config import settings
+from app.core.observability import access_log_middleware
 from app.db.session import create_local_tables
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="aws-smart-cash-flow API", version="0.1.0")
+
+    app.middleware("http")(access_log_middleware)
 
     app.add_middleware(
         CORSMiddleware,

@@ -4,7 +4,7 @@ from decimal import Decimal
 from hashlib import sha256
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy import and_, asc, case, delete, desc, func, or_, select
 from sqlalchemy.orm import Session
@@ -21,7 +21,12 @@ from app.db.models import (
 )
 from app.db.session import get_db
 from app.services.import_service import ImportService
-from app.services.parsers import extract_installment, normalize_transaction_description
+from app.services.merchant_aliases import apply_aliases, load_aliases
+from app.services.parsers import (
+    extract_installment,
+    extract_installment_marker,
+    normalize_transaction_description,
+)
 from app.services.workspace_service import WorkspaceService
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
@@ -60,6 +65,10 @@ class TransactionRead(BaseModel):
     account_or_card: str | None
     transaction_date: date
     payment_date: date | None = None
+    # Invoice (statement) this credit-card transaction belongs to, when known.
+    invoice_closing_date: date | None = None
+    invoice_due_date: date | None = None
+    invoice_month: date | None = None
     description: str
     raw_description: str
     amount: Decimal
@@ -124,6 +133,90 @@ class DuplicateTransactionListResponse(BaseModel):
     total_transactions: int
     limit: int
     offset: int
+
+
+class UncategorizedGroup(BaseModel):
+    key: str
+    sample_description: str
+    count: int
+    total: Decimal
+    ids: list[str]
+
+
+class UncategorizedGroupsResponse(BaseModel):
+    workspace_id: str
+    groups: list[UncategorizedGroup]
+    total_groups: int
+
+
+@router.get("/uncategorized-groups")
+async def uncategorized_groups(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    sort_by: str = Query(default="count"),
+    sort_dir: str = Query(default="desc"),
+    q: str | None = None,
+    amount_min: float | None = None,
+    amount_max: float | None = None,
+) -> UncategorizedGroupsResponse:
+    """Group still-uncategorized debit transactions by their normalized description
+    (merchant), so the user can categorize a whole merchant at once."""
+    categorized = select(TransactionCategoryAssignment.transaction_id).where(
+        TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+        TransactionCategoryAssignment.category_id.is_not(None),
+    )
+    group_filters = [
+        Transaction.workspace_id == auth.workspace_id,
+        Transaction.natural_dedupe_key.is_not(None),
+        Transaction.direction == "debit",
+        Transaction.id.not_in(categorized),
+    ]
+    if q:
+        search = f"%{q.casefold()}%"
+        group_filters.append(
+            or_(Transaction.description.ilike(search), Transaction.raw_description.ilike(search))
+        )
+    if amount_min is not None:
+        group_filters.append(func.abs(Transaction.amount) >= amount_min)
+    if amount_max is not None:
+        group_filters.append(func.abs(Transaction.amount) <= amount_max)
+    rows = db.execute(
+        select(Transaction.id, Transaction.description, Transaction.amount).where(*group_filters)
+    ).all()
+    grouped: dict[str, dict[str, object]] = {}
+    for tx_id, description, amount in rows:
+        entry = grouped.setdefault(
+            description,
+            {
+                "key": description,
+                "sample_description": description,
+                "count": 0,
+                "total": Decimal("0"),
+                "ids": [],
+            },
+        )
+        entry["count"] = int(entry["count"]) + 1
+        entry["total"] = Decimal(entry["total"]) + abs(amount)
+        if len(entry["ids"]) < 500:
+            entry["ids"].append(tx_id)
+    reverse = sort_dir != "asc"
+    if sort_by == "name":
+        groups = sorted(
+            grouped.values(),
+            key=lambda g: str(g["sample_description"]).lower(),
+            reverse=reverse,
+        )
+    elif sort_by == "total":
+        groups = sorted(grouped.values(), key=lambda g: Decimal(g["total"]), reverse=reverse)
+    else:  # count
+        groups = sorted(grouped.values(), key=lambda g: int(g["count"]), reverse=reverse)
+    return UncategorizedGroupsResponse(
+        workspace_id=auth.workspace_id,
+        groups=[UncategorizedGroup(**g) for g in groups[offset:offset + limit]],
+        total_groups=len(groups),
+    )
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -271,6 +364,13 @@ async def list_transactions(
     db: Session = DbDependency,
     date_from: date | None = None,
     date_to: date | None = None,
+    # Which date the [date_from, date_to] range applies to: "fatura" (invoice/payment
+    # date, default — matches the dashboard) or "compra" (purchase date).
+    date_field: str = "fatura",
+    # Filter credit-card transactions by the PAYMENT (due) month of the invoice they
+    # belong to — i.e. when the invoice is paid — via the linked statement's due_date.
+    due_from: date | None = None,
+    due_to: date | None = None,
     category_ids: list[str] | None = Query(default=None),  # noqa: B008
     import_job_id: str | None = None,
     source_file_id: str | None = None,
@@ -288,7 +388,7 @@ async def list_transactions(
     tx_status: str | None = Query(default=None, alias="status"),
     category_source: str | None = None,
     category_review_status: str | None = None,
-    limit: int = Query(default=50, ge=1, le=500),
+    limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> TransactionListResponse:
     sort_columns = {
@@ -325,14 +425,16 @@ async def list_transactions(
         filters.append(Transaction.id.in_(transaction_ids))
     else:
         filters.append(Transaction.natural_dedupe_key.is_not(None))
-    # Date filters always use the effective payment date (credit-card purchases
-    # are filtered by the month they are actually charged), falling back to the
-    # transaction date for rows without a computed payment date.
-    payment_date_expr = func.coalesce(Transaction.payment_date, Transaction.transaction_date)
+    # The date range can be applied to the purchase date ("compra", default) or to
+    # the invoice/payment date ("fatura"). For non-card rows both are the same.
+    if date_field == "fatura":
+        date_expr = func.coalesce(Transaction.payment_date, Transaction.transaction_date)
+    else:
+        date_expr = Transaction.transaction_date
     if date_from is not None:
-        filters.append(payment_date_expr >= date_from)
+        filters.append(date_expr >= date_from)
     if date_to is not None:
-        filters.append(payment_date_expr <= date_to)
+        filters.append(date_expr <= date_to)
     if import_job_id is not None:
         filters.append(Transaction.import_job_id == import_job_id)
     if source_file_id is not None:
@@ -362,6 +464,23 @@ async def list_transactions(
                         )
                     ),
                 )
+            )
+        )
+    if due_from is not None or due_to is not None:
+        # All transactions of an imported statement are paid on that invoice's due
+        # date, regardless of each purchase's own date. Filter by the linked
+        # statement's due_date so a card month means "the invoice paid that month".
+        due_filters = [
+            CreditCardStatement.workspace_id == auth.workspace_id,
+            CreditCardStatement.source_file_id.is_not(None),
+        ]
+        if due_from is not None:
+            due_filters.append(CreditCardStatement.due_date >= due_from)
+        if due_to is not None:
+            due_filters.append(CreditCardStatement.due_date <= due_to)
+        filters.append(
+            Transaction.source_file_id.in_(
+                select(CreditCardStatement.source_file_id).where(*due_filters)
             )
         )
     if source_type is not None:
@@ -501,10 +620,30 @@ async def list_transactions(
         .limit(limit)
         .offset(offset)
     ).all()
+    # Map each page row to the invoice (statement) it belongs to, so the client can
+    # show both the transaction date and the invoice it was charged on.
+    page_source_file_ids = {
+        transaction.source_file_id
+        for transaction, _ in rows
+        if transaction.source_type == "credit_card_statement" and transaction.source_file_id
+    }
+    invoice_by_source_file: dict[str, CreditCardStatement] = {}
+    if page_source_file_ids:
+        for statement in db.scalars(
+            select(CreditCardStatement).where(
+                CreditCardStatement.workspace_id == auth.workspace_id,
+                CreditCardStatement.source_file_id.in_(page_source_file_ids),
+            )
+        ).all():
+            invoice_by_source_file[statement.source_file_id] = statement
     return TransactionListResponse(
         workspace_id=auth.workspace_id,
         items=[
-            _transaction_read(transaction=transaction, assignment=assignment)
+            _transaction_read(
+                transaction=transaction,
+                assignment=assignment,
+                invoice=invoice_by_source_file.get(transaction.source_file_id),
+            )
             for transaction, assignment in rows
         ],
         total=total,
@@ -513,6 +652,66 @@ async def list_transactions(
         total_income=income_sum,
         total_expense=expense_sum,
         total_net=income_sum - expense_sum,
+    )
+
+
+@router.get("/export.csv")
+async def export_transactions_csv(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> Response:
+    """Server-side CSV export. Projects only the 6 columns the CSV needs instead
+    of streaming full transaction rows to the client (which previously pulled
+    thousands of rows, including heavy fields, from the database)."""
+    rows = db.execute(
+        select(
+            Transaction.transaction_date,
+            Transaction.description,
+            Transaction.amount,
+            Transaction.direction,
+            Transaction.account_or_card,
+            TransactionCategoryAssignment.category_id,
+        )
+        .outerjoin(
+            TransactionCategoryAssignment,
+            and_(
+                TransactionCategoryAssignment.transaction_id == Transaction.id,
+                TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+            ),
+        )
+        .where(
+            Transaction.workspace_id == auth.workspace_id,
+            Transaction.natural_dedupe_key.is_not(None),
+        )
+        .order_by(desc(Transaction.transaction_date), desc(Transaction.id))
+    ).all()
+
+    def esc(value: object) -> str:
+        return '"' + str(value).replace('"', '""') + '"'
+
+    header = ["Data", "Descricao", "Valor", "Direcao", "Conta", "CategoriaId"]
+    lines = [";".join(esc(h) for h in header)]
+    for r in rows:
+        lines.append(
+            ";".join(
+                esc(v)
+                for v in (
+                    r.transaction_date.isoformat(),
+                    r.description,
+                    r.amount,
+                    r.direction,
+                    r.account_or_card or "",
+                    r.category_id or "",
+                )
+            )
+        )
+    body = "﻿" + "\n".join(lines)
+    return Response(
+        content=body,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": "attachment; filename=smartcashflow-transacoes.csv"
+        },
     )
 
 
@@ -787,13 +986,21 @@ async def normalize_transaction_descriptions(
         select(Transaction).where(Transaction.workspace_id == auth.workspace_id)
     ).all()
     import_service = ImportService(db)
+    aliases = load_aliases(db, auth.workspace_id)
     recalculated_items = []
     for transaction in transactions:
-        normalized_description = normalize_transaction_description(transaction.raw_description)
+        normalized_description = normalize_transaction_description(
+            transaction.raw_description, transaction.transaction_date
+        )
+        alias_replacement = apply_aliases(
+            transaction.raw_description, normalized_description, aliases
+        )
+        if alias_replacement is not None:
+            normalized_description = alias_replacement
         installment_current, installment_total = (
             extract_installment(transaction.raw_description)
             if transaction.source_type == "credit_card_statement"
-            else (None, None)
+            else extract_installment_marker(transaction.raw_description)
         )
         natural_dedupe_key = import_service._natural_transaction_dedupe_key(
             workspace_id=auth.workspace_id,
@@ -877,6 +1084,7 @@ async def normalize_transaction_descriptions(
 def _transaction_read(
     transaction: Transaction,
     assignment: TransactionCategoryAssignment | None,
+    invoice: CreditCardStatement | None = None,
 ) -> TransactionRead:
     return TransactionRead(
         id=transaction.id,
@@ -887,6 +1095,9 @@ def _transaction_read(
         account_or_card=transaction.account_or_card,
         transaction_date=transaction.transaction_date,
         payment_date=transaction.payment_date,
+        invoice_closing_date=invoice.closing_date if invoice else None,
+        invoice_due_date=invoice.due_date if invoice else None,
+        invoice_month=invoice.statement_month if invoice else None,
         description=transaction.description,
         raw_description=transaction.raw_description,
         amount=transaction.amount,

@@ -106,8 +106,8 @@ def list_credit_cards(
 ) -> CreditCardListResponse:
     cards = db.scalars(
         select(CreditCard)
-        .where(CreditCard.workspace_id == auth.workspace_id)
-        .order_by(CreditCard.active.desc(), CreditCard.name)
+        .where(CreditCard.workspace_id == auth.workspace_id, CreditCard.active.is_(True))
+        .order_by(CreditCard.name)
     ).all()
     return CreditCardListResponse(
         workspace_id=auth.workspace_id,

@@ -59,6 +59,27 @@ def client(db_session: Session, auth: AuthContext) -> Iterator[TestClient]:
     app.dependency_overrides.clear()
 
 
+def test_apply_trgm_memory_skips_gracefully_on_non_postgres(
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    from app.services.categorization_service import CategorizationService
+
+    # On SQLite (no pg_trgm) the trigram stage must skip without raising and
+    # return 0, so the categorization pipeline can fall through to the LLM stage
+    # instead of erroring when there is nothing/no engine to match against.
+    ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="extrato.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato.txt",
+        content=b"01/07/2025;PIX MERCADO;-10,00\n",
+    )
+    applied = CategorizationService(db_session).apply_trgm_memory(auth.workspace_id)
+    assert applied == 0
+
+
 def test_create_and_list_rules_for_current_workspace(
     client: TestClient,
     db_session: Session,
