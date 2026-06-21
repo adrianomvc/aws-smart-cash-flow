@@ -6,12 +6,13 @@ active (the desired end state)."""
 
 import sys
 
-from app.core.auth import AuthContext, LOCAL_USER_ID, LOCAL_WORKSPACE_ID
+from sqlalchemy import select
+
+from app.core.auth import LOCAL_USER_ID, LOCAL_WORKSPACE_ID, AuthContext
 from app.db.models import CreditCard
 from app.db.session import SessionLocal
 from app.services.import_service import ImportService
-from app.services.parsers import extract_itau_card_metadata, parse_itau_credit_card_pdf
-from sqlalchemy import select
+from app.services.parsers import parse_itau_credit_card_pdf
 
 
 def main(path: str) -> None:
@@ -42,7 +43,8 @@ def main(path: str) -> None:
 
         # 1) soft-delete
         card.active = False
-        db.add(card); db.commit()
+        db.add(card)
+        db.commit()
         print(f"Apos soft-delete: active={card.active}")
 
         # 2) re-import same file (duplicate-file path)

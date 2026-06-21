@@ -6,11 +6,12 @@ Rolls back at the end (never persists)."""
 import sys
 import traceback
 
-from app.core.auth import AuthContext, LOCAL_USER_ID, LOCAL_WORKSPACE_ID
+from sqlalchemy import select
+
+from app.core.auth import LOCAL_USER_ID, LOCAL_WORKSPACE_ID, AuthContext
 from app.db.models import CreditCard
 from app.db.session import SessionLocal
 from app.services.import_service import ImportService
-from sqlalchemy import select
 
 
 def main(path: str) -> None:

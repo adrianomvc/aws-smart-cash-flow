@@ -6,18 +6,21 @@ Usage: python scripts/reset_and_reimport.py "<filename-substring>" "<pdf-path>"
 
 import sys
 
-from app.core.auth import AuthContext, LOCAL_USER_ID, LOCAL_WORKSPACE_ID
+from sqlalchemy import select
+
+from app.core.auth import LOCAL_USER_ID, LOCAL_WORKSPACE_ID, AuthContext
 from app.db.models import (
     CreditCardStatement,
-    ImportError as ImportErrorRow,
     ImportJob,
     RawTransactionLine,
     SourceFile,
     Transaction,
 )
+from app.db.models import (
+    ImportError as ImportErrorRow,
+)
 from app.db.session import SessionLocal
 from app.services.import_service import ImportService
-from sqlalchemy import select
 
 
 def main(substring: str, path: str) -> None:

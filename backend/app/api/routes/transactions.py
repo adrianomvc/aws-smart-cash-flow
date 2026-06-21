@@ -189,7 +189,13 @@ async def uncategorized_groups(
     for tx_id, description, amount in rows:
         entry = grouped.setdefault(
             description,
-            {"key": description, "sample_description": description, "count": 0, "total": Decimal("0"), "ids": []},
+            {
+                "key": description,
+                "sample_description": description,
+                "count": 0,
+                "total": Decimal("0"),
+                "ids": [],
+            },
         )
         entry["count"] = int(entry["count"]) + 1
         entry["total"] = Decimal(entry["total"]) + abs(amount)
@@ -197,7 +203,11 @@ async def uncategorized_groups(
             entry["ids"].append(tx_id)
     reverse = sort_dir != "asc"
     if sort_by == "name":
-        groups = sorted(grouped.values(), key=lambda g: str(g["sample_description"]).lower(), reverse=reverse)
+        groups = sorted(
+            grouped.values(),
+            key=lambda g: str(g["sample_description"]).lower(),
+            reverse=reverse,
+        )
     elif sort_by == "total":
         groups = sorted(grouped.values(), key=lambda g: Decimal(g["total"]), reverse=reverse)
     else:  # count
@@ -979,8 +989,12 @@ async def normalize_transaction_descriptions(
     aliases = load_aliases(db, auth.workspace_id)
     recalculated_items = []
     for transaction in transactions:
-        normalized_description = normalize_transaction_description(transaction.raw_description, transaction.transaction_date)
-        alias_replacement = apply_aliases(transaction.raw_description, normalized_description, aliases)
+        normalized_description = normalize_transaction_description(
+            transaction.raw_description, transaction.transaction_date
+        )
+        alias_replacement = apply_aliases(
+            transaction.raw_description, normalized_description, aliases
+        )
         if alias_replacement is not None:
             normalized_description = alias_replacement
         installment_current, installment_total = (

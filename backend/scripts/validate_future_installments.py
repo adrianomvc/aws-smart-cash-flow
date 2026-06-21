@@ -6,7 +6,7 @@ future commitment (remaining installments + future amount) shows up without us
 ever storing the future rows, option 2 (storing projected rows) is redundant.
 """
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import uuid4
 
@@ -54,7 +54,7 @@ def main() -> None:
             source_line=1,
             dedupe_key=uuid4().hex,
             natural_dedupe_key=uuid4().hex,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         db.add(tx)
         db.flush()

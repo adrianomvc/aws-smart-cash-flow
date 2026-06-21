@@ -137,8 +137,12 @@ def parse_decimal_cell(raw_value: object) -> Decimal:
     return parse_brazilian_decimal(text)
 
 
-def normalize_transaction_description(raw_description: str, transaction_date: date | None = None) -> str:
-    base = _normalize_transaction_description(raw_description, drop_installment=True, transaction_date=transaction_date)
+def normalize_transaction_description(
+    raw_description: str, transaction_date: date | None = None
+) -> str:
+    base = _normalize_transaction_description(
+        raw_description, drop_installment=True, transaction_date=transaction_date
+    )
     return _enrich_titulo_description(base, raw_description)
 
 
@@ -173,7 +177,9 @@ def _enrich_titulo_description(normalized: str, raw_description: str) -> str:
     return normalized
 
 
-def _normalize_transaction_description(raw_description: str, *, drop_installment: bool, transaction_date: date | None = None) -> str:
+def _normalize_transaction_description(
+    raw_description: str, *, drop_installment: bool, transaction_date: date | None = None
+) -> str:
     ascii_description = "".join(
         char
         for char in normalize("NFKD", raw_description)
@@ -430,7 +436,11 @@ def _drop_trailing_date_suffix(value: str, transaction_date: date | None = None)
     month = int(match.group(2))
     if not (1 <= day <= 31 and 1 <= month <= 12):
         return value
-    matches_tx_date = transaction_date is not None and day == transaction_date.day and month == transaction_date.month
+    matches_tx_date = (
+        transaction_date is not None
+        and day == transaction_date.day
+        and month == transaction_date.month
+    )
     glued = match.start() > 0 and value[match.start() - 1].isalpha()
     if matches_tx_date or glued:
         return value[: match.start()].strip()
@@ -965,7 +975,8 @@ _ITAU_PDF_TX_RE = re.compile(
 )
 _ITAU_PDF_LINE_START_RE = re.compile(r"\d{2}/\d{2}\s")
 # In two-column layout mode, a right-column transaction may appear on the same
-# rendered line as left-column category text (e.g. "DIVERSOS .Sao Paulo   05/07 PAYPAL *CWP   1.269,02").
+# rendered line as left-column category text
+# (e.g. "DIVERSOS .Sao Paulo   05/07 PAYPAL *CWP   1.269,02").
 # The column gutter is ≥10 spaces; we extract the right segment separately.
 _ITAU_PDF_RIGHT_COL_SEP_RE = re.compile(r"\s{10,}(?=\d{2}/\d{2}\s)")
 _ITAU_PDF_DUE_RE = re.compile(r"[Vv]encimento:?\s*(\d{2})/(\d{2})/(\d{4})")
@@ -1040,7 +1051,10 @@ def extract_itau_card_metadata(text: str) -> ParsedCreditCard | None:
         if closing
         else None
     )
-    closing_day = closing_date.day if closing_date else (int(closing_day_any.group(1)) if closing_day_any else None)
+    closing_day = (
+        closing_date.day if closing_date
+        else (int(closing_day_any.group(1)) if closing_day_any else None)
+    )
     limit_amount = parse_brazilian_decimal(limit.group(1)) if limit else None
     # Personnalité layout: the credit-limit value sits in the header summary box and
     # its "Limite total de crédito" label is rotated text pypdf cannot read. In the
@@ -1133,7 +1147,9 @@ def parse_itau_credit_card_statement_text(text: str) -> ParseResult:
                     transaction_date = date(year, month, day)
                 except ValueError:
                     continue
-                normalized_description = normalize_transaction_description(raw_description, transaction_date)
+                normalized_description = normalize_transaction_description(
+                    raw_description, transaction_date
+                )
 
                 if is_negative and normalized_description == "PAGAMENTO EFETUADO":
                     direction = TransactionDirection.PAYMENT
@@ -1186,14 +1202,20 @@ def _itau_pdf_iof_charge(text: str) -> ParsedTransaction | None:
     if amount <= 0:
         return None
     if closing_match:
-        charge_date = date(int(closing_match.group(3)), int(closing_match.group(2)), int(closing_match.group(1)))
+        charge_date = date(
+            int(closing_match.group(3)), int(closing_match.group(2)), int(closing_match.group(1))
+        )
     elif due_match and closing_any:
         # No explicit closing date for this invoice — estimate it from the closing DAY:
         # if the closing day is on/before the due day it closed in the due month,
         # otherwise in the previous month.
         due_date = date(int(due_match.group(3)), int(due_match.group(2)), int(due_match.group(1)))
         closing_day = int(closing_any.group(1))
-        year, month = (due_date.year, due_date.month) if closing_day <= due_date.day else _subtract_months(due_date.year, due_date.month, 1)
+        year, month = (
+            (due_date.year, due_date.month)
+            if closing_day <= due_date.day
+            else _subtract_months(due_date.year, due_date.month, 1)
+        )
         charge_date = date(year, month, min(closing_day, monthrange(year, month)[1]))
     else:
         anchor = due_match

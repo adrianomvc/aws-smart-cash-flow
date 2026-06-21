@@ -514,7 +514,9 @@ async def update_merchant_alias(
         )
         alias.pattern = pattern
     if payload.replacement is not None:
-        alias.replacement = _normalize_alias_text(payload.replacement, "Alias replacement is required")
+        alias.replacement = _normalize_alias_text(
+            payload.replacement, "Alias replacement is required"
+        )
     if payload.match_type is not None:
         alias.match_type = _validate_alias_match_type(payload.match_type)
     if payload.active is not None:
@@ -1054,7 +1056,9 @@ def _get_alias(db: Session, workspace_id: str, alias_id: str) -> MerchantAlias:
         )
     )
     if alias is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merchant alias not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Merchant alias not found"
+        )
     return alias
 
 

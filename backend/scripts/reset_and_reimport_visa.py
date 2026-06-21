@@ -3,18 +3,21 @@ verify the invoice-competence filter returns the statement's transactions."""
 
 from datetime import date
 
-from app.core.auth import AuthContext, LOCAL_USER_ID, LOCAL_WORKSPACE_ID
+from sqlalchemy import func, select
+
+from app.core.auth import LOCAL_USER_ID, LOCAL_WORKSPACE_ID, AuthContext
 from app.db.models import (
     CreditCardStatement,
-    ImportError as ImportErrorRow,
     ImportJob,
     RawTransactionLine,
     SourceFile,
     Transaction,
 )
+from app.db.models import (
+    ImportError as ImportErrorRow,
+)
 from app.db.session import SessionLocal
 from app.services.import_service import ImportService
-from sqlalchemy import func, select
 
 PDF = r"G:/Meu Drive/Financas/Faturas/BKP/FATURA_PERSONNALITE_VISA_INFINITE_2026_05.pdf"
 
