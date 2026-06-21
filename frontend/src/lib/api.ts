@@ -67,6 +67,7 @@ export type CategoryAssignmentRead = {
   source: string;
   confidence: string | null;
   review_status: string;
+  reason: string | null;
 };
 
 export type TransactionRead = {

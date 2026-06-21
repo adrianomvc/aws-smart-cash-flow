@@ -54,6 +54,9 @@ class CategoryAssignmentRead(BaseModel):
     source: str
     confidence: Decimal | None
     review_status: str
+    # Free-text rationale; for AI assignments it carries the suggested rule regex
+    # ("... | regex sugerido: ^spotify"), surfaced so the UI can offer "create rule".
+    reason: str | None = None
 
 
 class TransactionRead(BaseModel):
@@ -1112,6 +1115,7 @@ def _transaction_read(
             source=assignment.source,
             confidence=assignment.confidence,
             review_status=assignment.review_status,
+            reason=assignment.reason,
         )
         if assignment is not None
         else None,

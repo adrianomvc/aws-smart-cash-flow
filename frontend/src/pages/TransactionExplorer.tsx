@@ -250,6 +250,14 @@ type CategoryGroup = { id: string; name: string; subs: { id: string; name: strin
 // Sentinel value used by the category <select>s to mean "create a new one".
 const NEW_CATEGORY_VALUE = "__new__";
 
+// The AI categorizer stores a suggested rule regex in the assignment reason
+// ("IA Gemini | regex sugerido: ^spotify"). Pull it out so we can offer a rule.
+function aiSuggestedRegex(reason: string | null | undefined): string | null {
+  const match = /regex sugerido:\s*(.+)$/i.exec(reason ?? "");
+  const value = match?.[1]?.trim();
+  return value && value.toLowerCase() !== "null" ? value : null;
+}
+
 // Lets any CategoryPicker (deeply nested in rows/cards/detail/review) open the
 // shared "create category" modal without threading callbacks through every layer.
 // The handler receives an `apply` callback that assigns the freshly created
@@ -397,19 +405,21 @@ function TransactionRow({ transaction, categoryGroups, session, onDelete, onSele
   );
 }
 
-function TransactionDetail({ transaction, categories, categoryGroups, deleting = false, onDelete, onCategorized, session }: {
+function TransactionDetail({ transaction, categories, categoryGroups, deleting = false, onDelete, onCategorized, onCreateRuleFromAI, session }: {
   transaction: TransactionRead;
   categories: CategoryRead[];
   categoryGroups: CategoryGroup[];
   deleting?: boolean;
   onDelete?: () => void;
   onCategorized?: (transaction: TransactionRead, categoryId: string | null) => void;
+  onCreateRuleFromAI?: (transaction: TransactionRead) => void;
   session: ApiSession;
 }) {
   const category = categories.find((item) => item.id === transaction.category?.category_id);
   const normalizedChanged = transaction.description !== transaction.raw_description;
   const isCredit = transaction.direction === "credit";
   const [showRule, setShowRule] = useState(false);
+  const aiRegex = transaction.category?.source === "llm" ? aiSuggestedRegex(transaction.category?.reason) : null;
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>
       <QRow label="Descrição normalizada" value={<span style={normalizedChanged ? { color: "var(--acc)", fontWeight: 600 } : {}}>{transaction.description}</span>} />
@@ -448,6 +458,21 @@ function TransactionDetail({ transaction, categories, categoryGroups, deleting =
           <TIcon name="tag" size={13} /> Criar regra
         </button>
       </div>
+      {aiRegex && onCreateRuleFromAI && (
+        <div style={{ padding: "12px 0", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 13.5, color: "var(--ink)", display: "flex", alignItems: "center", gap: 6 }}>
+              <TIcon name="zap" size={13} /> Sugestão de regra da IA
+            </div>
+            <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 2 }}>
+              A IA sugeriu o padrão <code style={{ background: "var(--bg-sunken)", padding: "1px 5px", borderRadius: 5 }}>{aiRegex}</code>. Revise antes de salvar.
+            </div>
+          </div>
+          <button className="btn btn-sm btn-ghost" type="button" style={{ flexShrink: 0 }} onClick={() => onCreateRuleFromAI(transaction)}>
+            <TIcon name="zap" size={13} /> Revisar e criar
+          </button>
+        </div>
+      )}
       {showRule && (
         <RuleFromTxModal
           transaction={transaction}
@@ -1106,6 +1131,21 @@ export function TransactionExplorer({
       field: "description",
       match_type: "contains",
       pattern: ruleTokens(sampleDescription),
+    });
+    setRuleFormError("");
+    setShowRuleModal(true);
+  }
+  // Open the rule form prefilled from the AI's suggested regex (user can edit before saving).
+  function openRuleFromAi(t: TransactionRead) {
+    const regex = aiSuggestedRegex(t.category?.reason);
+    if (!regex) return;
+    setRuleForm({
+      ...emptyRuleForm,
+      name: t.description.slice(0, 40),
+      field: "description",
+      match_type: "regex",
+      pattern: regex,
+      category_id: t.category?.category_id ?? "",
     });
     setRuleFormError("");
     setShowRuleModal(true);
@@ -2143,6 +2183,7 @@ export function TransactionExplorer({
             deleting={remove.isPending}
             onDelete={() => { if (window.confirm(`Excluir a transação "${selected.description}"? Esta ação não pode ser desfeita no MVP.`)) remove.mutate(selected.id); }}
             onCategorized={handleCategoryChanged}
+            onCreateRuleFromAI={openRuleFromAi}
             session={session}
             transaction={selected}
           />
