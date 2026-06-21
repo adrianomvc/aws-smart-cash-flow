@@ -37,6 +37,7 @@ import {
 } from "../lib/utils";
 import { useCategories } from "../hooks";
 import { CatModal } from "../components/CatModal";
+import { RuleFormModal, emptyRuleForm, ruleFormToPayload } from "../components/RuleFormModal";
 import type {
   ActiveAccountItem,
   ApiSession,
@@ -44,7 +45,7 @@ import type {
   DuplicateTransactionGroup,
   TransactionRead,
 } from "../lib/api";
-import type { TransactionPeriodPreset } from "../types";
+import type { RuleFormState, TransactionPeriodPreset } from "../types";
 
 // ---------------------------------------------------------------------------
 // SVG icon system
@@ -1077,6 +1078,39 @@ export function TransactionExplorer({
     onMutate: () => ({ apply: newCat?.apply }),
   });
 
+  // Inline "Criar regra" from a group — opens the shared rule form prefilled, so a
+  // recurring classification (e.g. mark as invoice payment) can be set up without
+  // leaving Transactions for Settings.
+  const [ruleForm, setRuleForm] = useState<RuleFormState>(emptyRuleForm);
+  const [showRuleModal, setShowRuleModal] = useState(false);
+  const [ruleFormError, setRuleFormError] = useState("");
+  const createRuleInline = useMutation({
+    mutationFn: () => createRule(session, ruleFormToPayload(ruleForm)),
+    onSuccess: () => {
+      setShowRuleModal(false);
+      setRuleForm(emptyRuleForm);
+      setRuleFormError("");
+      setActionMessage("Regra criada.");
+      void queryClient.invalidateQueries({ queryKey: ["rules"] });
+      void queryClient.invalidateQueries({ queryKey: ["uncategorized-groups"] });
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      void queryClient.invalidateQueries({ queryKey: ["category-ranking"] });
+    },
+    onError: (e) => setRuleFormError(apiErrorMessage(e, "Falha ao criar a regra.")),
+  });
+  function openRuleForGroup(sampleDescription: string) {
+    setRuleForm({
+      ...emptyRuleForm,
+      name: sampleDescription.slice(0, 40),
+      field: "description",
+      match_type: "contains",
+      pattern: ruleTokens(sampleDescription),
+    });
+    setRuleFormError("");
+    setShowRuleModal(true);
+  }
+
   // Card brands for the "Bandeira" filter.
   const creditCards = useQuery({ queryKey: ["credit-cards", session.token], queryFn: () => getCreditCards(session), staleTime: 5 * 60 * 1000 });
   const cardBrands = useMemo(
@@ -1340,6 +1374,7 @@ export function TransactionExplorer({
       setSelectedIds(new Set());
       setActionMessage(`Tipo alterado em ${count} transação(ões).`);
       void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["uncategorized-groups"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
       void queryClient.invalidateQueries({ queryKey: ["monthly-cashflow"] });
       void queryClient.invalidateQueries({ queryKey: ["category-ranking"] });
@@ -1548,6 +1583,18 @@ export function TransactionExplorer({
 
   return (
     <NewCategoryContext.Provider value={openNewCategory}>
+    {showRuleModal ? (
+      <RuleFormModal
+        form={ruleForm}
+        setForm={setRuleForm}
+        categoryOptions={categoryOptions}
+        saving={createRuleInline.isPending}
+        error={ruleFormError}
+        onClose={() => { setShowRuleModal(false); setRuleFormError(""); }}
+        onSubmit={() => createRuleInline.mutate()}
+        onRequestNewCategory={() => setNewCat({ apply: (id) => setRuleForm((prev) => ({ ...prev, category_id: id })) })}
+      />
+    ) : null}
     {newCat ? (
       <CatModal
         state={{ kind: "cat" }}
@@ -1845,7 +1892,7 @@ export function TransactionExplorer({
                         {label} <span style={{ fontSize: 10, color: groupSortBy === col ? "var(--acc)" : "var(--ink-faint)" }}>{groupSortBy === col ? (groupSortDir === "asc" ? "▲" : "▼") : "⇅"}</span>
                       </th>
                     ))}
-                    <th style={{ minWidth: 220 }}>Categoria</th>
+                    <th style={{ minWidth: 320 }}>Categoria / ação</th>
                   </tr></thead>
                   <tbody>
                     {(uncategorizedGroups.data?.groups ?? []).map((g) => (
@@ -1854,23 +1901,51 @@ export function TransactionExplorer({
                         <td className="num mono">{g.count}</td>
                         <td className="num mono" style={{ color: "var(--neg)" }}>{moneyAbs(g.total)}</td>
                         <td>
-                          <select
-                            className="cat-select"
-                            style={{ width: "100%" }}
-                            disabled={categorizeGroup.isPending}
-                            value=""
-                            onChange={(e) => {
-                              const value = e.target.value;
-                              if (!value) return;
-                              const rulePattern = groupCreateRule ? ruleTokens(g.sample_description) : undefined;
-                              if (value === NEW_CATEGORY_VALUE) { setNewCat({ apply: (id) => categorizeGroup.mutate({ ids: g.ids, categoryId: id, rulePattern }) }); return; }
-                              categorizeGroup.mutate({ ids: g.ids, categoryId: value, rulePattern });
-                            }}
-                          >
-                            <option value="">{categorizeGroup.isPending ? "Aplicando…" : `Categorizar ${g.count} →`}</option>
-                            {categoryOptions.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
-                            <option value={NEW_CATEGORY_VALUE}>＋ Nova categoria…</option>
-                          </select>
+                          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                            <select
+                              className="cat-select"
+                              style={{ flex: 1, minWidth: 0 }}
+                              disabled={categorizeGroup.isPending}
+                              value=""
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                if (!value) return;
+                                const rulePattern = groupCreateRule ? ruleTokens(g.sample_description) : undefined;
+                                if (value === NEW_CATEGORY_VALUE) { setNewCat({ apply: (id) => categorizeGroup.mutate({ ids: g.ids, categoryId: id, rulePattern }) }); return; }
+                                categorizeGroup.mutate({ ids: g.ids, categoryId: value, rulePattern });
+                              }}
+                            >
+                              <option value="">{categorizeGroup.isPending ? "Aplicando…" : `Categorizar ${g.count} →`}</option>
+                              {categoryOptions.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                              <option value={NEW_CATEGORY_VALUE}>＋ Nova categoria…</option>
+                            </select>
+                            <select
+                              className="cat-select"
+                              style={{ flexShrink: 0 }}
+                              title="Marcar o tipo deste grupo (ex.: Pagamento de fatura)"
+                              disabled={bulkChangeDirection.isPending}
+                              value=""
+                              onChange={(e) => {
+                                const dir = e.target.value;
+                                if (!dir) return;
+                                bulkChangeDirection.mutate({ ids: g.ids, direction: dir });
+                              }}
+                            >
+                              <option value="">Tipo…</option>
+                              <option value="payment">Fatura</option>
+                              <option value="debit">Despesa</option>
+                              <option value="credit">Receita</option>
+                            </select>
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              type="button"
+                              style={{ flexShrink: 0 }}
+                              title="Criar uma regra a partir deste grupo (sem ir em Configurações)"
+                              onClick={() => openRuleForGroup(g.sample_description)}
+                            >
+                              <TIcon name="zap" size={13} /> Regra
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
