@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SmartCashFlow — Cockpit Financeiro Familiar</title>
+<link rel="stylesheet" href="styles.css" />
+<template id="__bundler_thumbnail" data-bg-color="#07111F">
+  <svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg">
+    <rect width="1200" height="800" fill="#07111F"/>
+    <g transform="translate(440 220)">
+      <!-- Stylized SC monogram on a soft green disc -->
+      <circle cx="160" cy="180" r="200" fill="#0D1729" stroke="#22C55E" stroke-width="3" opacity="0.9"/>
+      <circle cx="160" cy="180" r="200" fill="none" stroke="#22C55E" stroke-width="1" opacity="0.25"/>
+      <!-- Upward trend line -->
+      <polyline points="60,250 110,210 160,230 210,170 260,120" fill="none" stroke="#22C55E" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="260" cy="120" r="9" fill="#22C55E"/>
+      <!-- Subtle bars baseline -->
+      <g opacity="0.35" fill="#316BFF">
+        <rect x="60"  y="290" width="22" height="22" rx="3"/>
+        <rect x="110" y="290" width="22" height="40" rx="3"/>
+        <rect x="160" y="290" width="22" height="30" rx="3"/>
+        <rect x="210" y="290" width="22" height="55" rx="3"/>
+        <rect x="260" y="290" width="22" height="46" rx="3"/>
+      </g>
+    </g>
+    <text x="600" y="660" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="34" font-weight="700" fill="#F2F5FB" letter-spacing="-0.5">SmartCashFlow</text>
+    <text x="600" y="700" text-anchor="middle" font-family="ui-monospace, monospace" font-size="14" fill="#7E879B" letter-spacing="2">CARREGANDO COCKPIT FINANCEIRO</text>
+  </svg>
+</template>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script src="data.js"></script>
+<script type="text/babel" src="icons.jsx"></script>
+<script type="text/babel" src="charts.jsx"></script>
+<script type="text/babel" src="chart_sankey.jsx"></script>
+<script type="text/babel" src="ui.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="shell.jsx"></script>
+<script type="text/babel" src="screen_dashboard.jsx"></script>
+<script type="text/babel" src="screen_planning.jsx"></script>
+<script type="text/babel" src="screen_reports.jsx"></script>
+<script type="text/babel" src="screen_cashflow.jsx"></script>
+<script type="text/babel" src="screen_transactions.jsx"></script>
+<script type="text/babel" src="screen_categories.jsx"></script>
+<script type="text/babel" src="screen_cards.jsx"></script>
+<script type="text/babel" src="screen_planning2.jsx"></script>
+<script type="text/babel" src="screen_planmisc.jsx"></script>
+<script type="text/babel" src="screen_wealth.jsx"></script>
+<script type="text/babel" src="screen_ai.jsx"></script>
+<script type="text/babel" src="screen_account.jsx"></script>
+<script type="text/babel" src="screen_settings_panels.jsx"></script>
+<script type="text/babel" src="app.jsx"></script>
+<script type="text/babel" data-presets="react">
+  // Babel runs these scripts in order; by here every prior script has executed.
+  function boot(n){ if (window.__mountApp) { window.__mountApp(); } else if (n < 50) { setTimeout(() => boot(n+1), 40); } }
+  boot(0);
+</script>
+</body>
+</html>

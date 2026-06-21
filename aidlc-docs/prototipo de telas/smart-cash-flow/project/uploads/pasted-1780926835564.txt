@@ -1,0 +1,713 @@
+Você é um designer sênior de produto, UX/UI designer e product strategist. Quero que você crie o wireframe/protótipo final do SmartCashFlow como se fosse a versão completa do produto, mas respeitando o estado atual do projeto e deixando claro o que já existe, o que está em evolução e o que pertence à visão futura.
+
+## Produto
+
+O produto se chama SmartCashFlow.
+
+SmartCashFlow é uma plataforma web de controle financeiro familiar focada em fluxo de caixa, previsibilidade, saúde financeira, orçamento, metas, cartões, relatórios, patrimônio, investimentos e insights com IA.
+
+A missão do produto é responder de forma simples:
+
+“Quanto entrou? Quanto saiu? Quanto sobrou? O que vem pela frente? Posso gastar? Minha família está financeiramente saudável?”
+
+O produto deve parecer um cockpit financeiro familiar moderno, confiável e inteligente. A interface precisa transmitir clareza, controle, segurança, previsibilidade e tomada de decisão.
+
+## Estado atual do projeto
+
+O projeto já existe e está em desenvolvimento. Não é uma ideia do zero.
+
+A stack atual é:
+- frontend em React, TypeScript, Vite, Recharts e Lucide;
+- backend em Python, FastAPI, SQLAlchemy, Alembic e pytest;
+- contratos em OpenAPI, JSON Schema e exemplos;
+- infraestrutura planejada com Terraform;
+- arquitetura atual em monorepo modular;
+- arquitetura futura planejada para multirepo.
+
+Hoje o produto já possui páginas reais no frontend para:
+- Dashboard;
+- Fluxo de Caixa;
+- Transações;
+- Calendário;
+- Cartões;
+- Orçamentos;
+- Metas;
+- Planejamento / Projeção;
+- Relatórios;
+- Importações;
+- Categorias;
+- Configurações.
+
+O backend já possui rotas/domínios para:
+- autenticação;
+- workspaces;
+- importações;
+- transações;
+- categorias;
+- auto categorização;
+- dashboard;
+- planejamento;
+- cartões;
+- contas;
+- relatórios;
+- health check.
+
+Já existem contratos em:
+- OpenAPI público;
+- eventos de importação;
+- eventos de ledger;
+- eventos de planejamento;
+- exemplos de dashboard, importações, transações, planejamento e relatórios.
+
+## O que já foi feito
+
+O MVP atual já cobre:
+- login/autenticação;
+- workspace para isolamento de dados;
+- upload manual de arquivos financeiros;
+- importação de TXT, CSV e suporte evoluído para Excel em algumas rotinas;
+- parsing e persistência de transações;
+- preservação de arquivo original e linhas brutas;
+- registro de erros por linha;
+- deduplicação de arquivo e transação;
+- consulta de importações;
+- consulta de transações;
+- categorização manual;
+- regras determinísticas de categorização;
+- dashboard com indicadores reais;
+- ranking de categorias;
+- qualidade dos dados;
+- fluxo de caixa;
+- cartões;
+- calendário;
+- orçamentos;
+- metas;
+- planejamento/projeção com horizontes de 30, 60 e 90 dias;
+- relatórios consolidados;
+- primeira fatia de alinhamento visual do Dashboard com o protótipo.
+
+O Dashboard já foi ajustado para contar a história do dinheiro:
+Entrou -> Saiu -> Saldo do mês -> Compromissos futuros -> Saldo previsto.
+
+Também já existe preocupação com:
+- dados reais do workspace;
+- não inventar números;
+- não usar mock como se fosse dado real;
+- não mostrar saldo atual definitivo quando ainda depende de integração;
+- separar indicadores “a integrar”, “estimados” e “reais”;
+- evitar dupla contagem de pagamento de fatura;
+- preservar rastreabilidade dos dados.
+
+## Objetivo do protótipo que você deve criar
+
+Criar um protótipo/wireframe navegável da versão final do SmartCashFlow.
+
+O protótipo deve representar a visão final do produto completo, mas deve ser construído com maturidade de produto:
+- mostrar o produto como ele deve ser quando estiver completo;
+- manter coerência com o que já existe hoje;
+- indicar visualmente módulos futuros quando necessário;
+- não prometer IA, automação bancária ou recomendações financeiras como se já estivessem prontas sem contexto;
+- não transformar o produto em um mock fantasioso sem ligação com o sistema real.
+
+Pense no protótipo como uma “versão final aspiracional”, mas tecnicamente plausível.
+
+## Direção visual
+
+Criar uma interface premium, moderna e sofisticada, mas operacional.
+
+Evitar:
+- visual genérico de dashboard corporativo;
+- excesso de cards soltos;
+- landing page como primeira tela;
+- hero marketing dentro do app;
+- cores muito chamativas;
+- interface infantil ou gamificada demais;
+- promessas exageradas de IA.
+
+Preferir:
+- layout denso, organizado e escaneável;
+- sidebar escura;
+- área principal clara;
+- cards com hierarquia forte;
+- gráficos limpos;
+- números grandes onde fizer sentido;
+- badges de status;
+- linguagem orientada à decisão;
+- português do Brasil;
+- UX writing claro, humano e financeiro.
+
+O produto deve parecer confiável para uma família colocar dados financeiros reais.
+
+## Estrutura geral do app
+
+A versão final deve ter:
+
+1. Sidebar lateral fixa
+2. Header contextual
+3. Filtro de período visível
+4. Workspace/família ativa
+5. Navegação por jornada
+6. Área principal responsiva
+7. Estados de loading, vazio, erro e dado insuficiente
+8. Notificações e alertas financeiros
+9. Indicação clara de dados reais, estimados ou futuros
+
+A sidebar deve organizar a navegação em grupos:
+
+Grupo: Visão
+- Dashboard
+- Fluxo de Caixa
+- Transações
+- Calendário
+
+Grupo: Planejamento
+- Cartões
+- Orçamentos
+- Metas
+- Planejamento / Projeção
+- Cenários / Simulador
+
+Grupo: Crescimento
+- Investimentos
+- Patrimônio
+- Relatórios
+- Insights IA
+- Copilot Financeiro
+
+Grupo: Conta
+- Família / Membros
+- Assinatura
+- Configurações
+
+## Tela 1: Dashboard / Cockpit Financeiro
+
+Esta é a tela mais importante do produto.
+
+Objetivo:
+permitir que o usuário entenda sua situação financeira em até 15 segundos.
+
+A primeira dobra deve conter:
+- saudação contextual;
+- período analisado;
+- narrativa “A história do seu dinheiro”;
+- linha executiva com Entrou, Saiu, Sobrou, Compromissos futuros e Saldo previsto;
+- KPIs principais;
+- alerta ou insight prioritário;
+- gráfico principal de fluxo de caixa.
+
+KPIs principais:
+- Saldo atual;
+- Receitas do mês;
+- Despesas do mês;
+- Fluxo líquido;
+- Saving Rate;
+- Burn Rate;
+- Runway financeiro;
+- Safe Spend;
+- Financial Health Score;
+- Comprometimento da receita;
+- Qualidade dos dados.
+
+Abaixo da primeira dobra:
+- evolução do fluxo de caixa;
+- top categorias;
+- próximos compromissos;
+- cartões de crédito;
+- metas em andamento;
+- orçamento do mês;
+- alertas inteligentes;
+- dica personalizada;
+- qualidade dos dados.
+
+O gráfico principal deve usar:
+- barras positivas para receitas;
+- barras negativas para despesas;
+- linha para saldo acumulado;
+- linha pontilhada para saldo projetado;
+- alternância Dia / Mês;
+- período filtrado pelo usuário.
+
+Importante:
+pagamentos de fatura não devem ser misturados como despesa comum quando isso causar dupla contagem.
+
+## Tela 2: Fluxo de Caixa
+
+Objetivo:
+permitir análise detalhada de entradas, saídas e saldo acumulado.
+
+Componentes:
+- filtro por período;
+- receitas vs despesas;
+- saldo acumulado;
+- fluxo líquido;
+- despesas fixas vs variáveis;
+- receitas recorrentes;
+- tendência mensal;
+- categorias de maior impacto;
+- recorrências relevantes;
+- drill-down para transações.
+
+A tela deve ajudar o usuário a responder:
+“Por que sobrou ou faltou dinheiro neste período?”
+
+## Tela 3: Transações
+
+Objetivo:
+consultar, buscar, filtrar, revisar e categorizar movimentações.
+
+Componentes:
+- busca por descrição;
+- filtros por período, conta, cartão, origem, categoria e direção;
+- tabs por tipo financeiro;
+- resumo da página atual;
+- tabela densa e legível;
+- edição de categoria;
+- status de revisão;
+- indicação de importação de origem;
+- ações em lote;
+- exportação futura.
+
+A tabela precisa ser muito clara. Essa tela é operacional.
+
+## Tela 4: Importações
+
+Objetivo:
+permitir entrada de dados financeiros no sistema.
+
+Componentes:
+- upload de arquivos;
+- histórico de importações;
+- status de processamento;
+- arquivos duplicados;
+- linhas novas;
+- linhas com erro;
+- linhas ignoradas;
+- prévia antes da importação;
+- mensagens claras para arquivo inválido;
+- orientação para lotes grandes.
+
+Estados:
+- importação concluída;
+- concluída com erros;
+- duplicada;
+- falhou;
+- processando;
+- aguardando.
+
+## Tela 5: Calendário Financeiro
+
+Objetivo:
+visualizar compromissos financeiros por data.
+
+Eventos:
+- salários;
+- contas;
+- faturas;
+- parcelas;
+- assinaturas;
+- investimentos;
+- metas;
+- alertas de risco.
+
+Componentes:
+- calendário mensal;
+- lista de próximos compromissos;
+- dias críticos destacados;
+- saldo previsto por data;
+- filtros por tipo de evento;
+- status pago, previsto, atrasado e estimado.
+
+## Tela 6: Cartões de Crédito
+
+Objetivo:
+controlar faturas, limites, vencimentos e parcelados.
+
+Componentes:
+- fatura atual;
+- limite total;
+- limite usado;
+- limite disponível;
+- fechamento;
+- vencimento;
+- melhor dia de compra;
+- parcelado futuro;
+- gastos por categoria;
+- lançamentos da fatura;
+- conciliação de pagamento;
+- alertas de comprometimento.
+
+Separar claramente:
+- compra;
+- fatura;
+- pagamento;
+- parcela futura.
+
+## Tela 7: Orçamentos
+
+Objetivo:
+comparar planejado vs realizado por categoria.
+
+Componentes:
+- orçamento total do mês;
+- categorias;
+- realizado;
+- planejado;
+- saldo restante;
+- percentual consumido;
+- status por categoria.
+
+Status:
+- dentro do orçamento;
+- atenção;
+- estourado.
+
+A tela deve ajudar o usuário a agir antes de estourar limites.
+
+## Tela 8: Metas
+
+Objetivo:
+acompanhar objetivos financeiros da família.
+
+Exemplos:
+- reserva de emergência;
+- viagem;
+- troca de carro;
+- educação dos filhos;
+- quitar dívida;
+- investimentos.
+
+Componentes:
+- cards de metas;
+- progresso;
+- valor atual;
+- valor alvo;
+- prazo;
+- contribuição sugerida;
+- impacto no orçamento;
+- status no prazo, atenção ou atrasada.
+
+## Tela 9: Planejamento / Projeção
+
+Objetivo:
+projetar saldo futuro e antecipar riscos.
+
+Componentes:
+- projeção de 30 dias;
+- projeção de 60 dias;
+- projeção de 90 dias;
+- projeção de 12 meses;
+- menor saldo previsto;
+- risco de saldo negativo;
+- eventos futuros relevantes;
+- premissas usadas;
+- melhor cenário;
+- cenário provável;
+- pior cenário.
+
+A tela deve deixar claro:
+- quais dados são reais;
+- quais são estimados;
+- quais premissas foram usadas;
+- quais riscos exigem ação.
+
+Não usar linguagem alarmista.
+
+## Tela 10: Cenários / Simulador
+
+Objetivo:
+simular decisões financeiras.
+
+Exemplos:
+- “Posso comprar algo de R$ 800?”
+- “E se eu reduzir alimentação em 15%?”
+- “E se eu antecipar uma parcela?”
+- “E se minha receita cair?”
+- “E se eu criar uma nova assinatura?”
+
+Componentes:
+- formulário de cenário;
+- impacto no saldo projetado;
+- impacto nas metas;
+- impacto no runway;
+- recomendação: seguro, atenção ou não recomendado;
+- explicação dos motivos;
+- ações sugeridas.
+
+## Tela 11: Investimentos
+
+Objetivo:
+acompanhar carteira, alocação e evolução.
+
+Componentes:
+- patrimônio investido;
+- rentabilidade mensal;
+- rentabilidade anual;
+- alocação por classe;
+- lista de ativos;
+- evolução patrimonial;
+- risco por classe;
+- comparação com metas.
+
+Essa tela pertence à visão final, mesmo que esteja em fase futura.
+
+## Tela 12: Patrimônio
+
+Objetivo:
+mostrar patrimônio líquido da família.
+
+Fórmula:
+Ativos - Passivos = Patrimônio líquido.
+
+Componentes:
+- ativos;
+- passivos;
+- contas;
+- investimentos;
+- imóveis;
+- veículos;
+- dívidas;
+- empréstimos;
+- evolução mensal;
+- data da última atualização;
+- origem dos dados.
+
+Deixar clara a diferença entre fluxo de caixa e patrimônio.
+
+## Tela 13: Relatórios
+
+Objetivo:
+oferecer visão consolidada, executiva e exportável.
+
+Tipos de relatório:
+- resumo executivo;
+- fluxo de caixa mensal;
+- despesas por categoria;
+- receitas por origem;
+- cartões;
+- orçamentos;
+- metas;
+- qualidade dos dados;
+- patrimônio;
+- projeção futura.
+
+Componentes:
+- seletor de relatório;
+- filtros;
+- cards executivos;
+- gráficos;
+- tabelas;
+- explicação do período analisado;
+- exportação PDF/CSV como visão futura se necessário.
+
+## Tela 14: Insights IA
+
+Objetivo:
+exibir recomendações acionáveis e explicáveis.
+
+Componentes:
+- alertas inteligentes;
+- impacto financeiro;
+- motivo;
+- ação sugerida;
+- nível de confiança;
+- dados usados;
+- atalhos para revisar transações;
+- alerta de dados insuficientes.
+
+Exemplos de insights:
+- aumento relevante em categoria;
+- assinatura esquecida;
+- risco de saldo negativo;
+- queda de receita;
+- gasto recorrente subindo;
+- orçamento perto do limite;
+- pendências de categorização afetando indicadores.
+
+A IA não deve parecer mágica. Deve ser explicável e baseada nos dados do workspace.
+
+## Tela 15: Copilot Financeiro
+
+Objetivo:
+permitir conversa com um assistente financeiro.
+
+Layout:
+- lista de conversas à esquerda;
+- chat central;
+- perguntas rápidas;
+- painel lateral com resumo financeiro;
+- fontes usadas na resposta;
+- período analisado;
+- qualidade dos dados.
+
+Perguntas rápidas:
+- “Posso fazer uma compra este mês?”
+- “Onde estou gastando mais?”
+- “O que devo revisar agora?”
+- “Como melhorar minha saúde financeira?”
+- “Quais contas vencem nos próximos dias?”
+
+Regras:
+- não dar consultoria financeira profissional;
+- não prometer retorno;
+- não inventar dados;
+- sempre mostrar os indicadores usados;
+- sempre permitir rastrear a resposta.
+
+## Tela 16: Família / Membros
+
+Objetivo:
+gerenciar uso compartilhado por família/workspace.
+
+Componentes:
+- membros;
+- convites;
+- papéis;
+- permissões;
+- atividade recente;
+- proprietário do workspace;
+- controle de acesso.
+
+Papéis:
+- owner;
+- admin;
+- member;
+- viewer.
+
+## Tela 17: Assinatura
+
+Objetivo:
+gerenciar plano, cobrança e limites.
+
+Componentes:
+- plano atual;
+- status da assinatura;
+- limites do plano;
+- histórico de pagamentos;
+- comparação de planos;
+- upgrade;
+- cancelamento;
+- cobrança futura.
+
+Essa tela pertence à visão final/monetização.
+
+## Tela 18: Configurações
+
+Objetivo:
+central administrativa e de preferências.
+
+Subtelas:
+- Perfil;
+- Segurança;
+- Preferências Financeiras;
+- Categorias;
+- Regras e Normalização;
+- Contas e Bancos;
+- Importação de Dados;
+- Notificações;
+- Backup e Sincronização;
+- Assinatura e Plano;
+- Sobre o App.
+
+Preferências financeiras:
+- moeda;
+- idioma;
+- região;
+- meta de poupança;
+- limite de comprometimento;
+- perfil de risco;
+- janela de burn rate;
+- método de runway;
+- reserva protegida;
+- política de gasto seguro;
+- categorias prioritárias;
+- canais de alerta.
+
+## Estados obrigatórios
+
+Criar estados visuais para:
+- carregando;
+- vazio;
+- erro;
+- sem dados suficientes;
+- dado estimado;
+- dado a integrar;
+- funcionalidade em breve;
+- dado com baixa confiança;
+- alerta crítico;
+- sucesso;
+- revisão pendente.
+
+Exemplos de mensagens:
+- “Importe seus extratos para começar.”
+- “Categorize transações para melhorar seus indicadores.”
+- “Ainda não há dados suficientes para projetar este período.”
+- “Este indicador depende de saldo bancário integrado.”
+- “Este módulo faz parte da visão futura do produto.”
+
+## Visão futura de arquitetura
+
+A versão final do produto deve ser compatível com uma arquitetura multirepo:
+
+- smartcashflow-web;
+- smartcashflow-api;
+- smartcashflow-contracts;
+- smartcashflow-infra;
+- identity-service;
+- ledger-service;
+- import-service;
+- planning-service;
+- insights-service;
+- wealth-service;
+- billing-service;
+- notification-service.
+
+Mas o protótipo não precisa mostrar arquitetura técnica. Ele precisa apenas refletir que o produto será grande, modular, escalável e preparado para:
+- web;
+- mobile futuro;
+- API pública/BFF;
+- IA isolada;
+- importação assíncrona;
+- billing;
+- notificações;
+- patrimônio;
+- investimentos.
+
+## Segurança e confiança
+
+Como o produto lida com dados financeiros, a UI deve reforçar:
+- privacidade;
+- isolamento por workspace;
+- dados financeiros não expostos;
+- rastreabilidade;
+- controle familiar;
+- qualidade dos dados;
+- origem dos indicadores.
+
+Evitar textos que pareçam marketing vazio. Usar confiança prática.
+
+## Definition of Done do protótipo
+
+O protótipo final deve entregar:
+- app logado completo;
+- sidebar e header consistentes;
+- Dashboard como tela principal;
+- telas navegáveis principais;
+- visão final dos módulos futuros;
+- separação clara entre real, estimado e futuro;
+- linguagem em português do Brasil;
+- design responsivo;
+- hierarquia visual forte;
+- fluxo natural entre Dashboard, Fluxo de Caixa, Transações, Cartões, Planejamento, Relatórios e Insights;
+- aparência de produto financeiro pronto para uso real.
+
+Prioridade de fidelidade:
+1. Dashboard;
+2. Planejamento / Projeção;
+3. Relatórios;
+4. Fluxo de Caixa;
+5. Transações;
+6. Cartões;
+7. Configurações;
+8. Demais telas futuras.
+
+Crie o protótipo como se fosse a versão final comercial do SmartCashFlow, mas com maturidade: bonito, completo, plausível, seguro e coerente com o projeto real já existente.

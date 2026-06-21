@@ -64,14 +64,17 @@
 | CONSTRUCTION | Workflow Planning / Functional Design | Completed | Visual prototype alignment package started. |
 | CONSTRUCTION | Code Generation | Completed locally | First Dashboard visual slice implemented. |
 | CONSTRUCTION | Build and Test | Completed for focused frontend scope | Frontend lint and build passed; dev server returned HTTP 200. |
-| CONSTRUCTION | User Validation | Current | User should validate first Dashboard fold against prototype images. |
+| CONSTRUCTION | User Validation | Completed | Dashboard visual slice validated; package advanced. |
+| CONSTRUCTION | Workflow Planning / Functional Design | Completed | Credit-card import + future installments plan created (`23-credit-card-import-execution-plan.md`). |
+| CONSTRUCTION | Code Generation | In progress | Itau PDF parser, card auto-register, future-installment derivation and frontend cards/imports UI. Uncommitted block on `feature/evolve-from-ci126`. |
+| CONSTRUCTION | Build and Test | Partial | `tests/test_parsers.py` (37) pass and `validate_future_installments.py` verified on 2026-06-19. Full suite + lint + frontend build pending. |
 
 ## Current Package
-- **Name**: Alinhamento Visual com Prototipo
-- **Backlog Reference**: `aidlc-docs/05-backlog.md`
-- **Current User Story**: US-055
-- **Current Status**: `Validacao usuario`
-- **Next Step**: User validates first Dashboard fold against `aidlc-docs/21-visual-validation-checklist.md`.
+- **Name**: Import de Fatura de Cartao + Comprometimento Futuro de Parcelas
+- **Plan**: `aidlc-docs/23-credit-card-import-execution-plan.md`
+- **Branch**: `feature/evolve-from-ci126`
+- **Current Status**: `Code Generation / Build and Test`
+- **Next Step**: Run full backend suite + lint + frontend build, validate with a real PDF, then commit the uncommitted block (split: parser / cards delete / imports preview).
 
 ## Canonical Artifact Locations
 - **Inception**: `aidlc-docs/inception/`
