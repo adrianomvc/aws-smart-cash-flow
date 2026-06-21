@@ -19,6 +19,7 @@ export const emptyRuleForm: RuleFormState = {
   day_min: "",
   day_max: "",
   direction_filter: "",
+  origin: "manual",
 };
 
 // Maps the form state (inputs hold strings) to the API payload.
@@ -38,6 +39,7 @@ export function ruleFormToPayload(form: RuleFormState): CategorizationRulePayloa
     day_min: isRecurring && form.day_min !== "" ? Number(form.day_min) : null,
     day_max: isRecurring && form.day_max !== "" ? Number(form.day_max) : null,
     direction_filter: isRecurring && form.direction_filter ? form.direction_filter : null,
+    origin: form.origin,
   };
 }
 

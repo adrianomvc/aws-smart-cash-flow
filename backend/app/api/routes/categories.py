@@ -66,6 +66,7 @@ class CategorizationRuleCreate(BaseModel):
     day_min: int | None = None
     day_max: int | None = None
     direction_filter: str | None = None
+    origin: str = "manual"
 
 
 class CategorizationRuleUpdate(BaseModel):
@@ -100,6 +101,7 @@ class CategorizationRuleRead(BaseModel):
     day_min: int | None
     day_max: int | None
     direction_filter: str | None
+    origin: str
     created_at: datetime
 
 
@@ -386,6 +388,7 @@ async def create_rule(
         day_min=payload.day_min,
         day_max=payload.day_max,
         direction_filter=_validate_target_direction(payload.direction_filter),
+        origin=_validate_rule_origin(payload.origin),
     )
     db.add(rule)
     db.commit()
@@ -801,6 +804,7 @@ async def accept_pending_review(
                     category_id=assignment.category_id,
                     priority=50,
                     active=True,
+                    origin="ai",
                 )
                 db.add(rule)
                 rule_created = True
@@ -1016,6 +1020,7 @@ def _rule_read(rule: CategorizationRule) -> CategorizationRuleRead:
         day_min=rule.day_min,
         day_max=rule.day_max,
         direction_filter=rule.direction_filter,
+        origin=rule.origin,
         created_at=rule.created_at,
     )
 
@@ -1198,6 +1203,12 @@ def _validate_rule_match_type(match_type: str) -> str:
             detail="Invalid rule match type",
         )
     return match_type
+
+
+def _validate_rule_origin(origin: str) -> str:
+    if origin not in {"manual", "ai"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid rule origin")
+    return origin
 
 
 def _validate_target_direction(target_direction: str | None) -> str | None:

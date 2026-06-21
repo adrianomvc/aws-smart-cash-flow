@@ -1146,6 +1146,7 @@ export function TransactionExplorer({
       match_type: "regex",
       pattern: regex,
       category_id: t.category?.category_id ?? "",
+      origin: "ai",
     });
     setRuleFormError("");
     setShowRuleModal(true);

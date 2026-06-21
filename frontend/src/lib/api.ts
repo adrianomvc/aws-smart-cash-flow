@@ -118,6 +118,7 @@ export type CategorizationRuleRead = {
   day_min?: number | null;
   day_max?: number | null;
   direction_filter?: string | null;
+  origin?: string;
   created_at: string;
 };
 
@@ -1238,6 +1239,7 @@ export type CategorizationRulePayload = {
   day_min?: number | null;
   day_max?: number | null;
   direction_filter?: string | null;
+  origin?: string;
 };
 
 export function createRule(session: ApiSession, payload: CategorizationRulePayload) {

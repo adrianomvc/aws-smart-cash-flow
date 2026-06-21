@@ -1155,6 +1155,7 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
   const categories = useCategories(session);
   const [tab, setTab] = useState<"rules" | "aliases">("rules");
   const [ruleSearch, setRuleSearch] = useState("");
+  const [ruleOriginFilter, setRuleOriginFilter] = useState<"all" | "ai" | "manual">("all");
   const [rulePage, setRulePage] = useState(0);
   const [rulePageSize, setRulePageSize] = useState(10);
   const dataQuality = useQuery({
@@ -1300,11 +1301,12 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
     ? Math.round((dq.categorized_count / dq.transaction_count) * 100)
     : null;
   const ruleQuery = ruleSearch.trim().toLowerCase();
-  const filteredRules = ruleQuery
-    ? ruleItems.filter((r) =>
-        r.name.toLowerCase().includes(ruleQuery) ||
-        r.pattern.toLowerCase().includes(ruleQuery))
-    : ruleItems;
+  const filteredRules = ruleItems.filter((r) => {
+    if (ruleOriginFilter === "ai" && (r.origin ?? "manual") !== "ai") return false;
+    if (ruleOriginFilter === "manual" && (r.origin ?? "manual") === "ai") return false;
+    if (ruleQuery && !(r.name.toLowerCase().includes(ruleQuery) || r.pattern.toLowerCase().includes(ruleQuery))) return false;
+    return true;
+  });
   const rulePageCount = Math.max(1, Math.ceil(filteredRules.length / rulePageSize));
   const safeRulePage = Math.min(rulePage, rulePageCount - 1);
   const pagedRules = filteredRules.slice(
@@ -1347,6 +1349,7 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
       day_min: rule.day_min != null ? String(rule.day_min) : "",
       day_max: rule.day_max != null ? String(rule.day_max) : "",
       direction_filter: rule.direction_filter ?? "",
+      origin: rule.origin ?? "manual",
     });
     setRuleFormError("");
     setShowModal(true);
@@ -1433,6 +1436,11 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
           <span style={{ flex: 1 }} />
           {tab === "rules" && (
             <>
+              <div className="seg">
+                <button className={ruleOriginFilter === "all" ? "on" : ""} onClick={() => { setRuleOriginFilter("all"); setRulePage(0); }}>Todas</button>
+                <button className={ruleOriginFilter === "ai" ? "on" : ""} onClick={() => { setRuleOriginFilter("ai"); setRulePage(0); }} title="Regras criadas a partir de sugestões da IA">IA</button>
+                <button className={ruleOriginFilter === "manual" ? "on" : ""} onClick={() => { setRuleOriginFilter("manual"); setRulePage(0); }}>Manuais</button>
+              </div>
               <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
                 <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--ink-faint)", pointerEvents: "none", display: "inline-flex" }}>
                   <CIcon name="search" size={14} />
@@ -1520,7 +1528,18 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
                           {rule.priority}
                         </span>
                       </td>
-                      <td><strong>{rule.name}</strong></td>
+                      <td>
+                        <strong>{rule.name}</strong>
+                        {rule.origin === "ai" && (
+                          <span
+                            className="badge"
+                            title="Regra criada a partir de uma sugestão da IA"
+                            style={{ marginLeft: 6, gap: 3, background: "var(--ai-soft, var(--bg-sunken))", color: "var(--ai, var(--ink-2))", fontSize: 10 }}
+                          >
+                            <CIcon name="zap" size={10} /> IA
+                          </span>
+                        )}
+                      </td>
                       <td>
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 5, flexWrap: "wrap", fontSize: 12 }}>
                           <span style={{ color: "var(--ink-3)" }}>{ruleFieldLabel(rule.field)}</span>
