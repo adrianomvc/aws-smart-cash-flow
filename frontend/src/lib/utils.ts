@@ -134,6 +134,20 @@ export function formatCurrencyCompact(value?: string | number | null) {
   return `R$ ${compact.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mi`;
 }
 
+// Same compaction as formatCurrencyCompact but WITHOUT the "R$" symbol — for use
+// next to a separate currency element (e.g. <span class="cur">R$</span>), which
+// would otherwise render a duplicated "R$ R$".
+export function compactValueAbs(value?: string | number | null) {
+  const numeric = Math.abs(Number(value ?? 0));
+  if (numeric < 1000) {
+    return numeric.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  if (numeric < 1000000) {
+    return `${(numeric / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mil`;
+  }
+  return `${(numeric / 1000000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mi`;
+}
+
 export function formatCurrencyCompactSigned(value?: string | number | null) {
   const numeric = Number(value ?? 0);
   const sign = numeric < 0 ? "-" : "";
@@ -444,12 +458,16 @@ export function amountClass(transaction: TransactionRead) {
 }
 
 export function installmentLabel(transaction: Pick<TransactionRead, "installment_current" | "installment_total">) {
-  if (!transaction.installment_current || !transaction.installment_total) return "-";
+  if (!transaction.installment_current) return "-";
+  // Some sources (e.g. a parceled IPVA on a bank statement) record the current
+  // installment without stating the total — show "N/?" rather than hiding it.
+  if (!transaction.installment_total) return `${transaction.installment_current}/?`;
   return `${transaction.installment_current}/${transaction.installment_total}`;
 }
 
 export function installmentSummaryLabel(transaction: Pick<TransactionRead, "installment_current" | "installment_total">) {
-  if (!transaction.installment_current || !transaction.installment_total) return "-";
+  if (!transaction.installment_current) return "-";
+  if (!transaction.installment_total) return `parcela ${transaction.installment_current}`;
   const remaining = Math.max(transaction.installment_total - transaction.installment_current, 0);
   if (remaining === 0) return `${installmentLabel(transaction)} · última parcela`;
   return `${installmentLabel(transaction)} · faltam ${remaining}`;

@@ -78,6 +78,9 @@ export type TransactionRead = {
   account_or_card: string | null;
   transaction_date: string;
   payment_date: string | null;
+  invoice_closing_date?: string | null;
+  invoice_due_date?: string | null;
+  invoice_month?: string | null;
   description: string;
   raw_description: string;
   amount: string;
@@ -1127,6 +1130,24 @@ export function getTransactionDuplicates(session: ApiSession, query = "?limit=20
   return apiRequest<DuplicateTransactionListResponse>(`/transactions/duplicates${query}`, session);
 }
 
+export type UncategorizedGroup = {
+  key: string;
+  sample_description: string;
+  count: number;
+  total: string;
+  ids: string[];
+};
+
+export type UncategorizedGroupsResponse = {
+  workspace_id: string;
+  groups: UncategorizedGroup[];
+  total_groups: number;
+};
+
+export function getUncategorizedGroups(session: ApiSession, query = "?limit=50") {
+  return apiRequest<UncategorizedGroupsResponse>(`/transactions/uncategorized-groups${query}`, session);
+}
+
 export function createManualTransaction(session: ApiSession, payload: ManualTransactionPayload) {
   return apiRequest<TransactionRead>("/transactions", session, {
     method: "POST",
@@ -1245,6 +1266,48 @@ export function getRuleSuggestion(session: ApiSession, transactionId: string) {
 
 export function deleteRule(session: ApiSession, ruleId: string) {
   return apiRequest<void>(`/categorization-rules/${ruleId}`, session, { method: "DELETE" });
+}
+
+export type MerchantAliasMatchType = "contains" | "equals" | "token";
+
+export type MerchantAliasRead = {
+  id: string;
+  workspace_id: string;
+  pattern: string;
+  replacement: string;
+  match_type: MerchantAliasMatchType;
+  active: boolean;
+  created_at: string;
+};
+
+export type MerchantAliasPayload = {
+  pattern: string;
+  replacement: string;
+  match_type?: MerchantAliasMatchType;
+  active?: boolean;
+};
+
+export function getMerchantAliases(session: ApiSession) {
+  return apiRequest<ListResponse<MerchantAliasRead>>("/merchant-aliases", session);
+}
+
+export function createMerchantAlias(session: ApiSession, payload: MerchantAliasPayload) {
+  return apiRequest<MerchantAliasRead>("/merchant-aliases", session, { method: "POST", body: payload });
+}
+
+export function updateMerchantAlias(
+  session: ApiSession,
+  aliasId: string,
+  payload: Partial<MerchantAliasPayload>,
+) {
+  return apiRequest<MerchantAliasRead>(`/merchant-aliases/${aliasId}`, session, {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
+export function deleteMerchantAlias(session: ApiSession, aliasId: string) {
+  return apiRequest<void>(`/merchant-aliases/${aliasId}`, session, { method: "DELETE" });
 }
 
 export function applyRules(session: ApiSession) {

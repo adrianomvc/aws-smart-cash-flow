@@ -1135,7 +1135,7 @@ export function SettingsPage({ onNavigate, onOpenTransactions, workspaceName, se
   workspaceName: string;
   session: ApiSession;
 }) {
-  const [tab, setTab] = useState<TabId>("prefs");
+  const [tab, setTab] = useState<TabId>("profile");
 
   function body() {
     switch (tab) {
