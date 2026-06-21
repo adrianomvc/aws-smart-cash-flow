@@ -301,7 +301,23 @@ jobs:
               json.dump(payload, handle)
           PY
 
-          DATABASE_URL="${BACKEND_DATABASE_URL}" PYTHONPATH="build/lambda" python -m alembic upgrade head
+          # Run migrations, but don't let a transient DB outage (e.g. Neon free-tier
+          # data-transfer quota exceeded, or network unreachable) fail the whole
+          # deploy — the code/config still ships and migrations apply on the next
+          # deploy once the DB is reachable. Any other migration error stays fatal.
+          set +e
+          migrate_output="$(DATABASE_URL="${BACKEND_DATABASE_URL}" PYTHONPATH="build/lambda" python -m alembic upgrade head 2>&1)"
+          migrate_status=$?
+          set -e
+          echo "${migrate_output}"
+          if [ "${migrate_status}" -ne 0 ]; then
+            if echo "${migrate_output}" | grep -qiE "data transfer quota|Network is unreachable|connection is bad|could not connect|could not translate host|timeout expired|OperationalError"; then
+              echo "::warning::Database unreachable during migration (quota/network). Shipping code and config; migrations will run on the next deploy."
+            else
+              echo "Migration failed for a non-connectivity reason; aborting deploy."
+              exit "${migrate_status}"
+            fi
+          fi
 
           aws lambda update-function-code \
             --function-name "${BACKEND_LAMBDA_FUNCTION_NAME}" \
