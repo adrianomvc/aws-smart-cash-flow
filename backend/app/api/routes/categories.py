@@ -12,6 +12,7 @@ from app.core.auth import AuthContext, AuthDependency
 from app.db.models import (
     CategorizationRule,
     Category,
+    MerchantAlias,
     Transaction,
     TransactionCategoryAssignment,
 )
@@ -105,6 +106,35 @@ class CategorizationRuleRead(BaseModel):
 class CategorizationRuleListResponse(BaseModel):
     workspace_id: str
     items: list[CategorizationRuleRead]
+
+
+class MerchantAliasCreate(BaseModel):
+    pattern: str
+    replacement: str
+    match_type: str = "contains"
+    active: bool = True
+
+
+class MerchantAliasUpdate(BaseModel):
+    pattern: str | None = None
+    replacement: str | None = None
+    match_type: str | None = None
+    active: bool | None = None
+
+
+class MerchantAliasRead(BaseModel):
+    id: str
+    workspace_id: str
+    pattern: str
+    replacement: str
+    match_type: str
+    active: bool
+    created_at: datetime
+
+
+class MerchantAliasListResponse(BaseModel):
+    workspace_id: str
+    items: list[MerchantAliasRead]
 
 
 class CategoryPatch(BaseModel):
@@ -426,6 +456,82 @@ async def delete_rule(
 ) -> Response:
     rule = _get_rule(db=db, workspace_id=auth.workspace_id, rule_id=rule_id)
     db.delete(rule)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/merchant-aliases")
+async def list_merchant_aliases(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> MerchantAliasListResponse:
+    aliases = db.scalars(
+        select(MerchantAlias)
+        .where(MerchantAlias.workspace_id == auth.workspace_id)
+        .order_by(MerchantAlias.replacement, MerchantAlias.id)
+    ).all()
+    return MerchantAliasListResponse(
+        workspace_id=auth.workspace_id,
+        items=[_alias_read(alias) for alias in aliases],
+    )
+
+
+@router.post("/merchant-aliases", status_code=status.HTTP_201_CREATED)
+async def create_merchant_alias(
+    payload: MerchantAliasCreate,
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> MerchantAliasRead:
+    pattern = _normalize_alias_text(payload.pattern, "Alias pattern is required")
+    replacement = _normalize_alias_text(payload.replacement, "Alias replacement is required")
+    _ensure_unique_alias_pattern(db=db, workspace_id=auth.workspace_id, pattern=pattern)
+    alias = MerchantAlias(
+        id=str(uuid4()),
+        workspace_id=auth.workspace_id,
+        pattern=pattern,
+        replacement=replacement,
+        match_type=_validate_alias_match_type(payload.match_type),
+        active=payload.active,
+    )
+    db.add(alias)
+    db.commit()
+    db.refresh(alias)
+    return _alias_read(alias)
+
+
+@router.patch("/merchant-aliases/{alias_id}")
+async def update_merchant_alias(
+    alias_id: str,
+    payload: MerchantAliasUpdate,
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> MerchantAliasRead:
+    alias = _get_alias(db=db, workspace_id=auth.workspace_id, alias_id=alias_id)
+    if payload.pattern is not None:
+        pattern = _normalize_alias_text(payload.pattern, "Alias pattern is required")
+        _ensure_unique_alias_pattern(
+            db=db, workspace_id=auth.workspace_id, pattern=pattern, exclude_alias_id=alias.id
+        )
+        alias.pattern = pattern
+    if payload.replacement is not None:
+        alias.replacement = _normalize_alias_text(payload.replacement, "Alias replacement is required")
+    if payload.match_type is not None:
+        alias.match_type = _validate_alias_match_type(payload.match_type)
+    if payload.active is not None:
+        alias.active = payload.active
+    db.commit()
+    db.refresh(alias)
+    return _alias_read(alias)
+
+
+@router.delete("/merchant-aliases/{alias_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_merchant_alias(
+    alias_id: str,
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> Response:
+    alias = _get_alias(db=db, workspace_id=auth.workspace_id, alias_id=alias_id)
+    db.delete(alias)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -910,6 +1016,65 @@ def _rule_read(rule: CategorizationRule) -> CategorizationRuleRead:
         direction_filter=rule.direction_filter,
         created_at=rule.created_at,
     )
+
+
+def _alias_read(alias: MerchantAlias) -> MerchantAliasRead:
+    return MerchantAliasRead(
+        id=alias.id,
+        workspace_id=alias.workspace_id,
+        pattern=alias.pattern,
+        replacement=alias.replacement,
+        match_type=alias.match_type,
+        active=alias.active,
+        created_at=alias.created_at,
+    )
+
+
+def _validate_alias_match_type(match_type: str) -> str:
+    if match_type not in {"contains", "equals", "token"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid alias match type",
+        )
+    return match_type
+
+
+def _normalize_alias_text(value: str, error_detail: str) -> str:
+    normalized = _normalize_spaces(value)
+    if not normalized:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_detail)
+    return normalized
+
+
+def _get_alias(db: Session, workspace_id: str, alias_id: str) -> MerchantAlias:
+    alias = db.scalar(
+        select(MerchantAlias).where(
+            MerchantAlias.id == alias_id,
+            MerchantAlias.workspace_id == workspace_id,
+        )
+    )
+    if alias is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merchant alias not found")
+    return alias
+
+
+def _ensure_unique_alias_pattern(
+    db: Session,
+    workspace_id: str,
+    pattern: str,
+    exclude_alias_id: str | None = None,
+) -> None:
+    query = select(MerchantAlias).where(
+        MerchantAlias.workspace_id == workspace_id,
+        MerchantAlias.pattern == pattern,
+    )
+    if exclude_alias_id is not None:
+        query = query.where(MerchantAlias.id != exclude_alias_id)
+    if db.scalar(query) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An alias with this pattern already exists",
+        )
 
 
 def _get_category(db: Session, workspace_id: str, category_id: str) -> Category:

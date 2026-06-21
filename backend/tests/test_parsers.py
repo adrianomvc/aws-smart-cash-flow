@@ -6,6 +6,7 @@ import pytest
 from app.domain.imports import SourceKind, TransactionDirection
 from app.services.parsers import (
     extract_installment,
+    extract_installment_marker,
     extract_itau_card_metadata,
     normalize_transaction_description,
     normalize_transaction_description_for_dedupe,
@@ -510,8 +511,25 @@ def test_extract_installment_from_raw_description() -> None:
     assert extract_installment("ANGLO 03 10") == (3, 10)
     assert extract_installment("ANGLO 05/05") == (5, 5)
     assert extract_installment("REINALDO DOS SANTO08/10") == (8, 10)
+    # Installment digits immediately follow a longer merchant code with no separator
+    assert extract_installment("TAUA HOTEL &*2343808/10") == (8, 10)
+    assert extract_installment("TAUA HOTEL &*2343809/10") == (9, 10)
     assert extract_installment("ANGLO") == (None, None)
     assert extract_installment("LOJA 11 10") == (None, None)
+
+
+def test_extract_installment_marker_only_matches_explicit_parc() -> None:
+    # Explicit "PARC NN" marker (no total) on a bank-statement charge, e.g. a
+    # parceled IPVA: record the current installment, leave the total unknown.
+    assert extract_installment_marker("INT IPVA-SPEWR2311PARC01") == (1, None)
+    assert extract_installment_marker("INT IPVA-SPEWR2311PARC05") == (5, None)
+    assert extract_installment_marker("PARC 03/10") == (3, 10)
+    # The loose heuristics of extract_installment must NOT leak in: a trailing
+    # number pair on a bank description is a false positive here.
+    assert extract_installment_marker("COMPRA 05 12") == (None, None)
+    assert extract_installment("COMPRA 05 12") == (5, 12)
+    assert extract_installment_marker("&*2343808/10") == (None, None)
+    assert extract_installment_marker("INT IPVA-SP EWR-2311") == (None, None)
 
 
 def test_parse_credit_card_csv_extracts_installments_and_keeps_clean_description() -> None:

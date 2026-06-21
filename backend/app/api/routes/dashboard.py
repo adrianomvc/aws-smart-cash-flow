@@ -659,6 +659,7 @@ def get_credit_card_installments(
     db: Session = DbDependency,
     date_from: date | None = None,
     date_to: date | None = None,
+    credit_card_id: str | None = None,
     limit: int = Query(default=20, ge=1, le=100),
 ) -> CreditCardInstallmentsResponse:
     return CreditCardInstallmentsResponse(
@@ -667,5 +668,6 @@ def get_credit_card_installments(
             date_from=date_from,
             date_to=date_to,
             limit=limit,
+            credit_card_id=credit_card_id,
         )
     )

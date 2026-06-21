@@ -497,6 +497,39 @@ class CategorizationRule(Base):
     )
 
 
+class MerchantAlias(Base):
+    """User-defined "rename" for messy descriptions: when a transaction's raw or
+    normalized description contains ``pattern``, its display description becomes
+    ``replacement`` (e.g. "BANCO ITAU SA" -> "Itaú"). Applied during import and by
+    the normalize-descriptions endpoint."""
+
+    __tablename__ = "merchant_aliases"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "pattern", name="uq_merchant_alias_workspace_pattern"),
+        CheckConstraint(
+            "match_type in ('contains', 'equals', 'token')",
+            name="ck_merchant_alias_match_type",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), nullable=False
+    )
+    pattern: Mapped[str] = mapped_column(Text, nullable=False)
+    replacement: Mapped[str] = mapped_column(Text, nullable=False)
+    # contains/equals = rename whole description; token = replace just the matching word.
+    match_type: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="contains", server_default="contains"
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class FinancialCalendarEvent(Base):
     __tablename__ = "financial_calendar_events"
     __table_args__ = (

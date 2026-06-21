@@ -63,14 +63,31 @@ class DashboardService:
         date_from: date | None,
         date_to: date | None,
     ) -> dict[str, object]:
-        transactions = self._transactions(
+        # Sum by CASH-FLOW date (the month a charge actually hits the account), so the
+        # KPIs match the cashflow chart: credit-card purchases — including each
+        # installment — count in the month they are CHARGED, not the purchase month.
+        transactions = self._cashflow_transactions(
             workspace_id=workspace_id,
             date_from=date_from,
             date_to=date_to,
         )
-        income = self._sum(transactions, "credit")
-        expenses = self._sum(transactions, "debit")
-        payments = self._sum(transactions, "payment")
+        source_file_due_dates = self._source_file_statement_due_dates(transactions)
+        income = expenses = payments = ZERO
+        counted = 0
+        for transaction in transactions:
+            cashflow_date = self._cashflow_date(
+                transaction,
+                source_file_due_dates.get(transaction.source_file_id),
+            )
+            if not _date_in_range(cashflow_date, date_from, date_to):
+                continue
+            counted += 1
+            if transaction.direction == "credit":
+                income += transaction.amount
+            elif transaction.direction == "debit":
+                expenses += abs(transaction.amount)
+            elif transaction.direction == "payment":
+                payments += abs(transaction.amount)
         balance = income - expenses
         savings_rate = (balance / income).quantize(Decimal("0.0001")) if income > ZERO else None
         commitment_rate = (expenses / income).quantize(Decimal("0.0001")) if income > ZERO else None
@@ -132,7 +149,7 @@ class DashboardService:
             ),
             "financial_health_score": financial_health_score,
             "financial_health_basis": "runway_saving_commitment_safe_spend_balance",
-            "transaction_count": len(transactions),
+            "transaction_count": counted,
             "current_balance": current_balance.balance_amount if current_balance else None,
             "current_balance_date": current_balance.balance_date if current_balance else None,
             "current_balance_account": current_balance.account_name if current_balance else None,
@@ -1217,6 +1234,7 @@ class DashboardService:
         date_from: date | None,
         date_to: date | None,
         limit: int,
+        credit_card_id: str | None = None,
     ) -> dict[str, object]:
         if date_from is not None and date_to is not None:
             return self._credit_card_installments_due(
@@ -1224,6 +1242,7 @@ class DashboardService:
                 date_from=date_from,
                 date_to=date_to,
                 limit=limit,
+                credit_card_id=credit_card_id,
             )
 
         filters = [
@@ -1234,6 +1253,16 @@ class DashboardService:
         ]
         if date_to is not None:
             filters.append(Transaction.transaction_date <= date_to)
+        if credit_card_id is not None:
+            filters.append(
+                Transaction.source_file_id.in_(
+                    select(CreditCardStatement.source_file_id).where(
+                        CreditCardStatement.workspace_id == workspace_id,
+                        CreditCardStatement.credit_card_id == credit_card_id,
+                        CreditCardStatement.source_file_id.is_not(None),
+                    )
+                )
+            )
 
         transactions = self.db.execute(
             select(
@@ -1823,7 +1852,24 @@ class DashboardService:
         date_from: date,
         date_to: date,
         limit: int,
+        credit_card_id: str | None = None,
     ) -> dict[str, object]:
+        due_filters = [
+            Transaction.workspace_id == workspace_id,
+            Transaction.natural_dedupe_key.is_not(None),
+            Transaction.source_type == "credit_card_statement",
+            Transaction.direction == "debit",
+        ]
+        if credit_card_id is not None:
+            due_filters.append(
+                Transaction.source_file_id.in_(
+                    select(CreditCardStatement.source_file_id).where(
+                        CreditCardStatement.workspace_id == workspace_id,
+                        CreditCardStatement.credit_card_id == credit_card_id,
+                        CreditCardStatement.source_file_id.is_not(None),
+                    )
+                )
+            )
         rows = self.db.execute(
             select(
                 Transaction.installment_current,
@@ -1832,12 +1878,7 @@ class DashboardService:
                 Transaction.amount,
                 Transaction.transaction_date,
             )
-            .where(
-                Transaction.workspace_id == workspace_id,
-                Transaction.natural_dedupe_key.is_not(None),
-                Transaction.source_type == "credit_card_statement",
-                Transaction.direction == "debit",
-            )
+            .where(*due_filters)
             .order_by(Transaction.description, Transaction.id)
         ).all()
         target_year = date_from.year

@@ -73,6 +73,7 @@ class ParsedCreditCard(BaseModel):
     closing_date: date | None = None
     due_date: date | None = None
     statement_total: Decimal | None = None
+    limit_amount: Decimal | None = None
 
 
 class ParseResult(BaseModel):
