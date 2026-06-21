@@ -10,6 +10,8 @@ import {
   deleteCategory,
   deleteMerchantAlias,
   deleteRule,
+  generateRulesFromAi,
+  getAiSuggestions,
   getCategoryRanking,
   getDataQuality,
   getMerchantAliases,
@@ -38,7 +40,7 @@ import {
   defaultCatIcon,
 } from "../components/CatModal";
 import type { CatModalState } from "../components/CatModal";
-import { RuleFormModal, emptyRuleForm } from "../components/RuleFormModal";
+import { RuleFormModal, emptyRuleForm, ruleFormToPayload } from "../components/RuleFormModal";
 import { Tags } from "lucide-react";
 import { useCategories, useHasTransactions } from "../hooks";
 import {
@@ -53,6 +55,7 @@ import {
 import { TransactionExplorer } from "./TransactionExplorer";
 import { CategoryCharts } from "../components/CategoryCharts";
 import type {
+  AiSuggestionItem,
   ApiSession,
   CategorizationRuleRead,
   CategoryRead,
@@ -1153,7 +1156,7 @@ function aliasMatchLabel(matchType: MerchantAliasMatchType): string {
 export function RulesPage({ session, embedded = false }: { session: ApiSession; embedded?: boolean }) {
   const queryClient = useQueryClient();
   const categories = useCategories(session);
-  const [tab, setTab] = useState<"rules" | "aliases">("rules");
+  const [tab, setTab] = useState<"rules" | "aliases" | "ai">("rules");
   const [ruleSearch, setRuleSearch] = useState("");
   const [ruleOriginFilter, setRuleOriginFilter] = useState<"all" | "ai" | "manual">("all");
   const [rulePage, setRulePage] = useState(0);
@@ -1180,24 +1183,7 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
     enabled: Boolean(previewRule),
   });
 
-  const isRecurring = form.match_type === "amount_recurring";
-  const rulePayload = {
-    name: form.name,
-    field: form.field,
-    match_type: form.match_type,
-    // For recurring rules the pattern is an optional extra text filter.
-    pattern: form.pattern,
-    category_id: form.category_id || null,
-    target_direction: form.target_direction || null,
-    priority: form.priority,
-    active: form.active,
-    // amount_recurring fields — only meaningful for that match type
-    amount_ref: isRecurring && form.amount_ref !== "" ? form.amount_ref : null,
-    amount_tolerance: isRecurring && form.amount_tolerance !== "" ? form.amount_tolerance : null,
-    day_min: isRecurring && form.day_min !== "" ? Number(form.day_min) : null,
-    day_max: isRecurring && form.day_max !== "" ? Number(form.day_max) : null,
-    direction_filter: isRecurring && form.direction_filter ? form.direction_filter : null,
-  };
+  const rulePayload = ruleFormToPayload(form);
 
   const create = useMutation({
     mutationFn: () => createRule(session, rulePayload),
@@ -1206,6 +1192,7 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
       setRuleFormError("");
       setShowModal(false);
       void queryClient.invalidateQueries({ queryKey: ["rules"] });
+      void queryClient.invalidateQueries({ queryKey: ["ai-suggestions"] });
     },
   });
   const update = useMutation({
@@ -1253,6 +1240,34 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
       void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
     },
   });
+
+  // ── Sugestões da IA → regras ──────────────────────────────────────────────
+  const [aiConfidence, setAiConfidence] = useState<"high" | "all">("high");
+  const aiSuggestions = useQuery({
+    queryKey: ["ai-suggestions", session.token, aiConfidence],
+    queryFn: () => getAiSuggestions(session, aiConfidence),
+    enabled: tab === "ai",
+  });
+  const generateAiRules = useMutation({
+    mutationFn: () => generateRulesFromAi(session),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["rules"] });
+      void queryClient.invalidateQueries({ queryKey: ["ai-suggestions"] });
+    },
+  });
+  function openRuleFromSuggestion(item: AiSuggestionItem) {
+    setForm({
+      ...emptyRuleForm,
+      name: `IA: ${item.sample_description.slice(0, 40)}`,
+      field: "description",
+      match_type: "regex",
+      pattern: item.pattern,
+      category_id: item.category_id,
+      origin: "ai",
+    });
+    setRuleFormError("");
+    setShowModal(true);
+  }
 
   // Inline category creation from the rule form (same CatModal used everywhere).
   const [showRuleCatModal, setShowRuleCatModal] = useState(false);
@@ -1432,6 +1447,7 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
           <div className="seg">
             <button className={tab === "rules" ? "on" : ""} onClick={() => setTab("rules")}>Regras</button>
             <button className={tab === "aliases" ? "on" : ""} onClick={() => setTab("aliases")}>Apelidos</button>
+            <button className={tab === "ai" ? "on" : ""} onClick={() => setTab("ai")}>Sugestões da IA</button>
           </div>
           <span style={{ flex: 1 }} />
           {tab === "rules" && (
@@ -1723,6 +1739,75 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
               )}
               {applyAliasesNow.isError && <InlineError message={apiErrorMessage(applyAliasesNow.error, "Falha ao aplicar.")} />}
             </div>
+          </div>
+        )}
+
+        {tab === "ai" && (
+          <div style={{ padding: "14px 16px 18px" }}>
+            <div className="t-sub" style={{ marginBottom: 12, lineHeight: 1.5 }}>
+              O que a IA categorizou, agrupado pelo <strong>padrão (regex) sugerido</strong> + categoria.
+              Crie a regra de cada linha (revisando antes) ou gere todas as de alta confiança de uma vez.
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+              <div className="seg">
+                <button className={aiConfidence === "high" ? "on" : ""} onClick={() => setAiConfidence("high")}>Alta confiança</button>
+                <button className={aiConfidence === "all" ? "on" : ""} onClick={() => setAiConfidence("all")}>Todas</button>
+              </div>
+              <span style={{ flex: 1 }} />
+              <button
+                className="btn btn-primary btn-sm"
+                disabled={generateAiRules.isPending || (aiSuggestions.data?.high_confidence_candidate_count ?? 0) === 0}
+                onClick={() => generateAiRules.mutate()}
+                title="Cria regras de todas as sugestões de alta confiança ainda sem regra"
+              >
+                <CIcon name="zap" size={14} /> {generateAiRules.isPending ? "Gerando…" : `Gerar regras da IA (${aiSuggestions.data?.high_confidence_candidate_count ?? 0})`}
+              </button>
+            </div>
+            {generateAiRules.isSuccess && (
+              <div style={{ marginBottom: 10 }}>
+                <InlineSuccess message={`${generateAiRules.data?.created_count ?? 0} regra(s) criada(s) · ${generateAiRules.data?.skipped_existing_count ?? 0} já existiam.`} />
+              </div>
+            )}
+            {generateAiRules.isError && <InlineError message={apiErrorMessage(generateAiRules.error, "Falha ao gerar regras.")} />}
+
+            {aiSuggestions.isLoading ? (
+              <div style={{ textAlign: "center", padding: 24, color: "var(--ink-3)" }}>Carregando sugestões…</div>
+            ) : (aiSuggestions.data?.items ?? []).length === 0 ? (
+              <div style={{ textAlign: "center", padding: 28 }}>
+                <div style={{ color: "var(--ink-faint)", marginBottom: 8 }}><CIcon name="zap" size={32} /></div>
+                <div style={{ fontWeight: 600 }}>Nenhuma sugestão da IA</div>
+                <div style={{ fontSize: 13, color: "var(--ink-3)", marginTop: 4 }}>Rode “Categorizar pendentes” para a IA gerar sugestões.</div>
+              </div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table className="tbl">
+                  <thead><tr><th>Exemplo</th><th>Categoria sugerida</th><th>Padrão (regex)</th><th className="num">Nº</th><th></th></tr></thead>
+                  <tbody>
+                    {(aiSuggestions.data?.items ?? []).map((s) => {
+                      const label = categoryOptions.find((c) => c.id === s.category_id)?.label ?? "—";
+                      return (
+                        <tr key={`${s.pattern}|${s.category_id}`}>
+                          <td><span className="t-desc">{s.sample_description}</span></td>
+                          <td><span style={{ fontSize: 12 }}>{label}</span></td>
+                          <td><code style={{ background: "var(--bg-sunken)", padding: "1px 6px", borderRadius: 5, fontSize: 11.5 }}>{s.pattern}</code></td>
+                          <td className="num mono">{s.count}</td>
+                          <td style={{ textAlign: "right" }}>
+                            {s.has_rule ? (
+                              <span className="t-sub" style={{ fontSize: 12 }}>Já tem regra</span>
+                            ) : (
+                              <button className="btn btn-ghost btn-sm" type="button" onClick={() => openRuleFromSuggestion(s)}>
+                                <CIcon name="plus" size={13} /> Criar regra
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </div>
