@@ -4,7 +4,7 @@ from collections import Counter, defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
 
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import and_, case, desc, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.core.config import settings
@@ -393,8 +393,25 @@ class DashboardService:
             date_from=date_from,
             date_to=date_to,
         )
-        rows = self.db.execute(
-            select(Transaction, Category)
+        # SQL aggregation: group by the assigned (sub)category; the displayed parent
+        # id and the subcategory label are derived in SQL (parent self-join).
+        parent = aliased(Category)
+        parent_id = func.coalesce(parent.id, Category.id)
+        subcategory_name = case(
+            (Category.id.is_(None), "Sem categoria / Sem subcategoria"),
+            (Category.parent_category_id.is_(None), "Sem subcategoria"),
+            else_=Category.name,
+        )
+        parent_color = func.coalesce(parent.color, Category.color)
+        query = (
+            select(
+                Category.id.label("sub_id"),
+                parent_id.label("category_id"),
+                subcategory_name.label("subcategory_name"),
+                parent_color.label("color"),
+                func.sum(func.abs(Transaction.amount)).label("amount"),
+                func.count().label("count"),
+            )
             .outerjoin(
                 TransactionCategoryAssignment,
                 and_(
@@ -409,46 +426,30 @@ class DashboardService:
                     Category.workspace_id == workspace_id,
                 ),
             )
-            .where(*filters, Transaction.direction == "debit")
-        ).all()
-        categories_by_id = {
-            category.id: category
-            for category in self.db.scalars(
-                select(Category).where(Category.workspace_id == workspace_id)
-            ).all()
-        }
-        totals: dict[tuple[str | None, str], dict[str, object]] = defaultdict(
-            lambda: {
-                "category_id": None,
-                "subcategory_name": "Sem subcategoria",
-                "color": None,
-                "amount": ZERO,
-                "count": 0,
-            }
-        )
-        for transaction, category in rows:
-            parent_category = (
-                categories_by_id.get(category.parent_category_id)
-                if category is not None and category.parent_category_id is not None
-                else category
+            .outerjoin(
+                parent,
+                and_(
+                    parent.id == Category.parent_category_id,
+                    parent.workspace_id == workspace_id,
+                ),
             )
-            parent_id = parent_category.id if parent_category is not None else None
-            if category_id is not None and parent_id != category_id:
-                continue
-            if category is None:
-                key = (None, "Sem categoria / Sem subcategoria")
-            elif category.parent_category_id is None:
-                key = (category.id, "Sem subcategoria")
-            else:
-                key = (category.id, category.name)
-            totals[key]["category_id"] = parent_id
-            totals[key]["subcategory_name"] = key[1]
-            totals[key]["color"] = parent_category.color if parent_category is not None else None
-            totals[key]["amount"] = Decimal(totals[key]["amount"]) + abs(transaction.amount)
-            totals[key]["count"] = int(totals[key]["count"]) + 1
-
-        ranked = sorted(
-            totals.values(),
+            .where(*filters, Transaction.direction == "debit")
+            .group_by(Category.id, parent_id, subcategory_name, parent_color)
+        )
+        if category_id is not None:
+            query = query.where(parent_id == category_id)
+        rows = self.db.execute(query).all()
+        ranked: list[dict[str, object]] = [
+            {
+                "category_id": row.category_id,
+                "subcategory_name": row.subcategory_name,
+                "color": row.color,
+                "amount": Decimal(str(row.amount or 0)).quantize(Decimal("0.01")),
+                "count": int(row.count or 0),
+            }
+            for row in rows
+        ]
+        ranked.sort(
             key=lambda item: (Decimal(item["amount"]), int(item["count"])),
             reverse=True,
         )
@@ -788,8 +789,24 @@ class DashboardService:
         date_to: date | None,
         limit: int,
     ) -> list[dict[str, object]]:
-        transactions = self.db.scalars(
-            select(Transaction)
+        # SQL aggregation by merchant. The only Python rule was collapsing the
+        # "MERCADO LIVRE" prefix into a single bucket — replicated here in SQL.
+        merchant = case(
+            (
+                or_(
+                    Transaction.description == "MERCADO LIVRE",
+                    Transaction.description.like("MERCADO LIVRE %"),
+                ),
+                "MERCADO LIVRE",
+            ),
+            else_=Transaction.description,
+        )
+        rows = self.db.execute(
+            select(
+                merchant.label("description"),
+                func.sum(func.abs(Transaction.amount)).label("amount"),
+                func.count().label("count"),
+            )
             .where(
                 *self._transaction_filters(
                     workspace_id=workspace_id,
@@ -798,23 +815,17 @@ class DashboardService:
                 ),
                 Transaction.direction == "debit",
             )
+            .group_by(merchant)
         ).all()
-        grouped: dict[str, dict[str, object]] = {}
-        for transaction in transactions:
-            description = _merchant_ranking_description(transaction.description)
-            item = grouped.setdefault(
-                description,
-                {
-                    "description": description,
-                    "amount": ZERO,
-                    "count": 0,
-                },
-            )
-            item["amount"] = Decimal(item["amount"]) + abs(transaction.amount)
-            item["count"] = int(item["count"]) + 1
-
         ranked = sorted(
-            grouped.values(),
+            (
+                {
+                    "description": row.description,
+                    "amount": Decimal(str(row.amount or 0)).quantize(Decimal("0.01")),
+                    "count": int(row.count or 0),
+                }
+                for row in rows
+            ),
             key=lambda item: (
                 Decimal(item["amount"]),
                 int(item["count"]),
@@ -822,14 +833,7 @@ class DashboardService:
             ),
             reverse=True,
         )
-        return [
-            {
-                "description": item["description"],
-                "amount": Decimal(item["amount"]).quantize(Decimal("0.01")),
-                "count": item["count"],
-            }
-            for item in ranked[:limit]
-        ]
+        return ranked[:limit]
 
     def recurring_expenses(
         self,
@@ -2256,14 +2260,6 @@ def _statement_due_date_from_filename(filename: str) -> date | None:
         return None
 
 
-
-
-def _merchant_ranking_description(description: str) -> str:
-    tokens = description.split()
-    prefix = ("MERCADO", "LIVRE")
-    if tuple(tokens[: len(prefix)]) == prefix:
-        return " ".join(prefix)
-    return description
 
 
 def _source_file_month_filters(date_from: date | None, date_to: date | None) -> list[object]:
