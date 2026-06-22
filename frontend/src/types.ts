@@ -20,6 +20,7 @@ export type Page =
   | "scenarios"
   | "investments"
   | "insights"
+  | "copilot"
   | "wealth"
   | "reports"
   | "imports"
