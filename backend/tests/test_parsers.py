@@ -3,8 +3,9 @@ from decimal import Decimal, InvalidOperation
 
 import pytest
 
-from app.domain.imports import SourceKind, TransactionDirection
+from app.domain.imports import ParsedTransaction, SourceKind, TransactionDirection
 from app.services.parsers import (
+    _drop_future_installment_previews,
     extract_installment,
     extract_installment_marker,
     extract_itau_card_metadata,
@@ -542,3 +543,76 @@ def test_parse_credit_card_csv_extracts_installments_and_keeps_clean_description
     assert result.transactions[0].raw_description == "ANGLO 03/10"
     assert result.transactions[0].installment_current == 3
     assert result.transactions[0].installment_total == 10
+
+
+def _installment_tx(raw: str, amount: str, current: int, total: int) -> ParsedTransaction:
+    return ParsedTransaction(
+        transaction_date=date(2025, 8, 18),
+        raw_description=raw,
+        description=normalize_transaction_description(raw),
+        amount=Decimal(amount),
+        direction=TransactionDirection.DEBIT,
+        source_line=1,
+        installment_current=current,
+        installment_total=total,
+    )
+
+
+def test_drop_future_installment_previews_keeps_equal_charges_on_different_cards() -> None:
+    # Two real tuitions of the same value on different cards — both current (01/05),
+    # must BOTH be kept (not merged by value).
+    txs = [
+        _installment_tx("ANGLO 01/05", "494.70", 1, 5),
+        _installment_tx("ANGLO 01/05", "494.70", 1, 5),
+    ]
+    kept = _drop_future_installment_previews(txs)
+    assert len(kept) == 2
+
+
+def test_drop_future_installment_previews_drops_glued_installment_preview() -> None:
+    # Same purchase, installment glued to the merchant code: current 02/11 is the
+    # real charge, 03/11 is the next-month preview and must be dropped.
+    txs = [
+        _installment_tx("PAO DE AcUCAR-129202/11", "9.25", 2, 11),
+        _installment_tx("PAO DE AcUCAR-129203/11", "9.25", 3, 11),
+    ]
+    kept = _drop_future_installment_previews(txs)
+    assert len(kept) == 1
+    assert kept[0].installment_current == 2
+
+
+def test_parse_itau_statement_captures_multiple_iof_lines() -> None:
+    # Multi-card statements can carry more than one "Repasse de IOF"; all count.
+    text = "\n".join(
+        [
+            "Vencimento: 01/05/2026",
+            "28/03 Loja Teste 100,00",
+            "Repasse de IOF em R$ 18,10",
+            "Repasse de IOF em R$ 16,33",
+            "Total desta fatura 134,43",
+        ]
+    )
+
+    result = parse_itau_credit_card_statement_text(text)
+
+    iof = [t for t in result.transactions if t.description == "IOF"]
+    assert sorted(t.amount for t in iof) == [Decimal("16.33"), Decimal("18.10")]
+    assert not any(e.error_code == "statement_total_mismatch" for e in result.errors)
+
+
+def test_parse_itau_statement_total_uses_current_charges_on_parceled_invoice() -> None:
+    # On a parceled invoice "Total desta fatura" is the financed amount; reconcile
+    # against "Total dos lançamentos atuais" so it isn't a false mismatch.
+    text = "\n".join(
+        [
+            "Vencimento: 01/05/2026",
+            "22/12 LOUNGE KEY INC 175,36",
+            "Repasse de IOF em R$ 11,18",
+            "Total dos lançamentos atuais 186,54",
+            "Total desta fatura 145,04",
+        ]
+    )
+
+    result = parse_itau_credit_card_statement_text(text)
+
+    assert not any(e.error_code == "statement_total_mismatch" for e in result.errors)
