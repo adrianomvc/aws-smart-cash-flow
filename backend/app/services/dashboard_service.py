@@ -1205,24 +1205,17 @@ class DashboardService:
         window_days: int,
         limit: int,
     ) -> list[dict[str, object]]:
-        transactions = self._transactions(
-            workspace_id=workspace_id,
-            date_from=date_from,
-            date_to=date_to,
-        )
-        bank_payments = [
-            transaction
-            for transaction in transactions
-            if transaction.direction == "payment" and transaction.source_type == "bank_statement"
-        ]
-        card_payments = [
-            transaction
-            for transaction in transactions
-            if (
-                transaction.direction == "payment"
-                and transaction.source_type == "credit_card_statement"
+        # Only payment rows are needed (a small subset), not the whole period.
+        payments = self.db.scalars(
+            select(Transaction).where(
+                *self._transaction_filters(
+                    workspace_id=workspace_id, date_from=date_from, date_to=date_to
+                ),
+                Transaction.direction == "payment",
             )
-        ]
+        ).all()
+        bank_payments = [t for t in payments if t.source_type == "bank_statement"]
+        card_payments = [t for t in payments if t.source_type == "credit_card_statement"]
         matches: list[dict[str, object]] = []
         for bank_payment in bank_payments:
             for card_payment in card_payments:
@@ -1652,11 +1645,20 @@ class DashboardService:
         years. Monthly-recurring descriptions are excluded to avoid double
         counting."""
         lookback = _add_months(today, -24)
-        txns = self._transactions(workspace_id, date_from=lookback, date_to=today)
+        # Narrow the pull to the rows this detector actually uses (non-card
+        # debits/credits) instead of every transaction in the 24-month window.
+        txns = self.db.scalars(
+            select(Transaction).where(
+                *self._transaction_filters(workspace_id, lookback, today),
+                Transaction.direction.in_(("debit", "credit")),
+                or_(
+                    Transaction.source_type != "credit_card_statement",
+                    Transaction.source_type.is_(None),
+                ),
+            )
+        ).all()
         groups: dict[tuple[str, str], list[Transaction]] = defaultdict(list)
         for t in txns:
-            if t.source_type == "credit_card_statement" or t.direction not in ("debit", "credit"):
-                continue
             key = normalize_transaction_description(t.description)
             if key in exclude_descriptions:
                 continue
