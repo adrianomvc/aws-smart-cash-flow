@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from sqlalchemy import and_, desc, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.core.config import settings
 from app.db.models import (
@@ -307,8 +307,24 @@ class DashboardService:
             date_from=date_from,
             date_to=date_to,
         )
+        # Aggregate in SQL (one small row per displayed category) instead of pulling
+        # every debit transaction to Python. The displayed category is the parent
+        # when the assignment points to a subcategory, else the category itself.
+        parent = aliased(Category)
+        display_id = func.coalesce(parent.id, Category.id)
+        display_name = func.coalesce(parent.name, Category.name)
+        display_color = func.coalesce(parent.color, Category.color)
+        display_icon = func.coalesce(parent.icon, Category.icon)
         rows = self.db.execute(
-            select(Transaction, Category)
+            select(
+                display_id.label("category_id"),
+                display_name.label("category_name"),
+                display_color.label("color"),
+                display_icon.label("icon"),
+                func.sum(func.abs(Transaction.amount)).label("amount"),
+                func.count().label("count"),
+                func.max(Transaction.transaction_date).label("last_transaction_date"),
+            )
             .outerjoin(
                 TransactionCategoryAssignment,
                 and_(
@@ -323,49 +339,30 @@ class DashboardService:
                     Category.workspace_id == workspace_id,
                 ),
             )
+            .outerjoin(
+                parent,
+                and_(
+                    parent.id == Category.parent_category_id,
+                    parent.workspace_id == workspace_id,
+                ),
+            )
             .where(*filters, Transaction.direction == "debit")
+            .group_by(display_id, display_name, display_color, display_icon)
         ).all()
-        categories_by_id = {
-            category.id: category
-            for category in self.db.scalars(
-                select(Category).where(Category.workspace_id == workspace_id)
-            ).all()
-        }
 
-        empty_category = {
-            "category_id": None,
-            "category_name": "Sem categoria",
-            "color": None,
-            "icon": None,
-            "amount": ZERO,
-            "count": 0,
-            "last_transaction_date": None,
-        }
-        totals: dict[tuple[str | None, str], dict[str, object]] = defaultdict(
-            lambda: empty_category.copy()
-        )
-        for transaction, category in rows:
-            display_category = (
-                categories_by_id.get(category.parent_category_id)
-                if category is not None and category.parent_category_id is not None
-                else category
-            )
-            key = (
-                display_category.id if display_category is not None else None,
-                display_category.name if display_category is not None else "Sem categoria",
-            )
-            totals[key]["category_id"] = key[0]
-            totals[key]["category_name"] = key[1]
-            totals[key]["color"] = display_category.color if display_category is not None else None
-            totals[key]["icon"] = display_category.icon if display_category is not None else None
-            totals[key]["amount"] = Decimal(totals[key]["amount"]) + abs(transaction.amount)
-            totals[key]["count"] = int(totals[key]["count"]) + 1
-            last = totals[key]["last_transaction_date"]
-            if last is None or transaction.transaction_date > last:
-                totals[key]["last_transaction_date"] = transaction.transaction_date
-
-        ranked = sorted(
-            totals.values(),
+        ranked: list[dict[str, object]] = [
+            {
+                "category_id": row.category_id,
+                "category_name": row.category_name or "Sem categoria",
+                "color": row.color,
+                "icon": row.icon,
+                "amount": Decimal(str(row.amount or 0)).quantize(Decimal("0.01")),
+                "count": int(row.count or 0),
+                "last_transaction_date": row.last_transaction_date,
+            }
+            for row in rows
+        ]
+        ranked.sort(
             key=lambda item: (Decimal(item["amount"]), int(item["count"])),
             reverse=True,
         )
