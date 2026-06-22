@@ -70,6 +70,16 @@ schema/migrations, persistencia de arquivo/importacao/linhas/transacoes/erros,
 dedupe por arquivo e transacao, e testes automatizados de parsing, validacao e
 persistencia.
 
+## Performance & Cost Guardrails
+
+O banco (Neon) estourou o limite de Network Transfer por endpoints de analytics
+que carregavam muitas linhas e agregavam em Python. As agregações do dashboard
+foram movidas para SQL (`GROUP BY`/`func.sum`) e os pulls de linha foram
+estreitados/projetados. Regras para não regredir (não carregar lista completa de
+transações para analytics, preferir endpoint consolidado por tela, projetar
+colunas, SQL portável SQLite/Postgres, `staleTime >= 5min` no front, Copilot com
+contexto compacto) estão em [`aidlc-docs/25-performance-cost-guardrails.md`](aidlc-docs/25-performance-cost-guardrails.md).
+
 ## Decisao tecnica
 
 - Backend: Python.
