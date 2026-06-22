@@ -95,6 +95,7 @@ export type RuleFormState = {
   day_min: string;
   day_max: string;
   direction_filter: string;
+  origin: string;
 };
 
 /**

@@ -488,6 +488,10 @@ class CategorizationRule(Base):
     day_min: Mapped[int | None] = mapped_column(Integer)
     day_max: Mapped[int | None] = mapped_column(Integer)
     direction_filter: Mapped[str | None] = mapped_column(String(16))
+    # How the rule was created: "manual" (user) or "ai" (from an AI suggestion).
+    origin: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="manual", server_default="manual"
+    )
     # origin tracing
     rule_id_origin: Mapped[str | None] = mapped_column(
         UUID_TYPE, ForeignKey("categorization_rules.id")

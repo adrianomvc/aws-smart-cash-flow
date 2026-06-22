@@ -67,6 +67,7 @@ export type CategoryAssignmentRead = {
   source: string;
   confidence: string | null;
   review_status: string;
+  reason: string | null;
 };
 
 export type TransactionRead = {
@@ -117,6 +118,7 @@ export type CategorizationRuleRead = {
   day_min?: number | null;
   day_max?: number | null;
   direction_filter?: string | null;
+  origin?: string;
   created_at: string;
 };
 
@@ -1237,6 +1239,7 @@ export type CategorizationRulePayload = {
   day_min?: number | null;
   day_max?: number | null;
   direction_filter?: string | null;
+  origin?: string;
 };
 
 export function createRule(session: ApiSession, payload: CategorizationRulePayload) {
@@ -1266,6 +1269,37 @@ export function getRuleSuggestion(session: ApiSession, transactionId: string) {
 
 export function deleteRule(session: ApiSession, ruleId: string) {
   return apiRequest<void>(`/categorization-rules/${ruleId}`, session, { method: "DELETE" });
+}
+
+export type AiSuggestionItem = {
+  pattern: string;
+  category_id: string;
+  count: number;
+  high_confidence: boolean;
+  sample_description: string;
+  has_rule: boolean;
+};
+
+export type AiSuggestionsResponse = {
+  workspace_id: string;
+  items: AiSuggestionItem[];
+  high_confidence_candidate_count: number;
+};
+
+export function getAiSuggestions(session: ApiSession, confidence: "high" | "all" = "high") {
+  return apiRequest<AiSuggestionsResponse>(
+    `/categorization-rules/ai-suggestions?confidence=${confidence}`,
+    session,
+  );
+}
+
+export function generateRulesFromAi(session: ApiSession) {
+  return apiRequest<{
+    workspace_id: string;
+    created_count: number;
+    skipped_existing_count: number;
+    candidate_count: number;
+  }>("/categorization-rules/generate-from-ai", session, { method: "POST" });
 }
 
 export type MerchantAliasMatchType = "contains" | "equals" | "token";

@@ -66,6 +66,7 @@ class CategorizationRuleCreate(BaseModel):
     day_min: int | None = None
     day_max: int | None = None
     direction_filter: str | None = None
+    origin: str = "manual"
 
 
 class CategorizationRuleUpdate(BaseModel):
@@ -100,6 +101,7 @@ class CategorizationRuleRead(BaseModel):
     day_min: int | None
     day_max: int | None
     direction_filter: str | None
+    origin: str
     created_at: datetime
 
 
@@ -147,6 +149,28 @@ class RuleApplyResponse(BaseModel):
     category_applied_count: int
     direction_applied_count: int
     skipped_manual_count: int
+
+
+class GenerateAiRulesResponse(BaseModel):
+    workspace_id: str
+    created_count: int
+    skipped_existing_count: int
+    candidate_count: int
+
+
+class AiSuggestionItem(BaseModel):
+    pattern: str
+    category_id: str
+    count: int
+    high_confidence: bool
+    sample_description: str
+    has_rule: bool
+
+
+class AiSuggestionsResponse(BaseModel):
+    workspace_id: str
+    items: list[AiSuggestionItem]
+    high_confidence_candidate_count: int
 
 
 class RecurringCluster(BaseModel):
@@ -386,6 +410,7 @@ async def create_rule(
         day_min=payload.day_min,
         day_max=payload.day_max,
         direction_filter=_validate_target_direction(payload.direction_filter),
+        origin=_validate_rule_origin(payload.origin),
     )
     db.add(rule)
     db.commit()
@@ -536,6 +561,163 @@ async def delete_merchant_alias(
     db.delete(alias)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _extract_ai_regex(reason: str | None) -> str | None:
+    match = re.search(r"regex sugerido:\s*(.+)$", reason or "")
+    value = match.group(1).strip() if match else ""
+    if not value or value.lower() == "null":
+        return None
+    try:
+        re.compile(value)
+    except re.error:
+        return None
+    return value
+
+
+@router.get("/categorization-rules/ai-suggestions")
+async def list_ai_suggestions(
+    confidence: str = "high",
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> AiSuggestionsResponse:
+    """AI categorizations grouped by suggested regex + category, so each can be
+    reviewed and turned into a rule. confidence=high → only accepted (auto-applied)
+    suggestions; confidence=all → also the ones still pending review."""
+    statuses = ["accepted"] if confidence != "all" else ["accepted", "pending"]
+    rows = db.execute(
+        select(
+            Transaction.description,
+            TransactionCategoryAssignment.category_id,
+            TransactionCategoryAssignment.reason,
+            TransactionCategoryAssignment.review_status,
+        )
+        .join(
+            TransactionCategoryAssignment,
+            TransactionCategoryAssignment.transaction_id == Transaction.id,
+        )
+        .where(
+            TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+            TransactionCategoryAssignment.source == "llm",
+            TransactionCategoryAssignment.review_status.in_(statuses),
+        )
+    ).all()
+    existing_patterns = {
+        pattern
+        for (pattern,) in db.execute(
+            select(CategorizationRule.pattern).where(
+                CategorizationRule.workspace_id == auth.workspace_id
+            )
+        ).all()
+    }
+
+    groups: dict[tuple[str, str], dict] = {}
+    high_candidates: set[tuple[str, str]] = set()
+    for description, category_id, reason, review_status in rows:
+        if not category_id:
+            continue
+        regex = _extract_ai_regex(reason)
+        if not regex:
+            continue
+        key = (regex, category_id)
+        group = groups.setdefault(
+            key,
+            {"count": 0, "high": False, "sample": description or regex},
+        )
+        group["count"] += 1
+        if review_status == "accepted":
+            group["high"] = True
+            if regex not in existing_patterns:
+                high_candidates.add(key)
+
+    items = [
+        AiSuggestionItem(
+            pattern=regex,
+            category_id=category_id,
+            count=group["count"],
+            high_confidence=group["high"],
+            sample_description=group["sample"],
+            has_rule=regex in existing_patterns,
+        )
+        for (regex, category_id), group in groups.items()
+    ]
+    items.sort(key=lambda item: (item.has_rule, -item.count))
+    return AiSuggestionsResponse(
+        workspace_id=auth.workspace_id,
+        items=items,
+        high_confidence_candidate_count=len(high_candidates),
+    )
+
+
+@router.post("/categorization-rules/generate-from-ai")
+async def generate_rules_from_ai(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> GenerateAiRulesResponse:
+    """Create rules (origin=ai, regex) from the high-confidence AI suggestions,
+    deduplicated by pattern and skipping patterns that already have a rule."""
+    rows = db.execute(
+        select(
+            Transaction.description,
+            TransactionCategoryAssignment.category_id,
+            TransactionCategoryAssignment.reason,
+        )
+        .join(
+            TransactionCategoryAssignment,
+            TransactionCategoryAssignment.transaction_id == Transaction.id,
+        )
+        .where(
+            TransactionCategoryAssignment.workspace_id == auth.workspace_id,
+            TransactionCategoryAssignment.source == "llm",
+            TransactionCategoryAssignment.review_status == "accepted",
+        )
+    ).all()
+    existing_patterns = {
+        pattern
+        for (pattern,) in db.execute(
+            select(CategorizationRule.pattern).where(
+                CategorizationRule.workspace_id == auth.workspace_id
+            )
+        ).all()
+    }
+
+    candidates: dict[tuple[str, str], str] = {}
+    for description, category_id, reason in rows:
+        if not category_id:
+            continue
+        regex = _extract_ai_regex(reason)
+        if regex:
+            candidates.setdefault((regex, category_id), description or regex)
+
+    created = 0
+    skipped = 0
+    for (regex, category_id), sample in candidates.items():
+        if regex in existing_patterns:
+            skipped += 1
+            continue
+        db.add(
+            CategorizationRule(
+                id=str(uuid4()),
+                workspace_id=auth.workspace_id,
+                name=f"IA: {(sample or regex)[:40]}",
+                field="description",
+                match_type="regex",
+                pattern=regex,
+                category_id=category_id,
+                priority=60,
+                active=True,
+                origin="ai",
+            )
+        )
+        existing_patterns.add(regex)
+        created += 1
+    db.commit()
+    return GenerateAiRulesResponse(
+        workspace_id=auth.workspace_id,
+        created_count=created,
+        skipped_existing_count=skipped,
+        candidate_count=len(candidates),
+    )
 
 
 @router.post("/categorization-rules/apply")
@@ -801,6 +983,7 @@ async def accept_pending_review(
                     category_id=assignment.category_id,
                     priority=50,
                     active=True,
+                    origin="ai",
                 )
                 db.add(rule)
                 rule_created = True
@@ -1016,6 +1199,7 @@ def _rule_read(rule: CategorizationRule) -> CategorizationRuleRead:
         day_min=rule.day_min,
         day_max=rule.day_max,
         direction_filter=rule.direction_filter,
+        origin=rule.origin,
         created_at=rule.created_at,
     )
 
@@ -1198,6 +1382,12 @@ def _validate_rule_match_type(match_type: str) -> str:
             detail="Invalid rule match type",
         )
     return match_type
+
+
+def _validate_rule_origin(origin: str) -> str:
+    if origin not in {"manual", "ai"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid rule origin")
+    return origin
 
 
 def _validate_target_direction(target_direction: str | None) -> str | None:
