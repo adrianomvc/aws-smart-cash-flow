@@ -32,6 +32,7 @@ export type Page =
   | "scenarios"
   | "investments"
   | "insights"
+  | "copilot"
   | "wealth"
   | "reports"
   | "imports"
@@ -574,6 +575,10 @@ export function withQueryParams(query: string, params: Record<string, string>) {
 
 export function pageMeta(page: Page) {
   const pages: Record<Page, { description: string; title: string }> = {
+    copilot: {
+      description: "Converse com o Copiloto Financeiro: análises, dúvidas e sugestões sobre seus dados.",
+      title: "Copiloto Financeiro",
+    },
     cashflow: {
       description: "Por que sobrou ou faltou dinheiro? Entradas, saídas e saldo acumulado.",
       title: "Fluxo de Caixa",
