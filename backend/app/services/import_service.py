@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from hashlib import sha256
 from uuid import uuid4
@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 from app.core.auth import AuthContext
 from app.db.models import (
     AccountBalance,
+    CreditCard,
+    CreditCardStatement,
     FinancialCalendarEvent,
     ImportError,
     ImportJob,
@@ -22,17 +24,22 @@ from app.domain.imports import (
     ImportResult,
     ImportStatus,
     ParsedCalendarEvent,
+    ParsedCreditCard,
     ParsedTransaction,
+    ParseResult,
     PreviewTransaction,
     SourceKind,
 )
 from app.services.billing_dates import compute_payment_date
 from app.services.categorization_service import CategorizationService
 from app.services.file_classifier import classify_file
+from app.services.merchant_aliases import apply_aliases, load_aliases
 from app.services.parsers import (
+    extract_installment_marker,
     normalize_transaction_description_for_dedupe,
     parse_credit_card_csv,
     parse_excel_bank_statement,
+    parse_itau_credit_card_pdf,
     parse_txt_bank_statement,
 )
 from app.services.storage_service import StorageService
@@ -45,6 +52,13 @@ class ImportService:
     def __init__(self, db: Session, storage: StorageService | None = None) -> None:
         self.db = db
         self.storage = storage or StorageService()
+        self._aliases_cache: dict[str, list[tuple[str, str]]] = {}
+
+    def _merchant_aliases(self, workspace_id: str) -> list[tuple[str, str]]:
+        """Workspace aliases, loaded once per import run."""
+        if workspace_id not in self._aliases_cache:
+            self._aliases_cache[workspace_id] = load_aliases(self.db, workspace_id)
+        return self._aliases_cache[workspace_id]
 
     async def process_upload(
         self,
@@ -114,10 +128,10 @@ class ImportService:
         source_kind: str | None = None,
     ) -> ImportPreviewResult:
         suffix = filename.rsplit(".", maxsplit=1)[-1].lower() if "." in filename else ""
-        if suffix not in {"txt", "csv", "xls"}:
+        if suffix not in {"txt", "csv", "xls", "pdf"}:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only TXT, CSV and XLS Excel files are supported",
+                detail="Only TXT, CSV, XLS Excel and PDF files are supported",
             )
         if len(content) > self.max_upload_bytes:
             raise HTTPException(
@@ -169,23 +183,22 @@ class ImportService:
                 }
             )
         self._assign_occurrence_natural_dedupe_keys(natural_key_payloads)
-        natural_keys_by_line = {
-            int(payload["source_line"]): str(payload["natural_dedupe_key"])
-            for payload in natural_key_payloads
-        }
+        # Use a positional list — dict-by-source_line would collapse two transactions
+        # on the same line (two-column PDF layout), causing false duplicates.
+        natural_keys_list = [str(p["natural_dedupe_key"]) for p in natural_key_payloads]
 
         existing_natural_keys = self._existing_transaction_natural_keys(
             workspace_id=workspace.id,
-            natural_keys=set(natural_keys_by_line.values()),
+            natural_keys=set(natural_keys_list),
         )
         seen_natural_keys: set[str] = set()
-        for transaction in parse_result.transactions:
-            natural_key = natural_keys_by_line[transaction.source_line]
+        for i, transaction in enumerate(parse_result.transactions):
+            natural_key = natural_keys_list[i]
             duplicate = natural_key in existing_natural_keys or natural_key in seen_natural_keys
             seen_natural_keys.add(natural_key)
             if duplicate:
                 duplicate_rows += 1
-            if len(preview_items) < 50:
+            if len(preview_items) < 200:
                 preview_items.append(
                     PreviewTransaction(
                         source_line=transaction.source_line,
@@ -225,10 +238,10 @@ class ImportService:
         source_kind: str | None = None,
     ) -> ImportResult:
         suffix = filename.rsplit(".", maxsplit=1)[-1].lower() if "." in filename else ""
-        if suffix not in {"txt", "csv", "xls"}:
+        if suffix not in {"txt", "csv", "xls", "pdf"}:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only TXT, CSV and XLS Excel files are supported",
+                detail="Only TXT, CSV, XLS Excel and PDF files are supported",
             )
         if len(content) > self.max_upload_bytes:
             raise HTTPException(
@@ -272,6 +285,16 @@ class ImportService:
             )
             self.db.add(import_job)
             self.db.commit()
+            # Even when the rows are a duplicate, the card may have been deleted
+            # (soft-deleted) since the first import. Re-running the same statement
+            # must still re-register/re-activate its card and re-link the file.
+            try:
+                self._register_pdf_credit_card(
+                    workspace_id, existing_source_file, parse_result
+                )
+                self.db.commit()
+            except Exception:  # noqa: BLE001 - card registration must never break the import
+                self.db.rollback()
             return ImportResult(
                 import_job_id=import_job.id,
                 source_file_id=existing_source_file.id,
@@ -338,6 +361,7 @@ class ImportService:
                 import_job=import_job,
                 raw_line=raw_lines.get(parsed_transaction.source_line),
                 parsed_transaction=parsed_transaction,
+                card_info=parse_result.credit_card,
             )
             for parsed_transaction in parse_result.transactions
         ]
@@ -459,6 +483,13 @@ class ImportService:
                 transaction_ids=persisted_transaction_ids,
             )
         self.db.commit()
+        # Best-effort: auto-register the credit card this PDF statement belongs to,
+        # using the identity read from the PDF itself.
+        try:
+            self._register_pdf_credit_card(workspace_id, source_file, parse_result)
+            self.db.commit()
+        except Exception:  # noqa: BLE001 - card registration must never break the import
+            self.db.rollback()
         # Best-effort: link any credit-card files to a card now that new data
         # (invoice or its settling payment) may have arrived.
         try:
@@ -475,6 +506,12 @@ class ImportService:
             self.db.commit()
         except Exception:  # noqa: BLE001 - goal linking must never break the import
             self.db.rollback()
+        # New data arrived → drop cached analytics/copilot context for this workspace.
+        from app.services.analytics_cache import invalidate as invalidate_analytics_cache
+        from app.services.copilot_service import invalidate_context_cache
+
+        invalidate_analytics_cache(workspace_id)
+        invalidate_context_cache(workspace_id)
         return ImportResult(
             import_job_id=import_job.id,
             source_file_id=source_file.id,
@@ -556,7 +593,27 @@ class ImportService:
         import_job: ImportJob,
         raw_line: RawTransactionLine | None,
         parsed_transaction: ParsedTransaction,
+        card_info: ParsedCreditCard | None = None,
     ) -> dict:
+        # Bank-statement parsers don't extract installments; backfill from an explicit
+        # "PARC NN" marker (e.g. an IPVA paid in installments) so parceled bank charges
+        # carry their installment number. Credit-card parsers already set this upstream.
+        installment_current = parsed_transaction.installment_current
+        installment_total = parsed_transaction.installment_total
+        if installment_current is None:
+            marker_current, marker_total = extract_installment_marker(
+                parsed_transaction.raw_description
+            )
+            if marker_current is not None:
+                installment_current = marker_current
+                installment_total = marker_total
+        # User-defined aliases rename the display description (e.g. "BANCO ITAU SA" -> "Itaú").
+        description = parsed_transaction.description
+        alias_replacement = apply_aliases(
+            parsed_transaction.raw_description, description, self._merchant_aliases(workspace_id)
+        )
+        if alias_replacement is not None:
+            description = alias_replacement
         dedupe_key = self._transaction_dedupe_key(
             workspace_id=workspace_id,
             source_file_id=source_file.id,
@@ -573,8 +630,8 @@ class ImportService:
             raw_description=parsed_transaction.raw_description,
             amount=self._normalize_amount(parsed_transaction.amount),
             direction=parsed_transaction.direction.value,
-            installment_current=parsed_transaction.installment_current,
-            installment_total=parsed_transaction.installment_total,
+            installment_current=installment_current,
+            installment_total=installment_total,
         )
         return {
             "workspace_id": workspace_id,
@@ -585,18 +642,28 @@ class ImportService:
             "source_name": None,
             "account_or_card": None,
             "transaction_date": parsed_transaction.transaction_date,
-            "payment_date": compute_payment_date(
-                parsed_transaction.transaction_date,
-                source_type,
-                parsed_transaction.installment_current,
+            # The imported statement IS the invoice this purchase was charged on (the
+            # bank already assigns purchases after the closing day to the next
+            # invoice's PDF). So the payment date is that statement's due date — no
+            # closing-day guessing. Fall back to a computed date for non-PDF sources.
+            "payment_date": (
+                card_info.due_date
+                if source_type == "credit_card_statement" and card_info and card_info.due_date
+                else compute_payment_date(
+                    parsed_transaction.transaction_date,
+                    source_type,
+                    installment_current,
+                    card_info.closing_day if card_info else None,
+                    card_info.due_day if card_info else None,
+                )
             ),
-            "description": parsed_transaction.description,
+            "description": description,
             "raw_description": parsed_transaction.raw_description,
             "amount": parsed_transaction.amount,
             "currency": "BRL",
             "direction": parsed_transaction.direction.value,
-            "installment_current": parsed_transaction.installment_current,
-            "installment_total": parsed_transaction.installment_total,
+            "installment_current": installment_current,
+            "installment_total": installment_total,
             "source_line": parsed_transaction.source_line,
             "dedupe_key": dedupe_key,
             "natural_dedupe_key": natural_dedupe_key,
@@ -719,6 +786,8 @@ class ImportService:
             return parse_excel_bank_statement(raw_content)
         if source_kind == SourceKind.CREDIT_CARD_CSV:
             return parse_credit_card_csv(text_content)
+        if source_kind == SourceKind.CREDIT_CARD_PDF:
+            return parse_itau_credit_card_pdf(raw_content)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Unsupported or unrecognized file layout",
@@ -753,7 +822,7 @@ class ImportService:
         return resolved
 
     def _decode_text_content(self, source_kind: SourceKind, content: bytes) -> str:
-        if source_kind == SourceKind.BANK_STATEMENT_EXCEL:
+        if source_kind in {SourceKind.BANK_STATEMENT_EXCEL, SourceKind.CREDIT_CARD_PDF}:
             return ""
         try:
             return content.decode("utf-8-sig")
@@ -823,7 +892,7 @@ class ImportService:
         return raw_lines
 
     def _iter_data_lines(self, source_kind: SourceKind, content: str) -> list[tuple[int, str]]:
-        if source_kind == SourceKind.BANK_STATEMENT_EXCEL:
+        if source_kind in {SourceKind.BANK_STATEMENT_EXCEL, SourceKind.CREDIT_CARD_PDF}:
             return []
         lines = list(enumerate(content.splitlines(), start=1))
         if source_kind == SourceKind.CREDIT_CARD_CSV:
@@ -895,6 +964,72 @@ class ImportService:
             SourceKind.BANK_STATEMENT_EXCEL.value,
         }:
             return "bank_statement"
-        if source_kind == SourceKind.CREDIT_CARD_CSV.value:
+        if source_kind in {
+            SourceKind.CREDIT_CARD_CSV.value,
+            SourceKind.CREDIT_CARD_PDF.value,
+        }:
             return "credit_card_statement"
         return "unknown"
+
+    def _register_pdf_credit_card(
+        self,
+        workspace_id: str,
+        source_file: SourceFile,
+        parse_result: ParseResult,
+    ) -> None:
+        """Auto-create (or reuse) the credit card identified in a PDF statement and
+        link this statement file to it, so the card shows up under Cartões."""
+        card_info = parse_result.credit_card
+        if card_info is None or card_info.due_date is None:
+            return
+        card = self.db.scalar(
+            select(CreditCard).where(
+                CreditCard.workspace_id == workspace_id,
+                CreditCard.last_four == card_info.last_four,
+            )
+        )
+        if card is None:
+            card = CreditCard(
+                id=str(uuid4()),
+                workspace_id=workspace_id,
+                name=card_info.name,
+                issuer="Itaú",
+                brand=card_info.brand,
+                last_four=card_info.last_four,
+                closing_day=card_info.closing_day or 1,
+                due_day=card_info.due_day or 10,
+                limit_amount=card_info.limit_amount,
+                active=True,
+            )
+            self.db.add(card)
+            self.db.flush()
+        else:
+            # Importing a statement means this card is in use again: re-activate it
+            # (it may have been soft-deleted) and backfill the limit when newly known.
+            if not card.active:
+                card.active = True
+            if card_info.limit_amount is not None and card.limit_amount is None:
+                card.limit_amount = card_info.limit_amount
+            self.db.add(card)
+
+        already_linked = self.db.scalar(
+            select(CreditCardStatement.id).where(
+                CreditCardStatement.source_file_id == source_file.id
+            )
+        )
+        if already_linked is not None:
+            return
+        due_date = card_info.due_date
+        self.db.add(
+            CreditCardStatement(
+                id=str(uuid4()),
+                workspace_id=workspace_id,
+                credit_card_id=card.id,
+                source_file_id=source_file.id,
+                statement_month=date(due_date.year, due_date.month, 1),
+                closing_date=card_info.closing_date,
+                due_date=due_date,
+                total_amount=card_info.statement_total,
+                status="closed",
+            )
+        )

@@ -1,14 +1,9 @@
-"""Composite indexes for the hot analytics filters (reduce query cost on Neon).
-
-Chained off the current main head (0023). Other in-flight branches add 0024-0026
-off the same parent; if they merge together Alembic will report multiple heads —
-resolve with `alembic merge heads` (the indexes here don't depend on those).
-"""
+"""Composite indexes for the hot analytics filters (reduce query cost on Neon)."""
 
 from alembic import op
 
 revision = "20260622_0030"
-down_revision = "20260615_0023"
+down_revision = "20260621_0026"
 branch_labels = None
 depends_on = None
 

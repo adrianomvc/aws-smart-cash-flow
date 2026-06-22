@@ -9,6 +9,8 @@ def classify_file(filename: str, content: str | bytes) -> SourceKind:
         return SourceKind.BANK_STATEMENT_TXT
     if suffix == ".xls":
         return SourceKind.BANK_STATEMENT_EXCEL
+    if suffix == ".pdf":
+        return SourceKind.CREDIT_CARD_PDF
     if isinstance(content, bytes):
         try:
             content = content.decode("utf-8-sig")

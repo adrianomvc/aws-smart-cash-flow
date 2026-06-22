@@ -73,6 +73,9 @@ class ImportErrorListResponse(BaseModel):
     workspace_id: str
     import_job_id: str
     items: list[ImportErrorRead]
+    limit: int = 100
+    offset: int = 0
+    total: int = 0
 
 
 @router.post("")
@@ -256,6 +259,8 @@ async def list_import_errors(
     import_job_id: str,
     auth: AuthContext = AuthDependency,
     db: Session = DbDependency,
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ) -> ImportErrorListResponse:
     import_job = db.scalar(
         select(ImportJob).where(
@@ -266,17 +271,24 @@ async def list_import_errors(
     if import_job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Import not found")
 
+    error_filters = (
+        ImportError.import_job_id == import_job_id,
+        ImportError.workspace_id == auth.workspace_id,
+    )
+    total = db.scalar(select(func.count()).select_from(ImportError).where(*error_filters)) or 0
     errors = db.scalars(
         select(ImportError)
-        .where(
-            ImportError.import_job_id == import_job_id,
-            ImportError.workspace_id == auth.workspace_id,
-        )
+        .where(*error_filters)
         .order_by(ImportError.source_line, ImportError.id)
+        .limit(limit)
+        .offset(offset)
     ).all()
     return ImportErrorListResponse(
         workspace_id=auth.workspace_id,
         import_job_id=import_job_id,
+        limit=limit,
+        offset=offset,
+        total=total,
         items=[
             ImportErrorRead(
                 id=error.id,

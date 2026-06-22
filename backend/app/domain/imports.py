@@ -9,6 +9,7 @@ class SourceKind(StrEnum):
     BANK_STATEMENT_TXT = "bank_statement_txt"
     BANK_STATEMENT_EXCEL = "bank_statement_excel"
     CREDIT_CARD_CSV = "credit_card_csv"
+    CREDIT_CARD_PDF = "credit_card_pdf"
     UNKNOWN = "unknown"
 
 
@@ -63,6 +64,18 @@ class ParseError(BaseModel):
     message: str
 
 
+class ParsedCreditCard(BaseModel):
+    last_four: str
+    brand: str | None = None
+    name: str
+    closing_day: int | None = None
+    due_day: int | None = None
+    closing_date: date | None = None
+    due_date: date | None = None
+    statement_total: Decimal | None = None
+    limit_amount: Decimal | None = None
+
+
 class ParseResult(BaseModel):
     source_kind: SourceKind
     total_rows: int
@@ -70,6 +83,7 @@ class ParseResult(BaseModel):
     account_balances: list[ParsedAccountBalance] = Field(default_factory=list)
     calendar_events: list[ParsedCalendarEvent] = Field(default_factory=list)
     errors: list[ParseError] = Field(default_factory=list)
+    credit_card: ParsedCreditCard | None = None
 
 
 class ImportResult(BaseModel):

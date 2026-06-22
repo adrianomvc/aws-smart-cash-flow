@@ -20,6 +20,7 @@ export type Page =
   | "scenarios"
   | "investments"
   | "insights"
+  | "copilot"
   | "wealth"
   | "reports"
   | "imports"
@@ -95,6 +96,7 @@ export type RuleFormState = {
   day_min: string;
   day_max: string;
   direction_filter: string;
+  origin: string;
 };
 
 /**

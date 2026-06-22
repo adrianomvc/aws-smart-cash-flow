@@ -11,6 +11,7 @@ import {
   Loader2,
   LayoutDashboard,
   LogOut,
+  MessageSquare,
   Moon,
   Settings,
   Sparkles,
@@ -54,6 +55,7 @@ import { PlanningPage } from "./pages/PlanningPage";
 import { ScenariosPage } from "./pages/ScenariosPage";
 import { InvestmentsPage } from "./pages/InvestmentsPage";
 import { InsightsPage } from "./pages/InsightsPage";
+import { CopilotChat } from "./components/CopilotChat";
 import { WealthPage } from "./pages/WealthPage";
 import { FamilyPage } from "./pages/FamilyPage";
 import { ReportsPage } from "./pages/ReportsPage";
@@ -107,6 +109,7 @@ const ICON_PATHS: Record<string, string> = {
   sun:      "M12 12m-4 0a4 4 0 1 0 8 0a4 4 0 1 0-8 0 M12 2v2 M12 20v2 M4.93 4.93l1.41 1.41 M17.66 17.66l1.41 1.41 M2 12h2 M20 12h2 M4.93 19.07l1.41-1.41 M17.66 6.34l1.41-1.41",
   plus:     "M12 5v14 M5 12h14",
   repeat:   "M4 9l3-3 3 3 M7 6v9a2 2 0 0 0 2 2h11 M20 15l-3 3-3-3 M17 18V9a2 2 0 0 0-2-2H4",
+  chat:     "M4 5h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H8l-4 4V6a1 1 0 0 1 1-1z M8 9h8 M8 12h5",
 };
 
 function NavIcon({ name, size = 16 }: { name: string; size?: number }) {
@@ -159,6 +162,7 @@ const navSections: Array<{ label: string; items: NavItem[] }> = [
     items: [
       { id: "investments", label: "Investimentos",  iconName: "coins" },
       { id: "insights", label: "Insights IA",    iconName: "spark" },
+      { id: "copilot",  label: "Copiloto IA",     iconName: "chat" },
       { id: "wealth",   label: "Patrimônio",      iconName: "building" },
       { id: "reports",  label: "Relatórios",      iconName: "report" },
     ],
@@ -668,6 +672,15 @@ function ProtectedApp({
       {page === "scenarios" ? <ScenariosPage session={session} onNavigate={onNavigate} onOpenImports={onOpenImports} /> : null}
       {page === "investments" ? <InvestmentsPage session={session} period={dashboardPeriod} /> : null}
       {page === "insights" ? <InsightsPage session={session} period={dashboardPeriod} onNavigate={onNavigate} onOpenImports={onOpenImports} onOpenTransactions={onOpenTransactions} /> : null}
+      {page === "copilot" ? (
+        <div className="canvas stg">
+          <div style={{ marginBottom: 12 }}>
+            <div className="eyebrow" style={{ marginBottom: 4 }}>IA</div>
+            <h2 className="section-title"><MessageSquare size={18} /> Copiloto Financeiro</h2>
+          </div>
+          <CopilotChat session={session} onOpenTransactions={onOpenTransactions} />
+        </div>
+      ) : null}
       {page === "wealth" ? <WealthPage session={session} onNavigate={onNavigate} /> : null}
       {page === "family" ? <FamilyPage session={session} /> : null}
       {page === "reports" ? <ReportsPage onNavigate={onNavigate} period={dashboardPeriod} session={session} /> : null}

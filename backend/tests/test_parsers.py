@@ -1,17 +1,138 @@
+from datetime import date
 from decimal import Decimal, InvalidOperation
 
 import pytest
 
-from app.domain.imports import TransactionDirection
+from app.domain.imports import ParsedTransaction, SourceKind, TransactionDirection
 from app.services.parsers import (
+    _drop_future_installment_previews,
     extract_installment,
+    extract_installment_marker,
+    extract_itau_card_metadata,
     normalize_transaction_description,
     normalize_transaction_description_for_dedupe,
     parse_brazilian_decimal,
     parse_credit_card_csv,
     parse_excel_bank_statement,
+    parse_itau_credit_card_statement_text,
     parse_txt_bank_statement,
 )
+
+
+def test_extract_itau_card_metadata_reads_identity_from_pdf():
+    text = "\n".join(
+        [
+            "4771.XXXX.XXXX.1359 VISA INFINITE",
+            "Vencimento: 20/05/2026",
+            "Previsao prox. Fechamento: 13/05/2026",
+            "Total desta fatura 1.234,56",
+        ]
+    )
+
+    card = extract_itau_card_metadata(text)
+
+    assert card is not None
+    assert card.last_four == "1359"
+    assert card.brand == "visa"
+    assert card.name == "Visa Infinite"
+    assert (card.closing_day, card.due_day) == (13, 20)
+    assert card.due_date == date(2026, 5, 20)
+    assert card.statement_total == Decimal("1234.56")
+
+
+def test_extract_itau_card_metadata_falls_back_to_brand_and_last_four():
+    text = "5312.XXXX.XXXX.7164\nVencimento: 01/05/2026"
+
+    card = extract_itau_card_metadata(text)
+
+    assert card is not None
+    assert card.brand == "mastercard"
+    assert card.name == "Mastercard final 7164"
+
+
+def test_parse_itau_credit_card_statement_text():
+    text = "\n".join(
+        [
+            "Vencimento: 01/05/2026",
+            "25/03 99APP *99App 28,06",
+            "26/04 Clinica 12/18 355,65",
+            "20/12 LOJA DE NATAL 100,00",  # month after due month -> previous year
+            # older layout: trailing Itaú category column after the amount + N/M installment
+            "01/03 ESPACO FISICO 05/12 130,77 DIVERSOS .Sao Paulo",
+            # the FIRST decimal is the amount, not the trailing limit value
+            "02/04 99APP 21,00 Limite disponivel 18.384,31",
+            "Total desta fatura 775,69",  # not a DD/MM line -> skipped
+            "Limite total de credito",
+        ]
+    )
+
+    result = parse_itau_credit_card_statement_text(text)
+
+    assert result.source_kind == SourceKind.CREDIT_CARD_PDF
+    txs = result.transactions
+    assert len(txs) == 5
+    assert txs[0].transaction_date == date(2026, 3, 25)
+    assert txs[0].amount == Decimal("28.06")
+    assert txs[0].direction == TransactionDirection.DEBIT
+    assert (txs[1].installment_current, txs[1].installment_total) == (12, 18)
+    assert txs[2].transaction_date == date(2025, 12, 20)
+    older = next(t for t in txs if t.amount == Decimal("130.77"))
+    assert (older.installment_current, older.installment_total) == (5, 12)
+    assert any(t.amount == Decimal("21.00") for t in txs)  # not the trailing 18.384,31
+
+
+def test_parse_itau_statement_drops_future_installments_and_reconciles():
+    text = "\n".join(
+        [
+            "Vencimento: 01/05/2026",
+            "26/04 Clinica 12/18 355,65",  # current installment
+            "28/03 Loja Teste 100,00",
+            "26/04 Clinica 13/18 355,65",  # future preview -> dropped
+            "Total desta fatura 455,65",  # 355,65 + 100,00 -> matches
+        ]
+    )
+
+    result = parse_itau_credit_card_statement_text(text)
+
+    assert len(result.transactions) == 2  # only one Clinica installment kept
+    clinica = next(t for t in result.transactions if "CLINICA" in t.description)
+    assert clinica.installment_current == 12
+    assert not any(e.error_code == "statement_total_mismatch" for e in result.errors)
+
+
+def test_parse_itau_statement_imports_iof_on_due_date():
+    text = "\n".join(
+        [
+            "Vencimento: 01/05/2026",
+            "28/03 Loja Teste 100,00",
+            "Repasse de IOF em R$ 13,28",  # no date -> dated on the due date
+            "Total desta fatura 113,28",
+        ]
+    )
+
+    result = parse_itau_credit_card_statement_text(text)
+
+    iof = [t for t in result.transactions if t.description == "IOF"]
+    assert len(iof) == 1
+    assert iof[0].amount == Decimal("13.28")
+    assert iof[0].transaction_date == date(2026, 5, 1)
+    assert iof[0].direction == TransactionDirection.DEBIT
+    assert not any(e.error_code == "statement_total_mismatch" for e in result.errors)
+
+
+def test_parse_itau_statement_flags_total_mismatch_without_blocking():
+    text = "\n".join(
+        [
+            "Vencimento: 01/05/2026",
+            "28/03 Loja Teste 100,00",
+            "Total desta fatura 150,00",  # imported 100,00 != 150,00
+        ]
+    )
+
+    result = parse_itau_credit_card_statement_text(text)
+
+    assert len(result.transactions) == 1  # still imported (non-blocking)
+    assert any(e.error_code == "statement_total_mismatch" for e in result.errors)
 
 
 class FakeExcelSheet:
@@ -391,8 +512,25 @@ def test_extract_installment_from_raw_description() -> None:
     assert extract_installment("ANGLO 03 10") == (3, 10)
     assert extract_installment("ANGLO 05/05") == (5, 5)
     assert extract_installment("REINALDO DOS SANTO08/10") == (8, 10)
+    # Installment digits immediately follow a longer merchant code with no separator
+    assert extract_installment("TAUA HOTEL &*2343808/10") == (8, 10)
+    assert extract_installment("TAUA HOTEL &*2343809/10") == (9, 10)
     assert extract_installment("ANGLO") == (None, None)
     assert extract_installment("LOJA 11 10") == (None, None)
+
+
+def test_extract_installment_marker_only_matches_explicit_parc() -> None:
+    # Explicit "PARC NN" marker (no total) on a bank-statement charge, e.g. a
+    # parceled IPVA: record the current installment, leave the total unknown.
+    assert extract_installment_marker("INT IPVA-SPEWR2311PARC01") == (1, None)
+    assert extract_installment_marker("INT IPVA-SPEWR2311PARC05") == (5, None)
+    assert extract_installment_marker("PARC 03/10") == (3, 10)
+    # The loose heuristics of extract_installment must NOT leak in: a trailing
+    # number pair on a bank description is a false positive here.
+    assert extract_installment_marker("COMPRA 05 12") == (None, None)
+    assert extract_installment("COMPRA 05 12") == (5, 12)
+    assert extract_installment_marker("&*2343808/10") == (None, None)
+    assert extract_installment_marker("INT IPVA-SP EWR-2311") == (None, None)
 
 
 def test_parse_credit_card_csv_extracts_installments_and_keeps_clean_description() -> None:
@@ -405,3 +543,76 @@ def test_parse_credit_card_csv_extracts_installments_and_keeps_clean_description
     assert result.transactions[0].raw_description == "ANGLO 03/10"
     assert result.transactions[0].installment_current == 3
     assert result.transactions[0].installment_total == 10
+
+
+def _installment_tx(raw: str, amount: str, current: int, total: int) -> ParsedTransaction:
+    return ParsedTransaction(
+        transaction_date=date(2025, 8, 18),
+        raw_description=raw,
+        description=normalize_transaction_description(raw),
+        amount=Decimal(amount),
+        direction=TransactionDirection.DEBIT,
+        source_line=1,
+        installment_current=current,
+        installment_total=total,
+    )
+
+
+def test_drop_future_installment_previews_keeps_equal_charges_on_different_cards() -> None:
+    # Two real tuitions of the same value on different cards — both current (01/05),
+    # must BOTH be kept (not merged by value).
+    txs = [
+        _installment_tx("ANGLO 01/05", "494.70", 1, 5),
+        _installment_tx("ANGLO 01/05", "494.70", 1, 5),
+    ]
+    kept = _drop_future_installment_previews(txs)
+    assert len(kept) == 2
+
+
+def test_drop_future_installment_previews_drops_glued_installment_preview() -> None:
+    # Same purchase, installment glued to the merchant code: current 02/11 is the
+    # real charge, 03/11 is the next-month preview and must be dropped.
+    txs = [
+        _installment_tx("PAO DE AcUCAR-129202/11", "9.25", 2, 11),
+        _installment_tx("PAO DE AcUCAR-129203/11", "9.25", 3, 11),
+    ]
+    kept = _drop_future_installment_previews(txs)
+    assert len(kept) == 1
+    assert kept[0].installment_current == 2
+
+
+def test_parse_itau_statement_captures_multiple_iof_lines() -> None:
+    # Multi-card statements can carry more than one "Repasse de IOF"; all count.
+    text = "\n".join(
+        [
+            "Vencimento: 01/05/2026",
+            "28/03 Loja Teste 100,00",
+            "Repasse de IOF em R$ 18,10",
+            "Repasse de IOF em R$ 16,33",
+            "Total desta fatura 134,43",
+        ]
+    )
+
+    result = parse_itau_credit_card_statement_text(text)
+
+    iof = [t for t in result.transactions if t.description == "IOF"]
+    assert sorted(t.amount for t in iof) == [Decimal("16.33"), Decimal("18.10")]
+    assert not any(e.error_code == "statement_total_mismatch" for e in result.errors)
+
+
+def test_parse_itau_statement_total_uses_current_charges_on_parceled_invoice() -> None:
+    # On a parceled invoice "Total desta fatura" is the financed amount; reconcile
+    # against "Total dos lançamentos atuais" so it isn't a false mismatch.
+    text = "\n".join(
+        [
+            "Vencimento: 01/05/2026",
+            "22/12 LOUNGE KEY INC 175,36",
+            "Repasse de IOF em R$ 11,18",
+            "Total dos lançamentos atuais 186,54",
+            "Total desta fatura 145,04",
+        ]
+    )
+
+    result = parse_itau_credit_card_statement_text(text)
+
+    assert not any(e.error_code == "statement_total_mismatch" for e in result.errors)

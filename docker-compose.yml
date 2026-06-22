@@ -1,0 +1,29 @@
+# Postgres local para desenvolvimento — mantém o dev/harnesses FORA do banco
+# de produção (Neon), evitando estourar a cota de transferência do plano free.
+#
+# Uso:
+#   docker compose up -d db          # sobe o Postgres
+#   # em backend/.env aponte: DATABASE_URL=postgresql://scf:scf@localhost:5433/scf
+#   cd backend && alembic upgrade head   # cria o schema (inclui pg_trgm)
+#
+# Porta 5433 no host pra não conflitar com um Postgres já instalado (5432).
+services:
+  db:
+    image: postgres:16
+    container_name: scf-postgres
+    environment:
+      POSTGRES_USER: scf
+      POSTGRES_PASSWORD: scf
+      POSTGRES_DB: scf
+    ports:
+      - "5433:5432"
+    volumes:
+      - scf-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scf -d scf"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  scf-pgdata:

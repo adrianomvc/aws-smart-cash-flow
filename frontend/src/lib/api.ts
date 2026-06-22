@@ -67,6 +67,7 @@ export type CategoryAssignmentRead = {
   source: string;
   confidence: string | null;
   review_status: string;
+  reason: string | null;
 };
 
 export type TransactionRead = {
@@ -78,6 +79,9 @@ export type TransactionRead = {
   account_or_card: string | null;
   transaction_date: string;
   payment_date: string | null;
+  invoice_closing_date?: string | null;
+  invoice_due_date?: string | null;
+  invoice_month?: string | null;
   description: string;
   raw_description: string;
   amount: string;
@@ -114,6 +118,7 @@ export type CategorizationRuleRead = {
   day_min?: number | null;
   day_max?: number | null;
   direction_filter?: string | null;
+  origin?: string;
   created_at: string;
 };
 
@@ -756,8 +761,41 @@ async function apiRequest<T>(path: string, session: ApiSession, options: ApiOpti
   return response.json() as Promise<T>;
 }
 
+// Downloads the transactions CSV generated server-side (only the columns the
+// CSV needs), instead of fetching thousands of full transaction rows as JSON.
+export async function exportTransactionsCsv(session: ApiSession): Promise<string> {
+  const headers = new Headers();
+  let token = session.token;
+  if (session.mode === "cognito" && cognitoTokenProvider) {
+    const fresh = await cognitoTokenProvider();
+    if (fresh) token = fresh;
+  }
+  headers.set("Authorization", `Bearer ${token}`);
+  const response = await fetch(`${API_BASE_URL}/transactions/export.csv`, { headers });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `API request failed: ${response.status}`);
+  }
+  return response.text();
+}
+
 export function getCurrentWorkspace(session: ApiSession) {
   return apiRequest<WorkspaceCurrent>("/workspaces/current", session);
+}
+
+export type DashboardOverview = {
+  workspace_id: string;
+  summary: DashboardSummary;
+  daily_cashflow: ListResponse<DailyCashflowItem>;
+  category_ranking: ListResponse<CategoryRankingItem>;
+  subcategory_ranking: ListResponse<SubcategoryRankingItem>;
+  data_quality: DataQuality;
+};
+
+// One request for the main Dashboard screen: the backend shares a single
+// transaction scan across these widgets, cutting DB reads on a cold cache.
+export function getDashboardOverview(session: ApiSession, query: string) {
+  return apiRequest<DashboardOverview>(`/dashboard/overview${query}`, session);
 }
 
 export function getDashboardSummary(session: ApiSession, query: string) {
@@ -1094,6 +1132,24 @@ export function getTransactionDuplicates(session: ApiSession, query = "?limit=20
   return apiRequest<DuplicateTransactionListResponse>(`/transactions/duplicates${query}`, session);
 }
 
+export type UncategorizedGroup = {
+  key: string;
+  sample_description: string;
+  count: number;
+  total: string;
+  ids: string[];
+};
+
+export type UncategorizedGroupsResponse = {
+  workspace_id: string;
+  groups: UncategorizedGroup[];
+  total_groups: number;
+};
+
+export function getUncategorizedGroups(session: ApiSession, query = "?limit=50") {
+  return apiRequest<UncategorizedGroupsResponse>(`/transactions/uncategorized-groups${query}`, session);
+}
+
 export function createManualTransaction(session: ApiSession, payload: ManualTransactionPayload) {
   return apiRequest<TransactionRead>("/transactions", session, {
     method: "POST",
@@ -1183,6 +1239,7 @@ export type CategorizationRulePayload = {
   day_min?: number | null;
   day_max?: number | null;
   direction_filter?: string | null;
+  origin?: string;
 };
 
 export function createRule(session: ApiSession, payload: CategorizationRulePayload) {
@@ -1212,6 +1269,79 @@ export function getRuleSuggestion(session: ApiSession, transactionId: string) {
 
 export function deleteRule(session: ApiSession, ruleId: string) {
   return apiRequest<void>(`/categorization-rules/${ruleId}`, session, { method: "DELETE" });
+}
+
+export type AiSuggestionItem = {
+  pattern: string;
+  category_id: string;
+  count: number;
+  high_confidence: boolean;
+  sample_description: string;
+  has_rule: boolean;
+};
+
+export type AiSuggestionsResponse = {
+  workspace_id: string;
+  items: AiSuggestionItem[];
+  high_confidence_candidate_count: number;
+};
+
+export function getAiSuggestions(session: ApiSession, confidence: "high" | "all" = "high") {
+  return apiRequest<AiSuggestionsResponse>(
+    `/categorization-rules/ai-suggestions?confidence=${confidence}`,
+    session,
+  );
+}
+
+export function generateRulesFromAi(session: ApiSession) {
+  return apiRequest<{
+    workspace_id: string;
+    created_count: number;
+    skipped_existing_count: number;
+    candidate_count: number;
+  }>("/categorization-rules/generate-from-ai", session, { method: "POST" });
+}
+
+export type MerchantAliasMatchType = "contains" | "equals" | "token";
+
+export type MerchantAliasRead = {
+  id: string;
+  workspace_id: string;
+  pattern: string;
+  replacement: string;
+  match_type: MerchantAliasMatchType;
+  active: boolean;
+  created_at: string;
+};
+
+export type MerchantAliasPayload = {
+  pattern: string;
+  replacement: string;
+  match_type?: MerchantAliasMatchType;
+  active?: boolean;
+};
+
+export function getMerchantAliases(session: ApiSession) {
+  return apiRequest<ListResponse<MerchantAliasRead>>("/merchant-aliases", session);
+}
+
+export function createMerchantAlias(session: ApiSession, payload: MerchantAliasPayload) {
+  return apiRequest<MerchantAliasRead>("/merchant-aliases", session, { method: "POST", body: payload });
+}
+
+export function updateMerchantAlias(
+  session: ApiSession,
+  aliasId: string,
+  payload: Partial<MerchantAliasPayload>,
+) {
+  return apiRequest<MerchantAliasRead>(`/merchant-aliases/${aliasId}`, session, {
+    method: "PATCH",
+    body: payload,
+  });
+}
+
+export function deleteMerchantAlias(session: ApiSession, aliasId: string) {
+  return apiRequest<void>(`/merchant-aliases/${aliasId}`, session, { method: "DELETE" });
 }
 
 export function applyRules(session: ApiSession) {

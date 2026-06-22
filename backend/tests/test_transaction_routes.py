@@ -195,6 +195,32 @@ def test_list_transactions_returns_current_workspace_transactions(
     assert payload["items"][0]["direction"] == "credit"
 
 
+def test_export_transactions_csv_returns_slim_csv(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="extrato.txt",
+        mime_type="text/plain",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/extrato.txt",
+        content=b"01/07/2025;PIX MERCADO;-10,00\n02/07/2025;SALARIO;100,00\n",
+    )
+
+    response = client.get("/v1/transactions/export.csv")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    lines = response.text.lstrip("﻿").splitlines()
+    assert lines[0] == '"Data";"Descricao";"Valor";"Direcao";"Conta";"CategoriaId"'
+    assert len(lines) == 3  # header + 2 transactions
+    joined = "\n".join(lines)
+    assert "SALARIO" in joined
+    assert "MERCADO" in joined
+
+
 def test_list_transactions_filters_by_date_source_and_query(
     client: TestClient,
     db_session: Session,

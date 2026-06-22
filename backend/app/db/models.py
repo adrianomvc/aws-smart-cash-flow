@@ -105,7 +105,8 @@ class SourceFile(Base):
         UniqueConstraint("workspace_id", "content_hash", name="uq_source_file_workspace_hash"),
         CheckConstraint(
             "source_kind in ("
-            "'bank_statement_txt', 'bank_statement_excel', 'credit_card_csv', 'unknown'"
+            "'bank_statement_txt', 'bank_statement_excel', 'credit_card_csv', "
+            "'credit_card_pdf', 'unknown'"
             ")",
             name="ck_source_file_source_kind",
         ),
@@ -487,9 +488,46 @@ class CategorizationRule(Base):
     day_min: Mapped[int | None] = mapped_column(Integer)
     day_max: Mapped[int | None] = mapped_column(Integer)
     direction_filter: Mapped[str | None] = mapped_column(String(16))
+    # How the rule was created: "manual" (user) or "ai" (from an AI suggestion).
+    origin: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="manual", server_default="manual"
+    )
     # origin tracing
     rule_id_origin: Mapped[str | None] = mapped_column(
         UUID_TYPE, ForeignKey("categorization_rules.id")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class MerchantAlias(Base):
+    """User-defined "rename" for messy descriptions: when a transaction's raw or
+    normalized description contains ``pattern``, its display description becomes
+    ``replacement`` (e.g. "BANCO ITAU SA" -> "Itaú"). Applied during import and by
+    the normalize-descriptions endpoint."""
+
+    __tablename__ = "merchant_aliases"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "pattern", name="uq_merchant_alias_workspace_pattern"),
+        CheckConstraint(
+            "match_type in ('contains', 'equals', 'token')",
+            name="ck_merchant_alias_match_type",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(UUID_TYPE, primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("workspaces.id"), nullable=False
+    )
+    pattern: Mapped[str] = mapped_column(Text, nullable=False)
+    replacement: Mapped[str] = mapped_column(Text, nullable=False)
+    # contains/equals = rename whole description; token = replace just the matching word.
+    match_type: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="contains", server_default="contains"
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

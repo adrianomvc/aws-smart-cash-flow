@@ -36,7 +36,7 @@ COGNITO_REGION=us-east-1
 COGNITO_USER_POOL_ID=us-east-1_AbC123
 COGNITO_APP_CLIENT_ID=1h2j3kxxxxxxxxxxxxxxxxxxxx
 ```
-Quando `COGNITO_USER_POOL_ID` e `COGNITO_REGION` estão setados, todo `Bearer <token>`
+Quando `COGNITO_USER_POOL_ID` e ` ` estão setados, todo `Bearer <token>`
 é validado como **ID token** do Cognito (assinatura RS256 contra o JWKS do pool,
 `iss` e `aud` conferidos). O `sub` vira o `user_id` e o `email` vem do token.
 
