@@ -2075,25 +2075,38 @@ class DashboardService:
             ZERO,
         )
 
+    def _debit_window_stats(
+        self, workspace_id: str, date_from: date | None, date_to: date | None
+    ) -> tuple[Decimal, date | None, int]:
+        """SQL totals for debits in a window: (sum of abs amount, earliest date,
+        count) — used by the burn-rate helpers instead of pulling every row."""
+        row = self.db.execute(
+            select(
+                func.sum(func.abs(Transaction.amount)),
+                func.min(Transaction.transaction_date),
+                func.count(),
+            ).where(
+                *self._transaction_filters(
+                    workspace_id=workspace_id, date_from=date_from, date_to=date_to
+                ),
+                Transaction.direction == "debit",
+            )
+        ).one()
+        total = Decimal(str(row[0])).quantize(Decimal("0.01")) if row[0] is not None else ZERO
+        first_date = row[1]
+        if isinstance(first_date, str):
+            first_date = date.fromisoformat(first_date[:10])
+        return total, first_date, int(row[2] or 0)
+
     def _burn_rate(self, workspace_id: str, date_to: date | None) -> tuple[Decimal, int]:
         anchor = date_to or self._latest_transaction_date(workspace_id)
         if anchor is None:
             return ZERO, 0
         window_start = _add_months(date(anchor.year, anchor.month, 1), -11)
-        debits = self._transactions(
-            workspace_id=workspace_id,
-            date_from=window_start,
-            date_to=anchor,
-        )
-        expenses = self._sum(debits, "debit")
-        debit_months = [
-            transaction.transaction_date
-            for transaction in debits
-            if transaction.direction == "debit"
-        ]
-        if not debit_months:
+        expenses, first_date, count = self._debit_window_stats(workspace_id, window_start, anchor)
+        if not count or first_date is None:
             return ZERO, 0
-        first_month = date(min(debit_months).year, min(debit_months).month, 1)
+        first_month = date(first_date.year, first_date.month, 1)
         months = min(12, _inclusive_months(first_month, anchor))
         burn_rate = (expenses / Decimal(months)).quantize(Decimal("0.01")) if months else ZERO
         return burn_rate, months
@@ -2109,15 +2122,11 @@ class DashboardService:
         if anchor is None:
             return ZERO
         window_start = anchor - timedelta(days=months * 30 - 1)
-        debits = self._transactions(
-            workspace_id=workspace_id, date_from=window_start, date_to=anchor
-        )
-        debit_dates = [t.transaction_date for t in debits if t.direction == "debit"]
-        if not debit_dates:
+        expenses, first_date, count = self._debit_window_stats(workspace_id, window_start, anchor)
+        if not count or first_date is None:
             return ZERO
-        first = max(min(debit_dates), window_start)
+        first = max(first_date, window_start)
         window_days = max((anchor - first).days + 1, 1)
-        expenses = self._sum(debits, "debit")
         return (expenses / Decimal(window_days) * Decimal(30)).quantize(Decimal("0.01"))
 
     def _burn_rate_90_days(self, workspace_id: str, date_to: date | None) -> tuple[Decimal, int]:
@@ -2125,21 +2134,11 @@ class DashboardService:
         if anchor is None:
             return ZERO, 0
         window_start = anchor - timedelta(days=89)
-        debits = self._transactions(
-            workspace_id=workspace_id,
-            date_from=window_start,
-            date_to=anchor,
-        )
-        debit_dates = [
-            transaction.transaction_date
-            for transaction in debits
-            if transaction.direction == "debit"
-        ]
-        if not debit_dates:
+        expenses, first_date, count = self._debit_window_stats(workspace_id, window_start, anchor)
+        if not count or first_date is None:
             return ZERO, 0
-        first_debit_date = max(min(debit_dates), window_start)
+        first_debit_date = max(first_date, window_start)
         window_days = max((anchor - first_debit_date).days + 1, 1)
-        expenses = self._sum(debits, "debit")
         monthly_equivalent = (expenses / Decimal(window_days) * Decimal(30)).quantize(
             Decimal("0.01")
         )
