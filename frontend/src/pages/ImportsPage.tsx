@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   associateCreditCardSourceFile,
+  createManualTransaction,
   deleteImport,
   getCreditCardStatements,
   getCreditCards,
@@ -15,7 +16,7 @@ import {
 import { apiErrorMessage, cardLabel, dateLabel, monthYearLabel } from "../lib/utils";
 import { ArrowLeftRight } from "lucide-react";
 import { useHasTransactions } from "../hooks";
-import { NoDataOnboarding } from "../components/ui";
+import { InlineError, InlineSuccess, NoDataOnboarding } from "../components/ui";
 import { TransactionExplorer } from "./TransactionExplorer";
 import type { ApiSession, CreditCardRead, CreditCardStatementRead, ImportJobRead, TransactionRead } from "../lib/api";
 import type { BatchPreviewResult, BatchUploadProgress, BatchUploadResult, TransactionDrilldown } from "../types";
@@ -31,6 +32,7 @@ const RECOMMENDED_BATCH_FILE_LIMIT = 20;
 // ---------------------------------------------------------------------------
 
 const I_ICONS: Record<string, string> = {
+  plus:    "M12 5v14 M5 12h14",
   upload:  "M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2 M7 9l5-5 5 5 M12 4v12",
   folder:  "M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z",
   file:    "M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8l-5-5z M14 3v5h5",
@@ -318,9 +320,11 @@ function ImportDetailDrawer({
   linkImportCard,
   removeImport,
   selectedLinkedStatement,
+  session,
   onClose,
 }: {
   item: ImportJobRead;
+  session: ApiSession;
   errors: { data?: { items: { id: string; source_line: number | null; field_name: string | null; error_code: string; message: string }[] }; isLoading: boolean };
   importCards: { data?: { items: CreditCardRead[] }; isLoading: boolean };
   importCardsById: Map<string, CreditCardRead>;
@@ -332,6 +336,40 @@ function ImportDetailDrawer({
   onClose: () => void;
 }) {
   const file = item.source_file;
+  const queryClient = useQueryClient();
+  // Manual entry for the reconciliation gap (charges that couldn't be parsed, e.g.
+  // rotated text). We can't enumerate the missing lines, but we can let the user add
+  // a lançamento for the difference so the data balances.
+  const [addForm, setAddForm] = useState<
+    null | { date: string; description: string; amount: string; direction: string }
+  >(null);
+  const addMissing = useMutation({
+    mutationFn: () =>
+      createManualTransaction(session, {
+        transaction_date: addForm!.date,
+        description: addForm!.description,
+        amount: addForm!.amount,
+        direction: addForm!.direction,
+        category_id: null,
+      }),
+    onSuccess: () => {
+      setAddForm(null);
+      void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+    },
+  });
+  function mismatchDiff(message: string): number | null {
+    const match = /diferenca R\$\s*(-?[\d.]+)/i.exec(message);
+    return match ? Number(match[1]) : null;
+  }
+  function openAddForm(diff: number) {
+    setAddForm({
+      date: new Date().toISOString().slice(0, 10),
+      description: "Lançamento não importado (ajuste de fatura)",
+      amount: Math.abs(diff).toFixed(2),
+      direction: diff >= 0 ? "debit" : "credit",
+    });
+  }
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 200, display: "flex" }}>
       {/* Backdrop */}
@@ -443,21 +481,77 @@ function ImportDetailDrawer({
                       <th>Campo</th>
                       <th>Código</th>
                       <th>Mensagem</th>
+                      <th></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {(errors.data?.items ?? []).map((error) => (
-                      <tr key={error.id}>
-                        <td>{error.source_line ?? "-"}</td>
-                        <td>{error.field_name ?? "-"}</td>
-                        <td>{error.error_code}</td>
-                        <td>{error.message}</td>
-                      </tr>
-                    ))}
+                    {(errors.data?.items ?? []).map((error) => {
+                      const diff =
+                        error.error_code === "statement_total_mismatch"
+                          ? mismatchDiff(error.message)
+                          : null;
+                      return (
+                        <tr key={error.id}>
+                          <td>{error.source_line ?? "-"}</td>
+                          <td>{error.field_name ?? "-"}</td>
+                          <td>{error.error_code}</td>
+                          <td>{error.message}</td>
+                          <td style={{ whiteSpace: "nowrap" }}>
+                            {diff !== null && diff !== 0 ? (
+                              <button className="btn btn-ghost btn-sm" type="button" onClick={() => openAddForm(diff)}>
+                                <IIcon name="plus" size={12} /> Adicionar manualmente
+                              </button>
+                            ) : null}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             )}
+
+            {addForm ? (
+              <div style={{ padding: "12px 20px", borderTop: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ fontWeight: 700, fontSize: 13 }}>Lançamento faltante</div>
+                <div style={{ fontSize: 12, color: "var(--ink-3)", lineHeight: 1.5 }}>
+                  As cobranças que não foram lidas não podem ser listadas individualmente, mas você pode
+                  adicionar o valor da diferença como um lançamento para os totais baterem.
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <label className="fld" style={{ margin: 0 }}>
+                    <span className="fld-label">Data</span>
+                    <input className="fld-input" type="date" value={addForm.date} onChange={(e) => setAddForm({ ...addForm, date: e.target.value })} />
+                  </label>
+                  <label className="fld" style={{ margin: 0 }}>
+                    <span className="fld-label">Valor (R$)</span>
+                    <input className="fld-input" inputMode="decimal" value={addForm.amount} onChange={(e) => setAddForm({ ...addForm, amount: e.target.value })} />
+                  </label>
+                </div>
+                <label className="fld" style={{ margin: 0 }}>
+                  <span className="fld-label">Descrição</span>
+                  <input className="fld-input" value={addForm.description} onChange={(e) => setAddForm({ ...addForm, description: e.target.value })} />
+                </label>
+                <label className="fld" style={{ margin: 0 }}>
+                  <span className="fld-label">Tipo</span>
+                  <select className="fld-select" value={addForm.direction} onChange={(e) => setAddForm({ ...addForm, direction: e.target.value })}>
+                    <option value="debit">Despesa</option>
+                    <option value="credit">Receita/Crédito</option>
+                    <option value="payment">Pagamento de fatura</option>
+                  </select>
+                </label>
+                {addMissing.isError ? <InlineError message={apiErrorMessage(addMissing.error, "Falha ao criar o lançamento.")} /> : null}
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                  <button className="btn btn-quiet btn-sm" type="button" onClick={() => setAddForm(null)}>Cancelar</button>
+                  <button className="btn btn-primary btn-sm" type="button" disabled={addMissing.isPending || !addForm.amount.trim() || !addForm.description.trim()} onClick={() => addMissing.mutate()}>
+                    {addMissing.isPending ? "Adicionando…" : "Adicionar lançamento"}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {addMissing.isSuccess ? (
+              <div style={{ padding: "0 20px 12px" }}><InlineSuccess message="Lançamento adicionado. Os totais foram recalculados." /></div>
+            ) : null}
           </div>
 
           {/* Danger zone */}
@@ -975,6 +1069,7 @@ export function ImportsPage({
           linkImportCard={linkImportCard}
           removeImport={removeImport}
           selectedLinkedStatement={selectedLinkedStatement}
+          session={session}
           onClose={() => setSelectedImport(null)}
         />
       ) : null}
