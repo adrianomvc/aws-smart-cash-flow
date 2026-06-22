@@ -560,7 +560,8 @@ function FlowCard({
             <YAxis tick={{ fontSize: 11, fill: "var(--ink-faint)" }} axisLine={false} tickLine={false}
               tickFormatter={(v: number) => `R$${Math.abs(v) >= 1000 ? `${(Math.abs(v) / 1000).toFixed(0)}k` : Math.abs(v)}`} />
             <Tooltip
-              contentStyle={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 10, fontSize: 12 }}
+              contentStyle={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 10, fontSize: 12, color: "var(--ink)" }}
+              itemStyle={{ color: "var(--ink-2)" }}
               formatter={(value: number, name: string) => {
                 if (name === "accPos" || name === "accNeg") return ["", ""] as [string, string];
                 return [brl(Math.abs(value ?? 0)), name === "inc" ? "Receitas" : name === "exp" ? "Despesas" : name === "acc" ? "Saldo acumulado" : "Saldo projetado"];
