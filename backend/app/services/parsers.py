@@ -1081,7 +1081,6 @@ _ITAU_PDF_TOTAL_RE = re.compile(
     r"Total desta fatura\D*?(\d{1,3}(?:\.\d{3})*,\d{2})", re.IGNORECASE
 )
 
-
 def _itau_pdf_reference_month_year(text: str) -> tuple[int, int]:
     """The statement due date anchors the year for transactions that only carry
     day/month. Falls back to today if the due date can't be found."""
@@ -1233,27 +1232,47 @@ def _itau_pdf_iof_charge(text: str) -> ParsedTransaction | None:
 def _drop_future_installment_previews(
     transactions: list[ParsedTransaction],
 ) -> list[ParsedTransaction]:
-    """Statements preview upcoming installments of a parceled purchase (e.g. show
-    both 12/18 and 13/18). Only the current — lowest — installment is charged now;
-    keep that one per purchase and drop the future previews and exact duplicates."""
+    """Older statement layouts preview upcoming installments inline (e.g. show both
+    12/18 and 13/18 of a purchase). Only the current — lowest — installment is
+    charged now, so drop the higher-numbered previews per purchase.
+
+    Note: we intentionally keep duplicate *current* installments. The same value can
+    be a legitimate separate charge on a different card (e.g. two tuitions of equal
+    amount), so merging by value would drop a real charge — only entries of the same
+    purchase with a HIGHER installment number are dropped."""
+    # Key on the merchant identity with the installment marker removed, so previews
+    # of the same purchase group together even when the installment digits are glued
+    # to a merchant code (e.g. "PAO DE ACUCAR-129202/11" vs "...03/11").
+    def purchase_key(t: ParsedTransaction) -> tuple:
+        return (_strip_installment_marker(t.raw_description), t.amount, t.installment_total)
+
     min_current: dict[tuple, int] = {}
     for t in transactions:
         if t.installment_current and t.installment_total:
-            key = (t.description, t.amount, t.installment_total)
+            key = purchase_key(t)
             current = min_current.get(key)
             if current is None or t.installment_current < current:
                 min_current[key] = t.installment_current
 
     kept: list[ParsedTransaction] = []
-    seen: set[tuple] = set()
     for t in transactions:
         if t.installment_current and t.installment_total:
-            key = (t.description, t.amount, t.installment_total)
-            if t.installment_current != min_current[key] or key in seen:
+            if t.installment_current != min_current[purchase_key(t)]:
                 continue
-            seen.add(key)
         kept.append(t)
     return kept
+
+
+def _strip_installment_marker(raw_description: str) -> str:
+    """ASCII-upper merchant identity with a trailing installment marker removed
+    ("PARC NN" or "NN/MM", even when glued to a merchant code), for grouping the
+    installments of one purchase regardless of the parcel number in the text."""
+    ascii_up = "".join(
+        char for char in normalize("NFKD", raw_description) if char.encode("ascii", "ignore") != b""
+    ).upper()
+    stripped = re.sub(r"\s*PARC\s*\d{1,3}\s*$", "", ascii_up)
+    stripped = re.sub(r"\d{1,2}\s*/\s*\d{1,2}\s*$", "", stripped)
+    return " ".join(stripped.split())
 
 
 def _itau_pdf_total_reconciliation(
