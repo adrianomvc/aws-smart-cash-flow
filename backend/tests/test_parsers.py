@@ -579,3 +579,40 @@ def test_drop_future_installment_previews_drops_glued_installment_preview() -> N
     kept = _drop_future_installment_previews(txs)
     assert len(kept) == 1
     assert kept[0].installment_current == 2
+
+
+def test_parse_itau_statement_captures_multiple_iof_lines() -> None:
+    # Multi-card statements can carry more than one "Repasse de IOF"; all count.
+    text = "\n".join(
+        [
+            "Vencimento: 01/05/2026",
+            "28/03 Loja Teste 100,00",
+            "Repasse de IOF em R$ 18,10",
+            "Repasse de IOF em R$ 16,33",
+            "Total desta fatura 134,43",
+        ]
+    )
+
+    result = parse_itau_credit_card_statement_text(text)
+
+    iof = [t for t in result.transactions if t.description == "IOF"]
+    assert sorted(t.amount for t in iof) == [Decimal("16.33"), Decimal("18.10")]
+    assert not any(e.error_code == "statement_total_mismatch" for e in result.errors)
+
+
+def test_parse_itau_statement_total_uses_current_charges_on_parceled_invoice() -> None:
+    # On a parceled invoice "Total desta fatura" is the financed amount; reconcile
+    # against "Total dos lançamentos atuais" so it isn't a false mismatch.
+    text = "\n".join(
+        [
+            "Vencimento: 01/05/2026",
+            "22/12 LOUNGE KEY INC 175,36",
+            "Repasse de IOF em R$ 11,18",
+            "Total dos lançamentos atuais 186,54",
+            "Total desta fatura 145,04",
+        ]
+    )
+
+    result = parse_itau_credit_card_statement_text(text)
+
+    assert not any(e.error_code == "statement_total_mismatch" for e in result.errors)

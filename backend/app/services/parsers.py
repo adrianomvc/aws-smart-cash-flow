@@ -1081,6 +1081,13 @@ _ITAU_PDF_TOTAL_RE = re.compile(
     r"Total desta fatura\D*?(\d{1,3}(?:\.\d{3})*,\d{2})", re.IGNORECASE
 )
 
+# Sum of THIS period's charges. On a parceled invoice "Total desta fatura" is the
+# financed amount the customer chose to pay (less than the charges), so prefer this
+# for reconciling against the imported transactions.
+_ITAU_PDF_CURRENT_TOTAL_RE = re.compile(
+    r"Total dos lan\wamentos atuais\D*?(\d{1,3}(?:\.\d{3})*,\d{2})", re.IGNORECASE
+)
+
 def _itau_pdf_reference_month_year(text: str) -> tuple[int, int]:
     """The statement due date anchors the year for transactions that only carry
     day/month. Falls back to today if the due date can't be found."""
@@ -1170,9 +1177,7 @@ def parse_itau_credit_card_statement_text(text: str) -> ParseResult:
                     )
                 )
 
-    iof = _itau_pdf_iof_charge(text)
-    if iof is not None:
-        transactions.append(iof)
+    transactions.extend(_itau_pdf_iof_charges(text))
     transactions = _drop_future_installment_previews(transactions)
     errors = _itau_pdf_total_reconciliation(text, transactions)
     return ParseResult(
@@ -1184,22 +1189,21 @@ def parse_itau_credit_card_statement_text(text: str) -> ParseResult:
     )
 
 
-def _itau_pdf_iof_charge(text: str) -> ParsedTransaction | None:
-    """The international IOF is charged on the invoice but has no transaction line.
-    It belongs to the invoice, so date it at the invoice's CLOSING — grouping it with
-    the cycle's purchases. Priority: this invoice's real closing date → an estimate
-    from the closing DAY in the due month → the due date as last resort."""
+def _itau_pdf_iof_charges(text: str) -> list[ParsedTransaction]:
+    """International IOF is charged on the invoice but has no transaction line. A
+    statement can carry more than one "Repasse de IOF" (e.g. one per card with
+    international purchases), so capture them all. Each belongs to the invoice, so
+    date it at the invoice's CLOSING — grouping it with the cycle's purchases.
+    Priority: this invoice's real closing date → an estimate from the closing DAY in
+    the due month → the due date as last resort."""
     from calendar import monthrange
 
-    iof_match = _ITAU_PDF_IOF_RE.search(text)
+    iof_matches = _ITAU_PDF_IOF_RE.findall(text)
     closing_match = _itau_closing_match(text)
     closing_any = _ITAU_PDF_CLOSING_RE.search(text)
     due_match = _ITAU_PDF_DUE_RE.search(text)
-    if not iof_match or not (closing_match or due_match):
-        return None
-    amount = parse_brazilian_decimal(iof_match.group(1))
-    if amount <= 0:
-        return None
+    if not iof_matches or not (closing_match or due_match):
+        return []
     if closing_match:
         charge_date = date(
             int(closing_match.group(3)), int(closing_match.group(2)), int(closing_match.group(1))
@@ -1219,14 +1223,22 @@ def _itau_pdf_iof_charge(text: str) -> ParsedTransaction | None:
     else:
         anchor = due_match
         charge_date = date(int(anchor.group(3)), int(anchor.group(2)), int(anchor.group(1)))
-    return ParsedTransaction(
-        transaction_date=charge_date,
-        raw_description="REPASSE DE IOF",
-        description="IOF",
-        amount=amount,
-        direction=TransactionDirection.DEBIT,
-        source_line=0,
-    )
+    charges: list[ParsedTransaction] = []
+    for raw_amount in iof_matches:
+        amount = parse_brazilian_decimal(raw_amount)
+        if amount <= 0:
+            continue
+        charges.append(
+            ParsedTransaction(
+                transaction_date=charge_date,
+                raw_description="REPASSE DE IOF",
+                description="IOF",
+                amount=amount,
+                direction=TransactionDirection.DEBIT,
+                source_line=0,
+            )
+        )
+    return charges
 
 
 def _drop_future_installment_previews(
@@ -1280,7 +1292,7 @@ def _itau_pdf_total_reconciliation(
 ) -> list[ParseError]:
     """Compare the sum of imported charges with the statement total. Returns a
     non-blocking warning when they differ (e.g. uncaptured IOF or missed lines)."""
-    match = _ITAU_PDF_TOTAL_RE.search(text)
+    match = _ITAU_PDF_CURRENT_TOTAL_RE.search(text) or _ITAU_PDF_TOTAL_RE.search(text)
     if not match:
         return []
     statement_total = parse_brazilian_decimal(match.group(1))

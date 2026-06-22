@@ -15,6 +15,7 @@ from pathlib import Path
 from pypdf import PdfReader
 
 from app.services.parsers import (
+    _ITAU_PDF_CURRENT_TOTAL_RE,
     _ITAU_PDF_TOTAL_RE,
     TransactionDirection,
     parse_brazilian_decimal,
@@ -26,7 +27,7 @@ TOLERANCE = Decimal("1.00")
 
 
 def _statement_total(text: str) -> Decimal | None:
-    match = _ITAU_PDF_TOTAL_RE.search(text)
+    match = _ITAU_PDF_CURRENT_TOTAL_RE.search(text) or _ITAU_PDF_TOTAL_RE.search(text)
     return parse_brazilian_decimal(match.group(1)) if match else None
 
 
