@@ -4,8 +4,8 @@ from collections import Counter, defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
 
-from sqlalchemy import and_, desc, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, case, desc, func, or_, select
+from sqlalchemy.orm import Session, aliased
 
 from app.core.config import settings
 from app.db.models import (
@@ -329,8 +329,24 @@ class DashboardService:
             date_from=date_from,
             date_to=date_to,
         )
+        # Aggregate in SQL (one small row per displayed category) instead of pulling
+        # every debit transaction to Python. The displayed category is the parent
+        # when the assignment points to a subcategory, else the category itself.
+        parent = aliased(Category)
+        display_id = func.coalesce(parent.id, Category.id)
+        display_name = func.coalesce(parent.name, Category.name)
+        display_color = func.coalesce(parent.color, Category.color)
+        display_icon = func.coalesce(parent.icon, Category.icon)
         rows = self.db.execute(
-            select(Transaction, Category)
+            select(
+                display_id.label("category_id"),
+                display_name.label("category_name"),
+                display_color.label("color"),
+                display_icon.label("icon"),
+                func.sum(func.abs(Transaction.amount)).label("amount"),
+                func.count().label("count"),
+                func.max(Transaction.transaction_date).label("last_transaction_date"),
+            )
             .outerjoin(
                 TransactionCategoryAssignment,
                 and_(
@@ -345,49 +361,30 @@ class DashboardService:
                     Category.workspace_id == workspace_id,
                 ),
             )
+            .outerjoin(
+                parent,
+                and_(
+                    parent.id == Category.parent_category_id,
+                    parent.workspace_id == workspace_id,
+                ),
+            )
             .where(*filters, Transaction.direction == "debit")
+            .group_by(display_id, display_name, display_color, display_icon)
         ).all()
-        categories_by_id = {
-            category.id: category
-            for category in self.db.scalars(
-                select(Category).where(Category.workspace_id == workspace_id)
-            ).all()
-        }
 
-        empty_category = {
-            "category_id": None,
-            "category_name": "Sem categoria",
-            "color": None,
-            "icon": None,
-            "amount": ZERO,
-            "count": 0,
-            "last_transaction_date": None,
-        }
-        totals: dict[tuple[str | None, str], dict[str, object]] = defaultdict(
-            lambda: empty_category.copy()
-        )
-        for transaction, category in rows:
-            display_category = (
-                categories_by_id.get(category.parent_category_id)
-                if category is not None and category.parent_category_id is not None
-                else category
-            )
-            key = (
-                display_category.id if display_category is not None else None,
-                display_category.name if display_category is not None else "Sem categoria",
-            )
-            totals[key]["category_id"] = key[0]
-            totals[key]["category_name"] = key[1]
-            totals[key]["color"] = display_category.color if display_category is not None else None
-            totals[key]["icon"] = display_category.icon if display_category is not None else None
-            totals[key]["amount"] = Decimal(totals[key]["amount"]) + abs(transaction.amount)
-            totals[key]["count"] = int(totals[key]["count"]) + 1
-            last = totals[key]["last_transaction_date"]
-            if last is None or transaction.transaction_date > last:
-                totals[key]["last_transaction_date"] = transaction.transaction_date
-
-        ranked = sorted(
-            totals.values(),
+        ranked: list[dict[str, object]] = [
+            {
+                "category_id": row.category_id,
+                "category_name": row.category_name or "Sem categoria",
+                "color": row.color,
+                "icon": row.icon,
+                "amount": Decimal(str(row.amount or 0)).quantize(Decimal("0.01")),
+                "count": int(row.count or 0),
+                "last_transaction_date": row.last_transaction_date,
+            }
+            for row in rows
+        ]
+        ranked.sort(
             key=lambda item: (Decimal(item["amount"]), int(item["count"])),
             reverse=True,
         )
@@ -418,8 +415,25 @@ class DashboardService:
             date_from=date_from,
             date_to=date_to,
         )
-        rows = self.db.execute(
-            select(Transaction, Category)
+        # SQL aggregation: group by the assigned (sub)category; the displayed parent
+        # id and the subcategory label are derived in SQL (parent self-join).
+        parent = aliased(Category)
+        parent_id = func.coalesce(parent.id, Category.id)
+        subcategory_name = case(
+            (Category.id.is_(None), "Sem categoria / Sem subcategoria"),
+            (Category.parent_category_id.is_(None), "Sem subcategoria"),
+            else_=Category.name,
+        )
+        parent_color = func.coalesce(parent.color, Category.color)
+        query = (
+            select(
+                Category.id.label("sub_id"),
+                parent_id.label("category_id"),
+                subcategory_name.label("subcategory_name"),
+                parent_color.label("color"),
+                func.sum(func.abs(Transaction.amount)).label("amount"),
+                func.count().label("count"),
+            )
             .outerjoin(
                 TransactionCategoryAssignment,
                 and_(
@@ -434,46 +448,30 @@ class DashboardService:
                     Category.workspace_id == workspace_id,
                 ),
             )
-            .where(*filters, Transaction.direction == "debit")
-        ).all()
-        categories_by_id = {
-            category.id: category
-            for category in self.db.scalars(
-                select(Category).where(Category.workspace_id == workspace_id)
-            ).all()
-        }
-        totals: dict[tuple[str | None, str], dict[str, object]] = defaultdict(
-            lambda: {
-                "category_id": None,
-                "subcategory_name": "Sem subcategoria",
-                "color": None,
-                "amount": ZERO,
-                "count": 0,
-            }
-        )
-        for transaction, category in rows:
-            parent_category = (
-                categories_by_id.get(category.parent_category_id)
-                if category is not None and category.parent_category_id is not None
-                else category
+            .outerjoin(
+                parent,
+                and_(
+                    parent.id == Category.parent_category_id,
+                    parent.workspace_id == workspace_id,
+                ),
             )
-            parent_id = parent_category.id if parent_category is not None else None
-            if category_id is not None and parent_id != category_id:
-                continue
-            if category is None:
-                key = (None, "Sem categoria / Sem subcategoria")
-            elif category.parent_category_id is None:
-                key = (category.id, "Sem subcategoria")
-            else:
-                key = (category.id, category.name)
-            totals[key]["category_id"] = parent_id
-            totals[key]["subcategory_name"] = key[1]
-            totals[key]["color"] = parent_category.color if parent_category is not None else None
-            totals[key]["amount"] = Decimal(totals[key]["amount"]) + abs(transaction.amount)
-            totals[key]["count"] = int(totals[key]["count"]) + 1
-
-        ranked = sorted(
-            totals.values(),
+            .where(*filters, Transaction.direction == "debit")
+            .group_by(Category.id, parent_id, subcategory_name, parent_color)
+        )
+        if category_id is not None:
+            query = query.where(parent_id == category_id)
+        rows = self.db.execute(query).all()
+        ranked: list[dict[str, object]] = [
+            {
+                "category_id": row.category_id,
+                "subcategory_name": row.subcategory_name,
+                "color": row.color,
+                "amount": Decimal(str(row.amount or 0)).quantize(Decimal("0.01")),
+                "count": int(row.count or 0),
+            }
+            for row in rows
+        ]
+        ranked.sort(
             key=lambda item: (Decimal(item["amount"]), int(item["count"])),
             reverse=True,
         )
@@ -497,33 +495,47 @@ class DashboardService:
         date_from: date | None,
         date_to: date | None,
     ) -> list[dict[str, object]]:
-        transactions = self._transactions(
-            workspace_id=workspace_id,
-            date_from=date_from,
-            date_to=date_to,
+        # Bucket debits by size in SQL (5 rows) instead of pulling every debit.
+        abs_amount = func.abs(Transaction.amount)
+        bucket = case(
+            (abs_amount <= Decimal("50.00"), "cotidiana"),
+            (abs_amount <= Decimal("200.00"), "pequena"),
+            (abs_amount <= Decimal("1000.00"), "media"),
+            (abs_amount <= Decimal("5000.00"), "alta"),
+            else_="premium",
         )
-        debits = [
-            abs(transaction.amount)
-            for transaction in transactions
-            if transaction.direction == "debit"
-        ]
-        total_expenses = sum(debits, ZERO)
+        rows = self.db.execute(
+            select(
+                bucket.label("bucket"),
+                func.sum(abs_amount).label("total"),
+                func.count().label("cnt"),
+            )
+            .where(
+                *self._transaction_filters(
+                    workspace_id=workspace_id,
+                    date_from=date_from,
+                    date_to=date_to,
+                ),
+                Transaction.direction == "debit",
+                abs_amount > 0,
+            )
+            .group_by(bucket)
+        ).all()
+        by_bucket = {
+            row.bucket: (Decimal(str(row.total or 0)).quantize(Decimal("0.01")), int(row.cnt or 0))
+            for row in rows
+        }
+        total_expenses = sum((total for total, _ in by_bucket.values()), ZERO)
         segments = [
-            ("cotidiana", "Cotidiana", "Até R$ 50", ZERO, Decimal("50.00")),
-            ("pequena", "Pequena", "De R$ 50,01 a R$ 200", Decimal("50.00"), Decimal("200.00")),
-            ("media", "Média", "De R$ 200,01 a R$ 1.000", Decimal("200.00"), Decimal("1000.00")),
-            ("alta", "Alta", "De R$ 1.000,01 a R$ 5.000", Decimal("1000.00"), Decimal("5000.00")),
-            ("premium", "Premium", "Acima de R$ 5.000", Decimal("5000.00"), None),
+            ("cotidiana", "Cotidiana", "Até R$ 50"),
+            ("pequena", "Pequena", "De R$ 50,01 a R$ 200"),
+            ("media", "Média", "De R$ 200,01 a R$ 1.000"),
+            ("alta", "Alta", "De R$ 1.000,01 a R$ 5.000"),
+            ("premium", "Premium", "Acima de R$ 5.000"),
         ]
         items: list[dict[str, object]] = []
-        for key, label, helper, minimum, maximum in segments:
-            amounts = [
-                amount
-                for amount in debits
-                if amount > minimum and (maximum is None or amount <= maximum)
-            ]
-            total = sum(amounts, ZERO)
-            count = len(amounts)
+        for key, label, helper in segments:
+            total, count = by_bucket.get(key, (ZERO, 0))
             share_ratio = (
                 (total / total_expenses).quantize(Decimal("0.0001"))
                 if total_expenses > ZERO
@@ -813,8 +825,24 @@ class DashboardService:
         date_to: date | None,
         limit: int,
     ) -> list[dict[str, object]]:
-        transactions = self.db.execute(
-            select(Transaction.description, Transaction.amount)
+        # SQL aggregation by merchant. The only Python rule was collapsing the
+        # "MERCADO LIVRE" prefix into a single bucket — replicated here in SQL.
+        merchant = case(
+            (
+                or_(
+                    Transaction.description == "MERCADO LIVRE",
+                    Transaction.description.like("MERCADO LIVRE %"),
+                ),
+                "MERCADO LIVRE",
+            ),
+            else_=Transaction.description,
+        )
+        rows = self.db.execute(
+            select(
+                merchant.label("description"),
+                func.sum(func.abs(Transaction.amount)).label("amount"),
+                func.count().label("count"),
+            )
             .where(
                 *self._transaction_filters(
                     workspace_id=workspace_id,
@@ -823,23 +851,17 @@ class DashboardService:
                 ),
                 Transaction.direction == "debit",
             )
+            .group_by(merchant)
         ).all()
-        grouped: dict[str, dict[str, object]] = {}
-        for transaction in transactions:
-            description = _merchant_ranking_description(transaction.description)
-            item = grouped.setdefault(
-                description,
-                {
-                    "description": description,
-                    "amount": ZERO,
-                    "count": 0,
-                },
-            )
-            item["amount"] = Decimal(item["amount"]) + abs(transaction.amount)
-            item["count"] = int(item["count"]) + 1
-
         ranked = sorted(
-            grouped.values(),
+            (
+                {
+                    "description": row.description,
+                    "amount": Decimal(str(row.amount or 0)).quantize(Decimal("0.01")),
+                    "count": int(row.count or 0),
+                }
+                for row in rows
+            ),
             key=lambda item: (
                 Decimal(item["amount"]),
                 int(item["count"]),
@@ -847,14 +869,7 @@ class DashboardService:
             ),
             reverse=True,
         )
-        return [
-            {
-                "description": item["description"],
-                "amount": Decimal(item["amount"]).quantize(Decimal("0.01")),
-                "count": item["count"],
-            }
-            for item in ranked[:limit]
-        ]
+        return ranked[:limit]
 
     def recurring_expenses(
         self,
@@ -1085,17 +1100,34 @@ class DashboardService:
             }
             for index in range(7)
         }
-        transactions = self._transactions(
-            workspace_id=workspace_id,
-            date_from=date_from,
-            date_to=date_to,
-        )
-        for transaction in transactions:
-            if transaction.direction != "debit":
-                continue
-            bucket = buckets[transaction.transaction_date.weekday()]
-            bucket["amount"] = Decimal(bucket["amount"]) + abs(transaction.amount)
-            bucket["count"] = int(bucket["count"]) + 1
+        # Aggregate per weekday in SQL (≤7 rows). The weekday function is
+        # dialect-specific; both return Sunday=0..Saturday=6, which we remap to
+        # Python's Monday=0..Sunday=6 used by the buckets.
+        if self.db.bind.dialect.name == "sqlite":
+            dow = func.strftime("%w", Transaction.transaction_date)
+        else:
+            dow = func.extract("dow", Transaction.transaction_date)
+        rows = self.db.execute(
+            select(
+                dow.label("dow"),
+                func.sum(func.abs(Transaction.amount)).label("total"),
+                func.count().label("cnt"),
+            )
+            .where(
+                *self._transaction_filters(
+                    workspace_id=workspace_id,
+                    date_from=date_from,
+                    date_to=date_to,
+                ),
+                Transaction.direction == "debit",
+            )
+            .group_by(dow)
+        ).all()
+        for row in rows:
+            python_weekday = (int(float(row.dow)) + 6) % 7
+            bucket = buckets[python_weekday]
+            bucket["amount"] = Decimal(str(row.total or 0)).quantize(Decimal("0.01"))
+            bucket["count"] = int(row.cnt or 0)
 
         total_amount = sum((Decimal(bucket["amount"]) for bucket in buckets.values()), ZERO)
         for bucket in buckets.values():
@@ -1178,24 +1210,17 @@ class DashboardService:
         window_days: int,
         limit: int,
     ) -> list[dict[str, object]]:
-        transactions = self._transactions(
-            workspace_id=workspace_id,
-            date_from=date_from,
-            date_to=date_to,
-        )
-        bank_payments = [
-            transaction
-            for transaction in transactions
-            if transaction.direction == "payment" and transaction.source_type == "bank_statement"
-        ]
-        card_payments = [
-            transaction
-            for transaction in transactions
-            if (
-                transaction.direction == "payment"
-                and transaction.source_type == "credit_card_statement"
+        # Only payment rows are needed (a small subset), not the whole period.
+        payments = self.db.scalars(
+            select(Transaction).where(
+                *self._transaction_filters(
+                    workspace_id=workspace_id, date_from=date_from, date_to=date_to
+                ),
+                Transaction.direction == "payment",
             )
-        ]
+        ).all()
+        bank_payments = [t for t in payments if t.source_type == "bank_statement"]
+        card_payments = [t for t in payments if t.source_type == "credit_card_statement"]
         matches: list[dict[str, object]] = []
         for bank_payment in bank_payments:
             for card_payment in card_payments:
@@ -1643,11 +1668,20 @@ class DashboardService:
         years. Monthly-recurring descriptions are excluded to avoid double
         counting."""
         lookback = _add_months(today, -24)
-        txns = self._transactions(workspace_id, date_from=lookback, date_to=today)
+        # Narrow the pull to the rows this detector actually uses (non-card
+        # debits/credits) instead of every transaction in the 24-month window.
+        txns = self.db.scalars(
+            select(Transaction).where(
+                *self._transaction_filters(workspace_id, lookback, today),
+                Transaction.direction.in_(("debit", "credit")),
+                or_(
+                    Transaction.source_type != "credit_card_statement",
+                    Transaction.source_type.is_(None),
+                ),
+            )
+        ).all()
         groups: dict[tuple[str, str], list[Transaction]] = defaultdict(list)
         for t in txns:
-            if t.source_type == "credit_card_statement" or t.direction not in ("debit", "credit"):
-                continue
             key = normalize_transaction_description(t.description)
             if key in exclude_descriptions:
                 continue
@@ -2098,25 +2132,38 @@ class DashboardService:
             ZERO,
         )
 
+    def _debit_window_stats(
+        self, workspace_id: str, date_from: date | None, date_to: date | None
+    ) -> tuple[Decimal, date | None, int]:
+        """SQL totals for debits in a window: (sum of abs amount, earliest date,
+        count) — used by the burn-rate helpers instead of pulling every row."""
+        row = self.db.execute(
+            select(
+                func.sum(func.abs(Transaction.amount)),
+                func.min(Transaction.transaction_date),
+                func.count(),
+            ).where(
+                *self._transaction_filters(
+                    workspace_id=workspace_id, date_from=date_from, date_to=date_to
+                ),
+                Transaction.direction == "debit",
+            )
+        ).one()
+        total = Decimal(str(row[0])).quantize(Decimal("0.01")) if row[0] is not None else ZERO
+        first_date = row[1]
+        if isinstance(first_date, str):
+            first_date = date.fromisoformat(first_date[:10])
+        return total, first_date, int(row[2] or 0)
+
     def _burn_rate(self, workspace_id: str, date_to: date | None) -> tuple[Decimal, int]:
         anchor = date_to or self._latest_transaction_date(workspace_id)
         if anchor is None:
             return ZERO, 0
         window_start = _add_months(date(anchor.year, anchor.month, 1), -11)
-        debits = self._transactions(
-            workspace_id=workspace_id,
-            date_from=window_start,
-            date_to=anchor,
-        )
-        expenses = self._sum(debits, "debit")
-        debit_months = [
-            transaction.transaction_date
-            for transaction in debits
-            if transaction.direction == "debit"
-        ]
-        if not debit_months:
+        expenses, first_date, count = self._debit_window_stats(workspace_id, window_start, anchor)
+        if not count or first_date is None:
             return ZERO, 0
-        first_month = date(min(debit_months).year, min(debit_months).month, 1)
+        first_month = date(first_date.year, first_date.month, 1)
         months = min(12, _inclusive_months(first_month, anchor))
         burn_rate = (expenses / Decimal(months)).quantize(Decimal("0.01")) if months else ZERO
         return burn_rate, months
@@ -2132,15 +2179,11 @@ class DashboardService:
         if anchor is None:
             return ZERO
         window_start = anchor - timedelta(days=months * 30 - 1)
-        debits = self._transactions(
-            workspace_id=workspace_id, date_from=window_start, date_to=anchor
-        )
-        debit_dates = [t.transaction_date for t in debits if t.direction == "debit"]
-        if not debit_dates:
+        expenses, first_date, count = self._debit_window_stats(workspace_id, window_start, anchor)
+        if not count or first_date is None:
             return ZERO
-        first = max(min(debit_dates), window_start)
+        first = max(first_date, window_start)
         window_days = max((anchor - first).days + 1, 1)
-        expenses = self._sum(debits, "debit")
         return (expenses / Decimal(window_days) * Decimal(30)).quantize(Decimal("0.01"))
 
     def _burn_rate_90_days(self, workspace_id: str, date_to: date | None) -> tuple[Decimal, int]:
@@ -2148,21 +2191,11 @@ class DashboardService:
         if anchor is None:
             return ZERO, 0
         window_start = anchor - timedelta(days=89)
-        debits = self._transactions(
-            workspace_id=workspace_id,
-            date_from=window_start,
-            date_to=anchor,
-        )
-        debit_dates = [
-            transaction.transaction_date
-            for transaction in debits
-            if transaction.direction == "debit"
-        ]
-        if not debit_dates:
+        expenses, first_date, count = self._debit_window_stats(workspace_id, window_start, anchor)
+        if not count or first_date is None:
             return ZERO, 0
-        first_debit_date = max(min(debit_dates), window_start)
+        first_debit_date = max(first_date, window_start)
         window_days = max((anchor - first_debit_date).days + 1, 1)
-        expenses = self._sum(debits, "debit")
         monthly_equivalent = (expenses / Decimal(window_days) * Decimal(30)).quantize(
             Decimal("0.01")
         )
@@ -2331,14 +2364,6 @@ def _statement_due_date_from_filename(filename: str) -> date | None:
         return None
 
 
-
-
-def _merchant_ranking_description(description: str) -> str:
-    tokens = description.split()
-    prefix = ("MERCADO", "LIVRE")
-    if tuple(tokens[: len(prefix)]) == prefix:
-        return " ".join(prefix)
-    return description
 
 
 def _source_file_month_filters(date_from: date | None, date_to: date | None) -> list[object]:
