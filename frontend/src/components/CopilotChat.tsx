@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Database, MessageSquare, Plus, Send, Sparkles } from "lucide-react";
+import { Database, MessageSquare, Plus, Send, Sparkles, Trash2 } from "lucide-react";
 
 import { copilotChat, getCopilotStatus, getDashboardSummary } from "../lib/api";
 import type { ApiSession, CopilotTurn } from "../lib/api";
@@ -132,6 +132,26 @@ export function CopilotChat({ session, onOpenTransactions }: {
     setActiveId(t.id);
   }
 
+  function deleteThread(id: string) {
+    setThreads((ts) => {
+      const next = ts.filter((x) => x.id !== id);
+      if (next.length === 0) {
+        const t = freshThread();
+        setActiveId(t.id);
+        return [t];
+      }
+      if (id === active?.id) setActiveId(next[0].id);
+      return next;
+    });
+  }
+
+  function clearAllConversations() {
+    if (!window.confirm("Limpar todas as conversas do copiloto? Esta ação não pode ser desfeita.")) return;
+    const t = freshThread();
+    setThreads([t]);
+    setActiveId(t.id);
+  }
+
   if (statusQ.data && !statusQ.data.available) {
     return (
       <div className="card card-pad" style={{ textAlign: "center", padding: "40px 24px" }}>
@@ -153,16 +173,36 @@ export function CopilotChat({ session, onOpenTransactions }: {
             <Plus size={14} /> Nova conversa
           </button>
         </div>
-        <div className="eyebrow" style={{ padding: "4px 16px 8px" }}>Conversas</div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 16px 8px" }}>
+          <span className="eyebrow">Conversas</span>
+          {threads.length > 0 && (
+            <button
+              type="button"
+              onClick={clearAllConversations}
+              title="Limpar todas as conversas"
+              style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: "var(--ink-3)", fontSize: 11.5 }}
+            >
+              <Trash2 size={12} /> Limpar
+            </button>
+          )}
+        </div>
         <div style={{ padding: "0 8px", overflowY: "auto" }}>
           {threads.map((t) => (
-            <button key={t.id} onClick={() => setActiveId(t.id)} className={"cp-thread" + (t.id === active?.id ? " on" : "")} type="button">
+            <div key={t.id} onClick={() => setActiveId(t.id)} className={"cp-thread" + (t.id === active?.id ? " on" : "")} style={{ cursor: "pointer" }} role="button" tabIndex={0}>
               <MessageSquare size={15} />
               <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
                 <div style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.title}</div>
                 <div className="t-sub">{whenLabel(t.when)}</div>
               </div>
-            </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); deleteThread(t.id); }}
+                title="Excluir conversa"
+                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--ink-faint)", padding: 4, display: "inline-flex", flexShrink: 0 }}
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
           ))}
         </div>
       </div>

@@ -73,12 +73,16 @@ def rename_workspace(
     workspace.name = name
     db.commit()
     db.refresh(workspace)
+    has_tx = db.scalar(
+        select(Transaction.id).where(Transaction.workspace_id == workspace.id).limit(1)
+    ) is not None
     return CurrentWorkspaceResponse(
         user_id=user.id,
         user_name=user.display_name or (user.email.split("@")[0] if user.email else "você"),
         workspace_id=workspace.id,
         workspace_name=workspace.name,
         role=membership.role,
+        has_transactions=has_tx,
         created_at=workspace.created_at,
     )
 

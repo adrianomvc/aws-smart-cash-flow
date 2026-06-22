@@ -143,3 +143,23 @@ def test_current_workspace_rejects_local_demo_when_disabled_outside_local_env(
     response = client.get("/v1/workspaces/current", headers={"Authorization": "Bearer local-dev"})
 
     assert response.status_code == 401
+
+
+def test_rename_workspace_returns_updated_workspace(client: TestClient) -> None:
+    # Ensure the workspace exists first.
+    client.get("/v1/workspaces/current", headers={"Authorization": "Bearer local-dev"})
+
+    response = client.patch(
+        "/v1/workspaces/current",
+        headers={"Authorization": "Bearer local-dev"},
+        json={"name": "Família Costa"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["workspace_name"] == "Família Costa"
+    assert "has_transactions" in payload  # response includes the full current-workspace shape
+
+    # The new name persists on the next read.
+    after = client.get("/v1/workspaces/current", headers={"Authorization": "Bearer local-dev"})
+    assert after.json()["workspace_name"] == "Família Costa"

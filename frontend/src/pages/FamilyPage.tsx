@@ -56,7 +56,13 @@ export function FamilyPage({ session }: { session: ApiSession }) {
   const isOwnerAdmin = wsQ.data?.role === "owner" || wsQ.data?.role === "admin";
   const renameWs = useMutation({
     mutationFn: () => updateWorkspaceName(session, wsName.trim()),
-    onSuccess: () => { setEditingName(false); void queryClient.invalidateQueries({ queryKey: ["workspace"] }); },
+    onSuccess: (updated) => {
+      setEditingName(false);
+      // Update the cached workspace immediately so the new name shows without
+      // waiting for a refetch (otherwise it looked like nothing happened).
+      queryClient.setQueryData(["workspace", session.token], updated);
+      void queryClient.invalidateQueries({ queryKey: ["workspace"] });
+    },
   });
 
   function invalidate() {
@@ -94,14 +100,18 @@ export function FamilyPage({ session }: { session: ApiSession }) {
             <input className="fld-input" autoFocus style={{ flex: 1, maxWidth: 360 }} value={wsName}
               onChange={(e) => setWsName(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && wsName.trim()) renameWs.mutate(); if (e.key === "Escape") setEditingName(false); }} />
-            <button className="btn btn-primary btn-sm" disabled={!wsName.trim() || renameWs.isPending} onClick={() => renameWs.mutate()}><Check size={14} /> Salvar</button>
+            <button className="btn btn-primary btn-sm" disabled={!wsName.trim() || renameWs.isPending} onClick={() => renameWs.mutate()}><Check size={14} /> {renameWs.isPending ? "Salvando…" : "Salvar"}</button>
             <button className="btn btn-ghost btn-sm" onClick={() => setEditingName(false)}>Cancelar</button>
+            {renameWs.isError && <span style={{ fontSize: 12, color: "var(--neg)" }}>{apiErrorMessage(renameWs.error, "Falha ao salvar.")}</span>}
           </>
         ) : (
           <>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div className="t-sub" style={{ fontSize: 11 }}>Nome da família / workspace</div>
-              <div style={{ fontWeight: 700, fontSize: 15 }}>{wsQ.data?.workspace_name ?? "—"}</div>
+              <div style={{ fontWeight: 700, fontSize: 15, display: "flex", alignItems: "center", gap: 6 }}>
+                {wsQ.data?.workspace_name ?? "—"}
+                {renameWs.isSuccess && <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--pos)" }}>salvo ✓</span>}
+              </div>
             </div>
             {isOwnerAdmin && (
               <button className="btn btn-ghost btn-sm" onClick={() => { setWsName(wsQ.data?.workspace_name ?? ""); setEditingName(true); }}>
