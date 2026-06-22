@@ -58,14 +58,31 @@ class DashboardService:
         date_from: date | None,
         date_to: date | None,
     ) -> dict[str, object]:
-        transactions = self._transactions(
-            workspace_id=workspace_id,
-            date_from=date_from,
-            date_to=date_to,
-        )
-        income = self._sum(transactions, "credit")
-        expenses = self._sum(transactions, "debit")
-        payments = self._sum(transactions, "payment")
+        # Totals per direction in SQL (a handful of rows) instead of pulling every
+        # transaction of the period to Python just to sum and count them.
+        direction_rows = self.db.execute(
+            select(
+                Transaction.direction,
+                func.sum(func.abs(Transaction.amount)).label("total"),
+                func.count().label("cnt"),
+            )
+            .where(
+                *self._transaction_filters(
+                    workspace_id=workspace_id,
+                    date_from=date_from,
+                    date_to=date_to,
+                )
+            )
+            .group_by(Transaction.direction)
+        ).all()
+        sums = {
+            row.direction: Decimal(str(row.total or 0)).quantize(Decimal("0.01"))
+            for row in direction_rows
+        }
+        income = sums.get("credit", ZERO)
+        expenses = sums.get("debit", ZERO)
+        payments = sums.get("payment", ZERO)
+        transaction_count = sum(int(row.cnt or 0) for row in direction_rows)
         balance = income - expenses
         savings_rate = (balance / income).quantize(Decimal("0.0001")) if income > ZERO else None
         commitment_rate = (expenses / income).quantize(Decimal("0.0001")) if income > ZERO else None
@@ -127,7 +144,7 @@ class DashboardService:
             ),
             "financial_health_score": financial_health_score,
             "financial_health_basis": "runway_saving_commitment_safe_spend_balance",
-            "transaction_count": len(transactions),
+            "transaction_count": transaction_count,
             "current_balance": current_balance.balance_amount if current_balance else None,
             "current_balance_date": current_balance.balance_date if current_balance else None,
             "current_balance_account": current_balance.account_name if current_balance else None,
@@ -473,33 +490,47 @@ class DashboardService:
         date_from: date | None,
         date_to: date | None,
     ) -> list[dict[str, object]]:
-        transactions = self._transactions(
-            workspace_id=workspace_id,
-            date_from=date_from,
-            date_to=date_to,
+        # Bucket debits by size in SQL (5 rows) instead of pulling every debit.
+        abs_amount = func.abs(Transaction.amount)
+        bucket = case(
+            (abs_amount <= Decimal("50.00"), "cotidiana"),
+            (abs_amount <= Decimal("200.00"), "pequena"),
+            (abs_amount <= Decimal("1000.00"), "media"),
+            (abs_amount <= Decimal("5000.00"), "alta"),
+            else_="premium",
         )
-        debits = [
-            abs(transaction.amount)
-            for transaction in transactions
-            if transaction.direction == "debit"
-        ]
-        total_expenses = sum(debits, ZERO)
+        rows = self.db.execute(
+            select(
+                bucket.label("bucket"),
+                func.sum(abs_amount).label("total"),
+                func.count().label("cnt"),
+            )
+            .where(
+                *self._transaction_filters(
+                    workspace_id=workspace_id,
+                    date_from=date_from,
+                    date_to=date_to,
+                ),
+                Transaction.direction == "debit",
+                abs_amount > 0,
+            )
+            .group_by(bucket)
+        ).all()
+        by_bucket = {
+            row.bucket: (Decimal(str(row.total or 0)).quantize(Decimal("0.01")), int(row.cnt or 0))
+            for row in rows
+        }
+        total_expenses = sum((total for total, _ in by_bucket.values()), ZERO)
         segments = [
-            ("cotidiana", "Cotidiana", "Até R$ 50", ZERO, Decimal("50.00")),
-            ("pequena", "Pequena", "De R$ 50,01 a R$ 200", Decimal("50.00"), Decimal("200.00")),
-            ("media", "Média", "De R$ 200,01 a R$ 1.000", Decimal("200.00"), Decimal("1000.00")),
-            ("alta", "Alta", "De R$ 1.000,01 a R$ 5.000", Decimal("1000.00"), Decimal("5000.00")),
-            ("premium", "Premium", "Acima de R$ 5.000", Decimal("5000.00"), None),
+            ("cotidiana", "Cotidiana", "Até R$ 50"),
+            ("pequena", "Pequena", "De R$ 50,01 a R$ 200"),
+            ("media", "Média", "De R$ 200,01 a R$ 1.000"),
+            ("alta", "Alta", "De R$ 1.000,01 a R$ 5.000"),
+            ("premium", "Premium", "Acima de R$ 5.000"),
         ]
         items: list[dict[str, object]] = []
-        for key, label, helper, minimum, maximum in segments:
-            amounts = [
-                amount
-                for amount in debits
-                if amount > minimum and (maximum is None or amount <= maximum)
-            ]
-            total = sum(amounts, ZERO)
-            count = len(amounts)
+        for key, label, helper in segments:
+            total, count = by_bucket.get(key, (ZERO, 0))
             share_ratio = (
                 (total / total_expenses).quantize(Decimal("0.0001"))
                 if total_expenses > ZERO
@@ -1064,17 +1095,34 @@ class DashboardService:
             }
             for index in range(7)
         }
-        transactions = self._transactions(
-            workspace_id=workspace_id,
-            date_from=date_from,
-            date_to=date_to,
-        )
-        for transaction in transactions:
-            if transaction.direction != "debit":
-                continue
-            bucket = buckets[transaction.transaction_date.weekday()]
-            bucket["amount"] = Decimal(bucket["amount"]) + abs(transaction.amount)
-            bucket["count"] = int(bucket["count"]) + 1
+        # Aggregate per weekday in SQL (≤7 rows). The weekday function is
+        # dialect-specific; both return Sunday=0..Saturday=6, which we remap to
+        # Python's Monday=0..Sunday=6 used by the buckets.
+        if self.db.bind.dialect.name == "sqlite":
+            dow = func.strftime("%w", Transaction.transaction_date)
+        else:
+            dow = func.extract("dow", Transaction.transaction_date)
+        rows = self.db.execute(
+            select(
+                dow.label("dow"),
+                func.sum(func.abs(Transaction.amount)).label("total"),
+                func.count().label("cnt"),
+            )
+            .where(
+                *self._transaction_filters(
+                    workspace_id=workspace_id,
+                    date_from=date_from,
+                    date_to=date_to,
+                ),
+                Transaction.direction == "debit",
+            )
+            .group_by(dow)
+        ).all()
+        for row in rows:
+            python_weekday = (int(float(row.dow)) + 6) % 7
+            bucket = buckets[python_weekday]
+            bucket["amount"] = Decimal(str(row.total or 0)).quantize(Decimal("0.01"))
+            bucket["count"] = int(row.cnt or 0)
 
         total_amount = sum((Decimal(bucket["amount"]) for bucket in buckets.values()), ZERO)
         for bucket in buckets.values():
