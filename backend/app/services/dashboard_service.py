@@ -572,11 +572,18 @@ class DashboardService:
             detect_from = date_from
         detect_amounts: dict[str, list[Decimal]] = {}
         detect_months: dict[str, set[str]] = {}
-        for t in self._transactions(workspace_id, detect_from, date_to):
-            if t.direction != "debit":
-                continue
-            detect_amounts.setdefault(t.description, []).append(abs(t.amount))
-            detect_months.setdefault(t.description, set()).add(t.transaction_date.strftime("%Y-%m"))
+        # Project only the 3 columns this detector reads (not the full row).
+        detect_rows = self.db.execute(
+            select(
+                Transaction.description, Transaction.amount, Transaction.transaction_date
+            ).where(
+                *self._transaction_filters(workspace_id, detect_from, date_to),
+                Transaction.direction == "debit",
+            )
+        ).all()
+        for descr, amount, tdate in detect_rows:
+            detect_amounts.setdefault(descr, []).append(abs(amount))
+            detect_months.setdefault(descr, set()).add(tdate.strftime("%Y-%m"))
         fixed_descriptions: set[str] = set()
         monthly_amount: dict[str, Decimal] = {}
         for descr, amounts in detect_amounts.items():
@@ -594,7 +601,7 @@ class DashboardService:
 
         # --- 2) Classify the period's expenses. --------------------------------
         rows = self.db.execute(
-            select(Transaction, Category)
+            select(Transaction.description, Transaction.amount, Category)
             .outerjoin(
                 TransactionCategoryAssignment,
                 and_(
@@ -614,7 +621,7 @@ class DashboardService:
                 Transaction.direction == "debit",
             )
         ).all()
-        cats_by_id = {c.id: c for _, c in rows if c is not None}
+        cats_by_id = {c.id: c for _, _, c in rows if c is not None}
 
         size_acc = {key: {"count": 0, "total": ZERO} for key, *_ in _SIZE_BUCKETS}
         fixed_total = ZERO
@@ -623,15 +630,15 @@ class DashboardService:
         variable_count = 0
         total_expense = ZERO
         fixed_items_acc: dict[str, dict[str, object]] = {}
-        for transaction, category in rows:
-            amount = abs(transaction.amount)
+        for description, amount_raw, category in rows:
+            amount = abs(amount_raw)
             total_expense += amount
             for key, _label, _helper, low, high in _SIZE_BUCKETS:
                 if amount > low and (high is None or amount <= high):
                     size_acc[key]["count"] += 1
                     size_acc[key]["total"] += amount
                     break
-            if transaction.description in fixed_descriptions:
+            if description in fixed_descriptions:
                 fixed_total += amount
                 fixed_count += 1
                 display = (
@@ -640,9 +647,9 @@ class DashboardService:
                     else category
                 )
                 item = fixed_items_acc.setdefault(
-                    transaction.description,
+                    description,
                     {
-                        "description": transaction.description,
+                        "description": description,
                         "category_name": display.name if display is not None else None,
                         "total": ZERO,
                         "count": 0,
