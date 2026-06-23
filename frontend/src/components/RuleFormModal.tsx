@@ -228,12 +228,12 @@ export function RuleFormModal({
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <label className="fld">
-              <span className="fld-label">Direção</span>
+              <span className="fld-label">Tipo financeiro (opcional)</span>
               <select className="fld-select" value={form.target_direction} onChange={(e) => setForm({ ...form, target_direction: e.target.value })}>
                 <option value="">Não alterar</option>
-                <option value="payment">Pagamento de fatura</option>
                 <option value="debit">Despesa</option>
                 <option value="credit">Receita</option>
+                <option value="payment">Pagamento de fatura</option>
               </select>
             </label>
             <label className="fld">
