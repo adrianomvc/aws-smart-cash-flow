@@ -1490,18 +1490,6 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
                 <button className={ruleOriginFilter === "ai" ? "on" : ""} onClick={() => { setRuleOriginFilter("ai"); setRulePage(0); }} title="Regras criadas a partir de sugestões da IA">IA</button>
                 <button className={ruleOriginFilter === "manual" ? "on" : ""} onClick={() => { setRuleOriginFilter("manual"); setRulePage(0); }}>Manuais</button>
               </div>
-              <select
-                className="cat-select"
-                value={ruleSort}
-                onChange={(e) => { const v = e.target.value as typeof ruleSort; setRuleSort(v); setRuleSortDir(v === "recent" ? "desc" : "asc"); setRulePage(0); }}
-                title="Ordenar regras"
-                style={{ padding: "7px 10px", borderRadius: 9, fontSize: 12.5 }}
-              >
-                <option value="priority">Ordenar: Prioridade</option>
-                <option value="name">Ordenar: Nome (A–Z)</option>
-                <option value="category">Ordenar: Categoria</option>
-                <option value="recent">Ordenar: Mais recentes</option>
-              </select>
               <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
                 <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--ink-faint)", pointerEvents: "none", display: "inline-flex" }}>
                   <CIcon name="search" size={14} />
