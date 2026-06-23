@@ -30,6 +30,7 @@ import {
   getSpendingBreakdown,
 } from "../lib/api";
 import {
+  categoryChartColor,
   compactMoneyAxis,
   dateLabel,
   money,
@@ -196,29 +197,6 @@ function num(val: number | string | null | undefined, dec = 0): string {
   return Math.abs(n).toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
 }
 
-const CAT_COLORS: Record<string, string> = {
-  "Moradia": "#3567b8", "Habitação": "#3567b8", "Casa": "#3567b8",
-  "Alimentação": "#1f8a5b", "Comida": "#1f8a5b",
-  "Educação": "#6a52c9", "Ensino": "#6a52c9",
-  "Transporte": "#c98a2b", "Mobilidade": "#c98a2b",
-  "Saúde": "#cf4d43", "Médico": "#cf4d43",
-  "Lazer": "#d98234", "Entretenimento": "#d98234",
-  "Assinaturas": "#9a6b14", "Streaming": "#9a6b14",
-  "Mercado": "#2a9d8f", "Supermercado": "#2a9d8f",
-  "Serviços": "#7c8696",
-  "Investimentos": "#135737", "Investimento": "#135737",
-  "Renda": "#1f8a5b", "Receita": "#1f8a5b",
-  "Outros": "#9aa3b0",
-};
-function catColor(name: string): string {
-  if (CAT_COLORS[name]) return CAT_COLORS[name];
-  for (const [k, v] of Object.entries(CAT_COLORS)) {
-    if (name.toLowerCase().includes(k.toLowerCase())) return v;
-  }
-  const palette = Object.values(CAT_COLORS);
-  const h = name.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
-  return palette[h % palette.length];
-}
 
 // ---------------------------------------------------------------------------
 // CIcon — prototype icon set (mirrors DIcon in DashboardPage)
@@ -516,7 +494,8 @@ function SankeyPanel({
       id: c.category_id ?? c.category_name,
       label: c.category_name,
       value: parseFloat(c.amount ?? "0"),
-      color: c.color ?? catColor(c.category_name),
+      // Consistent with the rest of the app: "Sem categoria" (null id) → grey.
+      color: categoryChartColor(c.category_name, c.color, c.category_id),
       kind: "expense" as const,
     }));
 
