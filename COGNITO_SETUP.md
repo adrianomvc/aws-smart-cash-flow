@@ -69,9 +69,24 @@ VITE_COGNITO_APP_CLIENT_ID=1h2j3kxxxxxxxxxxxxxxxxxxxx
 - ⚠️ Tela de "sessões ativas por dispositivo/cidade" (como no protótipo) não é nativa
   — exige logging próprio. O básico (sessão atual + revogar refresh tokens) é nativo.
 
-## 5. Fase 2 — login no frontend (a fazer)
-Falta plugar o **AWS Amplify Auth** (`npm i aws-amplify`) na `LoginScreen`:
-`signIn` (com challenge de MFA), `signUp`, `resetPassword`, e no sucesso chamar
-`onLogin({ token: idToken, mode: "cognito" })`. Isso só dá para testar de verdade
-após o User Pool existir. Quando você criar o pool e me passar region/poolId/clientId
-(não são segredos), eu faço a tela de login.
+## 5. Fase 2 — login no frontend (FEITO no código)
+Implementado em `frontend/src/lib/cognito.ts` + `LoginScreen` (`frontend/src/App.tsx`),
+com `aws-amplify` v6 já instalado: login com senha, **MFA TOTP** (uso + setup),
+nova-senha obrigatória, cadastro/confirmação/reenvio de código, reset de senha,
+logout e um **token provider** que injeta um ID token sempre fresco (auto-refresh)
+em cada chamada. O flag `cognitoConfigured` liga tudo quando as 3 variáveis
+`VITE_COGNITO_*` existem no build; sem elas, a tela cai no login legado
+(local/Supabase).
+
+### O que falta (config AWS — não é código)
+1. Criar o **User Pool + App Client público (sem secret)** no Cognito.
+2. Frontend (Amplify/CI, build-time): `VITE_COGNITO_REGION`,
+   `VITE_COGNITO_USER_POOL_ID`, `VITE_COGNITO_APP_CLIENT_ID`.
+3. Backend (CI/Lambda): `APP_ENV` != `local`, `COGNITO_REGION`,
+   `COGNITO_USER_POOL_ID`, `COGNITO_APP_CLIENT_ID`.
+4. **Migração de dados (opção B):** os dados de hoje vivem no workspace local-dev
+   (`00000000-...-0002`). No primeiro login Cognito, o `sub` cria um
+   usuário/workspace novo e vazio. Decidir entre **migrar** os dados existentes
+   para o workspace do primeiro usuário Cognito ou **começar limpo**.
+
+Com isso pronto, basta logar com um usuário do pool — o front já faz o resto.
