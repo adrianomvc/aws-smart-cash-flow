@@ -2,7 +2,6 @@ import { Dispatch, SetStateAction, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Area,
-  AreaChart,
   Bar,
   CartesianGrid,
   ComposedChart,
@@ -968,8 +967,21 @@ export function CashflowPage({
       ),
     [chartRows],
   );
-  const netSeries = useMemo(
-    () => chartRows.map((row) => ({ ...row, netFlow: row.income + row.expenses })),
+  // Derived split fields so both charts can fill green when positive / red when
+  // negative (same visual language as the dashboard money-story chart).
+  const chartData = useMemo(
+    () => chartRows.map((row) => {
+      const bal = row.balance ?? 0;
+      const net = row.income + row.expenses;
+      return {
+        ...row,
+        netFlow: net,
+        balPos: Math.max(0, bal),
+        balNeg: Math.min(0, bal),
+        netPos: Math.max(0, net),
+        netNeg: Math.min(0, net),
+      };
+    }),
     [chartRows],
   );
 
@@ -1148,13 +1160,25 @@ export function CashflowPage({
             <ResponsiveContainer width="100%" height="100%">
               {view === "mes" ? (
                 <ComposedChart
-                  data={chartRows}
+                  data={chartData}
                   margin={{ top: 4, right: 8, bottom: 0, left: 0 }}
                   onClick={openChartTransactions}
                   style={{ cursor: "pointer" }}
                 >
+                  <defs>
+                    <linearGradient id="cfPos" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--pos)" stopOpacity={0.22} />
+                      <stop offset="100%" stopColor="var(--pos)" stopOpacity={0.02} />
+                    </linearGradient>
+                    <linearGradient id="cfNeg" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--neg)" stopOpacity={0.02} />
+                      <stop offset="100%" stopColor="var(--neg)" stopOpacity={0.22} />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid stroke="var(--line)" strokeDasharray="3 3" />
                   <ReferenceLine y={0} stroke="var(--ink-faint)" strokeWidth={1} />
+                  <Area dataKey="balPos" fill="url(#cfPos)" stroke="none" isAnimationActive={false} legendType="none" tooltipType="none" />
+                  <Area dataKey="balNeg" fill="url(#cfNeg)" stroke="none" isAnimationActive={false} legendType="none" tooltipType="none" />
                   <XAxis
                     dataKey={chartMode === "month" ? "month" : "date"}
                     tickFormatter={chartMode === "month" ? monthTickLabel : dayTickLabel}
@@ -1173,20 +1197,24 @@ export function CashflowPage({
                   <Line dataKey="balance" name="Saldo" stroke="var(--info)" strokeWidth={2.5} dot={false} connectNulls isAnimationActive={false} />
                 </ComposedChart>
               ) : (
-                <AreaChart
-                  data={netSeries}
+                <ComposedChart
+                  data={chartData}
                   margin={{ top: 4, right: 8, bottom: 0, left: 0 }}
                   onClick={openChartTransactions}
                   style={{ cursor: "pointer" }}
                 >
                   <defs>
-                    <linearGradient id="cfGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="var(--info)" stopOpacity={0.25} />
-                      <stop offset="95%" stopColor="var(--info)" stopOpacity={0} />
+                    <linearGradient id="cfPos" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--pos)" stopOpacity={0.28} />
+                      <stop offset="100%" stopColor="var(--pos)" stopOpacity={0.02} />
+                    </linearGradient>
+                    <linearGradient id="cfNeg" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--neg)" stopOpacity={0.02} />
+                      <stop offset="100%" stopColor="var(--neg)" stopOpacity={0.28} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid stroke="var(--line)" strokeDasharray="3 3" />
-                  <ReferenceLine y={0} stroke="var(--neg)" strokeDasharray="4 3" strokeWidth={1.5} />
+                  <ReferenceLine y={0} stroke="var(--ink-faint)" strokeWidth={1} />
                   <XAxis
                     dataKey={chartMode === "month" ? "month" : "date"}
                     tickFormatter={chartMode === "month" ? monthTickLabel : dayTickLabel}
@@ -1199,8 +1227,10 @@ export function CashflowPage({
                     tick={{ fontSize: 11, fill: "var(--ink-3)" }}
                   />
                   <Tooltip content={<CashflowTooltip view={chartMode} />} wrapperStyle={{ zIndex: 30, pointerEvents: "none" }} />
-                  <Area dataKey="netFlow" name="Fluxo líquido" stroke="var(--info)" fill="url(#cfGrad)" strokeWidth={2.5} dot={false} connectNulls isAnimationActive={false} />
-                </AreaChart>
+                  <Area dataKey="netPos" fill="url(#cfPos)" stroke="none" isAnimationActive={false} legendType="none" tooltipType="none" />
+                  <Area dataKey="netNeg" fill="url(#cfNeg)" stroke="none" isAnimationActive={false} legendType="none" tooltipType="none" />
+                  <Line dataKey="netFlow" name="Fluxo líquido" stroke="var(--info)" strokeWidth={2.5} dot={false} connectNulls isAnimationActive={false} />
+                </ComposedChart>
               )}
             </ResponsiveContainer>
           </div>

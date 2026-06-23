@@ -117,9 +117,13 @@ export function buildMonthlyCashflow(
   const rows = monthlyItems.map((item) => {
     const income = Math.abs(Number(item.income ?? 0));
     const expenses = -Math.abs(Number(item.expenses ?? 0));
+    // Accrual accumulation (receitas − despesas). We intentionally do NOT use the
+    // real cash closing_balance here: it includes credit-card invoice payments,
+    // which would make the line dip with no matching outflow bar (the income/
+    // expenses bars are accrual). Keeping the line accrual matches the bars.
     cumulative += income + expenses;
     return {
-      balance: item.closing_balance !== undefined ? Number(item.closing_balance) : cumulative,
+      balance: cumulative,
       expenses,
       income,
       month: item.month,
