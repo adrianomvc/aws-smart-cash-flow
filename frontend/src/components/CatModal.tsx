@@ -181,7 +181,9 @@ export function CatModal({ state, categories, onClose, onSaveCat, onSaveSub }: C
   );
   // Prefill from the category being edited; for a new one, auto-pick an unused color.
   const [color, setColor] = useState(() => state.editing?.color ?? pickUnusedCatColor(categories));
-  const [iconName, setIconName] = useState(() => state.editing?.icon ?? "folder");
+  const [iconName, setIconName] = useState(() => state.editing?.icon ?? defaultCatIcon(state.editing?.name ?? ""));
+  // Until the user picks an icon manually, keep it in sync with the typed name.
+  const [iconTouched, setIconTouched] = useState(Boolean(state.editing?.icon));
   const [subsText, setSubsText] = useState("");
   const [err, setErr] = useState("");
 
@@ -270,7 +272,12 @@ export function CatModal({ state, categories, onClose, onSaveCat, onSaveSub }: C
               className="fld-input"
               autoFocus
               value={name}
-              onChange={(e) => { setName(e.target.value); setErr(""); }}
+              onChange={(e) => {
+                const v = e.target.value;
+                setName(v);
+                setErr("");
+                if (!iconTouched) setIconName(defaultCatIcon(v));
+              }}
               placeholder={kind === "cat" ? "Ex.: Pets, Filhos, Trabalho remoto…" : "Ex.: Ração, Veterinário…"}
             />
           </label>
@@ -305,7 +312,7 @@ export function CatModal({ state, categories, onClose, onSaveCat, onSaveSub }: C
                   {CAT_ICON_OPTIONS.map((ic) => (
                     <button
                       key={ic}
-                      onClick={() => setIconName(ic)}
+                      onClick={() => { setIconName(ic); setIconTouched(true); }}
                       title={CAT_ICON_LABELS[ic] ?? ic}
                       style={{
                         width: 34, height: 34, borderRadius: 9,
@@ -322,7 +329,10 @@ export function CatModal({ state, categories, onClose, onSaveCat, onSaveSub }: C
                   ))}
                 </div>
                 <span className="fld-help">
-                  Ícone selecionado: <strong>{CAT_ICON_LABELS[iconName] ?? iconName}</strong> · passe o mouse para ver cada um
+                  Ícone: <strong>{CAT_ICON_LABELS[iconName] ?? iconName}</strong>
+                  {!iconTouched && !state.editing
+                    ? " · sugerido pelo nome (clique para trocar)"
+                    : " · passe o mouse para ver cada um"}
                 </span>
               </label>
 
