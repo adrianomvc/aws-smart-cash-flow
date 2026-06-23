@@ -523,6 +523,7 @@ function RuleFromTxModal({ transaction, categories, session, onClose }: {
   const [pattern, setPattern] = useState(containsDefault);
   const [touchedPattern, setTouchedPattern] = useState(false);
   const [categoryId, setCategoryId] = useState(transaction.category?.category_id ?? "");
+  const [targetDirection, setTargetDirection] = useState("");
   const [applyNow, setApplyNow] = useState(true);
   const [error, setError] = useState("");
   const requestNewCategory = useContext(NewCategoryContext);
@@ -551,7 +552,7 @@ function RuleFromTxModal({ transaction, categories, session, onClose }: {
         match_type: matchType,
         pattern: pattern.trim(),
         category_id: categoryId || null,
-        target_direction: null,
+        target_direction: targetDirection || null,
         priority: 100,
         active: true,
       });
@@ -568,7 +569,7 @@ function RuleFromTxModal({ transaction, categories, session, onClose }: {
   });
 
   function submit() {
-    if (!categoryId) { setError("Escolha a categoria que a regra vai aplicar."); return; }
+    if (!categoryId && !targetDirection) { setError("Escolha a categoria e/ou o tipo financeiro que a regra vai aplicar."); return; }
     if (!pattern.trim()) { setError("Informe o padrão de texto."); return; }
     setError("");
     create.mutate();
@@ -626,6 +627,17 @@ function RuleFromTxModal({ transaction, categories, session, onClose }: {
               ))}
               {requestNewCategory ? <option value={NEW_CATEGORY_VALUE}>＋ Nova categoria…</option> : null}
             </select>
+          </label>
+
+          <label className="fld">
+            <span className="fld-label">Tipo financeiro (opcional)</span>
+            <select className="fld-select" value={targetDirection} onChange={(e) => setTargetDirection(e.target.value)}>
+              <option value="">Não alterar</option>
+              <option value="debit">Despesa</option>
+              <option value="credit">Receita</option>
+              <option value="payment">Pagamento de fatura</option>
+            </select>
+            <span className="fld-help">A regra também marca os lançamentos parecidos com este tipo.</span>
           </label>
 
           {suggestion != null && suggestion.affected_count > 0 && (
