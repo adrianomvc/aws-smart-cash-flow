@@ -585,12 +585,16 @@ function FlowCard({
               ))}
             </Bar>
             {/* Credit-card invoice payments: a real cash outflow that isn't a common
-                expense — shown stacked under expenses so the balance dip is explained. */}
-            <Bar dataKey="pay" name="pay" stackId="out" maxBarSize={16} radius={[0, 0, 2, 2]}>
-              {data.map((entry, i) => (
-                <Cell key={i} fill="var(--warn)" opacity={entry.proj ? 0.4 : 0.8} />
-              ))}
-            </Bar>
+                expense — shown only in day mode, where the balance line is cash-basis
+                and the dip lines up. In month mode the line is accrual (receitas −
+                despesas), so a payment bar there would look like double-counted spend. */}
+            {mode === "day" && (
+              <Bar dataKey="pay" name="pay" stackId="out" maxBarSize={16} radius={[0, 0, 2, 2]}>
+                {data.map((entry, i) => (
+                  <Cell key={i} fill="var(--warn)" opacity={entry.proj ? 0.4 : 0.8} />
+                ))}
+              </Bar>
+            )}
             <Line type="monotone" dataKey="acc" name="acc" stroke="var(--acc-strong)" strokeWidth={2} dot={false} connectNulls={false} />
             <Line type="monotone" dataKey="accProj" name="accProj" stroke="var(--acc-strong)" strokeWidth={2} dot={false} strokeDasharray="5 3" connectNulls={false} />
           </ComposedChart>
@@ -598,7 +602,9 @@ function FlowCard({
         <div className="legend" style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--line)" }}>
           <span className="legend-item"><span className="lz" style={{ background: "var(--acc)" }} />Receitas</span>
           <span className="legend-item"><span className="lz" style={{ background: "var(--neg)" }} />Despesas</span>
-          <span className="legend-item"><span className="lz" style={{ background: "var(--warn)" }} />Pagamento de fatura</span>
+          {mode === "day" && (
+            <span className="legend-item"><span className="lz" style={{ background: "var(--warn)" }} />Pagamento de fatura</span>
+          )}
           <span className="legend-item"><span className="lz" style={{ background: "var(--acc-strong)" }} />Saldo acumulado</span>
           <span className="legend-item" style={{ gap: 5, alignItems: "center" }}>
             <svg width={20} height={8} style={{ flex: "none" }}><line x1="0" y1="4" x2="20" y2="4" stroke="var(--acc-strong)" strokeWidth={2} strokeDasharray="5 3" /></svg>
