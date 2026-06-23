@@ -1079,7 +1079,7 @@ export function TransactionExplorer({
   const [keepId, setKeepId] = useState("");
   const [pageSize, setPageSize] = useState(50);
   // Tab state: all | in | out | pending
-  const [tab, setTab] = useState<"all" | "in" | "out" | "pending">(initialCategoryId === "__pending__" ? "pending" : "all");
+  const [tab, setTab] = useState<"all" | "in" | "out" | "pay" | "pending">(initialCategoryId === "__pending__" ? "pending" : "all");
   const [accountFilter, setAccountFilter] = useState("all");
   const duplicatePageSize = 10;
   const categories = useCategories(session);
@@ -1252,6 +1252,7 @@ export function TransactionExplorer({
       if (tab === "all") setDirection("");
       else if (tab === "in") setDirection("credit");
       else if (tab === "out") setDirection("debit");
+      else if (tab === "pay") setDirection("payment");
     }
   }, [tab]);
 
@@ -1764,10 +1765,11 @@ export function TransactionExplorer({
           <div className="seg">
             {([
               { id: "all", label: "Todas" },
-              { id: "in", label: "Entradas" },
-              { id: "out", label: "Saídas" },
+              { id: "in", label: "Receitas" },
+              { id: "out", label: "Despesas" },
+              { id: "pay", label: "Pagamentos" },
               { id: "pending", label: "A revisar", count: pagePending },
-            ] as { id: "all" | "in" | "out" | "pending"; label: string; count?: number }[]).map(({ id, label, count }) => (
+            ] as { id: "all" | "in" | "out" | "pay" | "pending"; label: string; count?: number }[]).map(({ id, label, count }) => (
               <button
                 key={id}
                 className={tab === id ? "on" : ""}
