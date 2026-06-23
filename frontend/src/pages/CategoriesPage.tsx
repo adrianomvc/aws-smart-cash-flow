@@ -1165,6 +1165,7 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
   const [tab, setTab] = useState<"rules" | "aliases" | "ai">("rules");
   const [ruleSearch, setRuleSearch] = useState("");
   const [ruleOriginFilter, setRuleOriginFilter] = useState<"all" | "ai" | "manual">("all");
+  const [ruleSort, setRuleSort] = useState<"priority" | "name" | "category" | "recent">("priority");
   const [rulePage, setRulePage] = useState(0);
   const [rulePageSize, setRulePageSize] = useState(10);
   const dataQuality = useQuery({
@@ -1337,9 +1338,17 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
     if (ruleQuery && !(r.name.toLowerCase().includes(ruleQuery) || r.pattern.toLowerCase().includes(ruleQuery))) return false;
     return true;
   });
-  const rulePageCount = Math.max(1, Math.ceil(filteredRules.length / rulePageSize));
+  const catLabelById = (id: string | null) =>
+    id ? (categoryOptions.find((c) => c.id === id)?.label ?? "") : "";
+  const sortedRules = [...filteredRules].sort((a, b) => {
+    if (ruleSort === "name") return a.name.localeCompare(b.name, "pt-BR");
+    if (ruleSort === "category") return catLabelById(a.category_id).localeCompare(catLabelById(b.category_id), "pt-BR");
+    if (ruleSort === "recent") return (b.created_at ?? "").localeCompare(a.created_at ?? "");
+    return a.priority - b.priority || a.name.localeCompare(b.name, "pt-BR"); // priority
+  });
+  const rulePageCount = Math.max(1, Math.ceil(sortedRules.length / rulePageSize));
   const safeRulePage = Math.min(rulePage, rulePageCount - 1);
-  const pagedRules = filteredRules.slice(
+  const pagedRules = sortedRules.slice(
     safeRulePage * rulePageSize,
     safeRulePage * rulePageSize + rulePageSize,
   );
@@ -1472,6 +1481,18 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
                 <button className={ruleOriginFilter === "ai" ? "on" : ""} onClick={() => { setRuleOriginFilter("ai"); setRulePage(0); }} title="Regras criadas a partir de sugestões da IA">IA</button>
                 <button className={ruleOriginFilter === "manual" ? "on" : ""} onClick={() => { setRuleOriginFilter("manual"); setRulePage(0); }}>Manuais</button>
               </div>
+              <select
+                className="cat-select"
+                value={ruleSort}
+                onChange={(e) => { setRuleSort(e.target.value as typeof ruleSort); setRulePage(0); }}
+                title="Ordenar regras"
+                style={{ padding: "7px 10px", borderRadius: 9, fontSize: 12.5 }}
+              >
+                <option value="priority">Ordenar: Prioridade</option>
+                <option value="name">Ordenar: Nome (A–Z)</option>
+                <option value="category">Ordenar: Categoria</option>
+                <option value="recent">Ordenar: Mais recentes</option>
+              </select>
               <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
                 <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--ink-faint)", pointerEvents: "none", display: "inline-flex" }}>
                   <CIcon name="search" size={14} />
