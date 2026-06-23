@@ -29,11 +29,12 @@ import {
   type ApiSession,
   type InsightItem,
   getCurrentWorkspace,
+  getPreferences,
   getInsights,
   getTransactions,
   getTransactionDuplicates,
 } from "./lib/api";
-import { pageMeta, periodRange } from "./lib/utils";
+import { pageMeta, periodRange, setDisplayCurrency } from "./lib/utils";
 import smartCashFlowLogo from "./assets/logo-smartcash-flow-main.png";
 import {
   cognitoConfigured, cognitoConfirmChallenge, cognitoConfirmReset, cognitoConfirmSignUp,
@@ -291,6 +292,17 @@ function App() {
     staleTime: 10 * 60 * 1000,
   });
   const workspaceName = workspaceQuery.data?.workspace_name;
+
+  // Apply the workspace display currency to the money formatters (display only;
+  // values stay in BRL). Set during render so children format with it; updates
+  // when the preference changes (the query refetches and re-renders the tree).
+  const preferencesQuery = useQuery({
+    queryKey: ["preferences", session?.token],
+    queryFn: () => getPreferences(session!),
+    enabled: Boolean(session),
+    staleTime: 10 * 60 * 1000,
+  });
+  setDisplayCurrency(preferencesQuery.data?.currency);
 
   if (!session) {
     return <LoginScreen onLogin={handleSession} />;

@@ -116,23 +116,55 @@ export function categoryChartColor(name?: string | null, registered?: string | n
 // Money formatters
 // ---------------------------------------------------------------------------
 
+// Display currency comes from the workspace preference (display formatting only —
+// values are stored in BRL, there is no FX conversion). It is a module-level
+// setting updated by setDisplayCurrency() when preferences load; formatters are
+// cached per currency code.
+let _currencyCode = "BRL";
+const _currencyFormatters = new Map<string, Intl.NumberFormat>();
+
+function currencyFormatter(): Intl.NumberFormat {
+  let formatter = _currencyFormatters.get(_currencyCode);
+  if (!formatter) {
+    try {
+      formatter = new Intl.NumberFormat("pt-BR", { style: "currency", currency: _currencyCode });
+    } catch {
+      formatter = BRL_FORMATTER;
+    }
+    _currencyFormatters.set(_currencyCode, formatter);
+  }
+  return formatter;
+}
+
+/** Set the display currency (e.g. "BRL", "USD", "EUR"). Affects money()/compact. */
+export function setDisplayCurrency(code?: string | null) {
+  _currencyCode = (code || "BRL").toUpperCase();
+}
+
+/** Current currency symbol (e.g. "R$", "$", "€") for the compact formatters. */
+export function currencySymbol(): string {
+  const parts = currencyFormatter().formatToParts(0);
+  return parts.find((part) => part.type === "currency")?.value ?? "R$";
+}
+
 export function money(value?: string | number | null) {
-  return BRL_FORMATTER.format(Number(value ?? 0));
+  return currencyFormatter().format(Number(value ?? 0));
 }
 
 export function moneyAbs(value?: string | number | null) {
-  return BRL_FORMATTER.format(Math.abs(Number(value ?? 0)));
+  return currencyFormatter().format(Math.abs(Number(value ?? 0)));
 }
 
 export function formatCurrencyCompact(value?: string | number | null) {
   const numeric = Math.abs(Number(value ?? 0));
   if (numeric < 1000) return money(numeric);
+  const symbol = currencySymbol();
   if (numeric < 1000000) {
     const compact = numeric / 1000;
-    return `R$ ${compact.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mil`;
+    return `${symbol} ${compact.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mil`;
   }
   const compact = numeric / 1000000;
-  return `R$ ${compact.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mi`;
+  return `${symbol} ${compact.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mi`;
 }
 
 // Same compaction as formatCurrencyCompact but WITHOUT the "R$" symbol — for use
