@@ -1302,14 +1302,23 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
     mutationFn: () => applyRules(session),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      // The grouped view in Transactions uses its own query key — invalidate it too,
+      // otherwise applied rules only showed after a full reload (F5).
+      void queryClient.invalidateQueries({ queryKey: ["uncategorized-groups"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      void queryClient.invalidateQueries({ queryKey: ["category-ranking"] });
+      void queryClient.invalidateQueries({ queryKey: ["data-quality"] });
+      void queryClient.invalidateQueries({ queryKey: ["data-quality-rules"] });
     },
   });
   const categorize = useMutation({
     mutationFn: () => categorizePending(session),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      void queryClient.invalidateQueries({ queryKey: ["uncategorized-groups"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
+      void queryClient.invalidateQueries({ queryKey: ["category-ranking"] });
+      void queryClient.invalidateQueries({ queryKey: ["data-quality"] });
       void queryClient.invalidateQueries({ queryKey: ["data-quality-rules"] });
     },
   });
