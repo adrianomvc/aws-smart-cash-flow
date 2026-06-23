@@ -1407,8 +1407,8 @@ export function DashboardPage({
           <button className="btn btn-ghost btn-sm" onClick={() => onNavigate("reports")}>
             <DIcon name="report" size={14} /> Relatório
           </button>
-          <button className="btn btn-ghost btn-sm" onClick={() => {}}>
-            <DIcon name="chat" size={14} /> Perguntar ao Copilot
+          <button className="btn btn-ghost btn-sm" onClick={() => onNavigate("copilot")}>
+            <DIcon name="chat" size={14} /> Copiloto IA
           </button>
         </div>
       </div>
