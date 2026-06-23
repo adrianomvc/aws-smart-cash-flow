@@ -43,6 +43,17 @@ const C_ICONS: Record<string, string> = {
   star:     "M12 4l2.4 5.4 5.6.5-4.2 3.7 1.3 5.4L12 16.6 6.9 19.5l1.3-5.4L4 10.4l5.6-.5z",
   globe:    "M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0 M3 12h18 M12 3a14 14 0 0 1 0 18 M12 3a14 14 0 0 0 0 18",
   repeat:   "M4 9l3-3 3 3 M7 6v9a2 2 0 0 0 2 2h11 M20 15l-3 3-3-3 M17 18V9a2 2 0 0 0-2-2H4",
+  // Extra category icons (pets, restaurante, presente, celular, roupas, etc.)
+  paw:      "M8.5 8m-1.6 0a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0-3.2 0 M12 6.3m-1.6 0a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0-3.2 0 M15.5 8m-1.6 0a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0-3.2 0 M12 16m-3.2 0a3.2 3.2 0 1 0 6.4 0a3.2 3.2 0 1 0-6.4 0",
+  utensils: "M6 3v4 M9 3v4 M12 3v4 M6 7h6 M9 7v14 M17 3v18 M15 11c0-3 0-6 2-8",
+  gift:     "M20 12v10H4V12 M2 7h20v5H2z M12 22V7 M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z",
+  phone:    "M7 2h10a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z M11 18h2",
+  shirt:    "M20.38 3.46 16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.47a1 1 0 0 0 .99.84H6v10c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V10h2.15a1 1 0 0 0 .99-.84l.58-3.47a2 2 0 0 0-1.34-2.23z",
+  dumbbell: "M4 9v6 M7 7v10 M7 12h10 M17 7v10 M20 9v6",
+  heart:    "M12 21C7 17 3 13.5 3 8.5A4.5 4.5 0 0 1 12 6a4.5 4.5 0 0 1 9 2.5c0 5-4 8.5-9 12.5z",
+  fuel:     "M4 22V4a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v18 M3 22h12 M5 9h8 M14 8l3 3v6a1.5 1.5 0 0 0 3 0V9l-3-3",
+  coffee:   "M5 8h11a4 4 0 0 1 0 8h-1 M5 8v8a4 4 0 0 0 4 4h3a4 4 0 0 0 4-4V8z M8 2v3 M11 2v3",
+  bag:      "M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z M3 6h18 M16 10a4 4 0 0 1-8 0",
 };
 
 export function CIcon({ name, size = 15 }: { name: string; size?: number }) {
@@ -62,12 +73,65 @@ export function CIcon({ name, size = 15 }: { name: string; size?: number }) {
 // Constants
 // ---------------------------------------------------------------------------
 
-export const CAT_PALETTE = CATEGORY_HEX_PALETTE;
+// Picker palette: the chart palette first (visual continuity) plus extra distinct
+// hues, so a new category can be auto-assigned a fresh, still-unused color.
+export const CAT_PALETTE = [
+  ...CATEGORY_HEX_PALETTE,
+  "#2563eb", "#0891b2", "#16a34a", "#65a30d", "#ea580c", "#e11d48",
+  "#db2777", "#9333ea", "#7c3aed", "#4f46e5", "#0d9488", "#b45309",
+];
 
 export const CAT_ICON_OPTIONS = [
   "home", "wallet", "coins", "car", "cap", "shield", "plane", "spark",
   "flag", "target", "building", "receipt", "tag", "star", "zap", "globe",
+  "folder", "repeat",
+  "paw", "utensils", "gift", "phone", "shirt", "dumbbell", "heart", "fuel",
+  "coffee", "bag",
 ];
+
+// Human-readable description for each icon (tooltip + "selected icon" caption).
+export const CAT_ICON_LABELS: Record<string, string> = {
+  home: "Casa / Moradia",
+  wallet: "Carteira / Alimentação",
+  coins: "Dinheiro / Investimento",
+  car: "Carro / Transporte",
+  cap: "Educação",
+  shield: "Saúde / Seguro",
+  plane: "Viagem / Lazer",
+  spark: "Filhos / Especial",
+  flag: "Meta",
+  target: "Objetivo",
+  building: "Impostos / Empresa",
+  receipt: "Contas / Serviços",
+  tag: "Etiqueta / Mercado",
+  star: "Favoritos",
+  zap: "Energia",
+  globe: "Internet / Global",
+  folder: "Pasta (genérico)",
+  repeat: "Assinatura / Recorrente",
+  paw: "Pets / Animais",
+  utensils: "Restaurante / Comer fora",
+  gift: "Presentes",
+  phone: "Celular / Telefonia",
+  shirt: "Roupas / Vestuário",
+  dumbbell: "Academia / Fitness",
+  heart: "Saúde / Doação",
+  fuel: "Combustível",
+  coffee: "Café / Lazer",
+  bag: "Compras",
+};
+
+/** First palette color not already used by a category, so new categories get a
+ * distinct color automatically. Falls back to a rotating color when all are used. */
+export function pickUnusedCatColor(categories: CategoryRead[]): string {
+  const used = new Set(
+    categories.filter((c) => c.color).map((c) => (c.color as string).toLowerCase()),
+  );
+  return (
+    CAT_PALETTE.find((p) => !used.has(p.toLowerCase())) ??
+    CAT_PALETTE[used.size % CAT_PALETTE.length]
+  );
+}
 
 // Default icon by category name, used when no icon was saved (mirrors prototype).
 export function defaultCatIcon(name: string): string {
@@ -78,6 +142,10 @@ export function defaultCatIcon(name: string): string {
     ["lazer", "plane"], ["assinatura", "repeat"], ["servi", "receipt"],
     ["invest", "coins"], ["renda", "coins"], ["receita", "coins"],
     ["cart", "wallet"], ["imposto", "building"], ["filho", "spark"],
+    ["pet", "paw"], ["animal", "paw"], ["restaurante", "utensils"], ["comer", "utensils"],
+    ["presente", "gift"], ["celular", "phone"], ["telefone", "phone"], ["roupa", "shirt"],
+    ["vestu", "shirt"], ["academia", "dumbbell"], ["combust", "fuel"], ["caf", "coffee"],
+    ["compra", "bag"], ["doa", "heart"],
   ];
   for (const [k, v] of map) if (n.includes(k)) return v;
   return "folder";
@@ -111,8 +179,11 @@ export function CatModal({ state, categories, onClose, onSaveCat, onSaveSub }: C
     state.editing?.parent_category_id ??
     (categories.find((c) => !c.parent_category_id)?.id ?? "")
   );
-  const [color, setColor] = useState(CAT_PALETTE[0]);
-  const [iconName, setIconName] = useState("folder");
+  // Prefill from the category being edited; for a new one, auto-pick an unused color.
+  const [color, setColor] = useState(() => state.editing?.color ?? pickUnusedCatColor(categories));
+  const [iconName, setIconName] = useState(() => state.editing?.icon ?? defaultCatIcon(state.editing?.name ?? ""));
+  // Until the user picks an icon manually, keep it in sync with the typed name.
+  const [iconTouched, setIconTouched] = useState(Boolean(state.editing?.icon));
   const [subsText, setSubsText] = useState("");
   const [err, setErr] = useState("");
 
@@ -201,7 +272,12 @@ export function CatModal({ state, categories, onClose, onSaveCat, onSaveSub }: C
               className="fld-input"
               autoFocus
               value={name}
-              onChange={(e) => { setName(e.target.value); setErr(""); }}
+              onChange={(e) => {
+                const v = e.target.value;
+                setName(v);
+                setErr("");
+                if (!iconTouched) setIconName(defaultCatIcon(v));
+              }}
               placeholder={kind === "cat" ? "Ex.: Pets, Filhos, Trabalho remoto…" : "Ex.: Ração, Veterinário…"}
             />
           </label>
@@ -219,10 +295,14 @@ export function CatModal({ state, categories, onClose, onSaveCat, onSaveSub }: C
                       className={"swatch" + (color === p ? " on" : "")}
                       style={{ background: p }}
                       onClick={() => setColor(p)}
+                      title={p}
                       aria-label={p}
                     />
                   ))}
                 </div>
+                <span className="fld-help">
+                  {state.editing ? "Cor da categoria." : "Sugerimos uma cor ainda não usada — clique para trocar."}
+                </span>
               </label>
 
               {/* Icon */}
@@ -232,7 +312,8 @@ export function CatModal({ state, categories, onClose, onSaveCat, onSaveSub }: C
                   {CAT_ICON_OPTIONS.map((ic) => (
                     <button
                       key={ic}
-                      onClick={() => setIconName(ic)}
+                      onClick={() => { setIconName(ic); setIconTouched(true); }}
+                      title={CAT_ICON_LABELS[ic] ?? ic}
                       style={{
                         width: 34, height: 34, borderRadius: 9,
                         display: "grid", placeItems: "center",
@@ -241,12 +322,18 @@ export function CatModal({ state, categories, onClose, onSaveCat, onSaveSub }: C
                         color: iconName === ic ? "#fff" : "var(--ink-2)",
                         transition: "all .12s",
                       }}
-                      aria-label={ic}
+                      aria-label={CAT_ICON_LABELS[ic] ?? ic}
                     >
                       <CIcon name={ic} size={16} />
                     </button>
                   ))}
                 </div>
+                <span className="fld-help">
+                  Ícone: <strong>{CAT_ICON_LABELS[iconName] ?? iconName}</strong>
+                  {!iconTouched && !state.editing
+                    ? " · sugerido pelo nome (clique para trocar)"
+                    : " · passe o mouse para ver cada um"}
+                </span>
               </label>
 
               {/* Initial subcategories */}
