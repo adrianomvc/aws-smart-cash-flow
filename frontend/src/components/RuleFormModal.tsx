@@ -143,7 +143,7 @@ export function RuleFormModal({
                   />
                 </label>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <label className="fld">
                   <span className="fld-label">Dia do mês (de)</span>
                   <input
@@ -167,15 +167,6 @@ export function RuleFormModal({
                     value={form.day_max}
                     onChange={(e) => setForm({ ...form, day_max: e.target.value })}
                   />
-                </label>
-                <label className="fld">
-                  <span className="fld-label">Só esta direção</span>
-                  <select className="fld-select" value={form.direction_filter} onChange={(e) => setForm({ ...form, direction_filter: e.target.value })}>
-                    <option value="">Qualquer</option>
-                    <option value="debit">Despesa</option>
-                    <option value="credit">Receita</option>
-                    <option value="payment">Pagamento de fatura</option>
-                  </select>
                 </label>
               </div>
               <label className="fld">
@@ -228,14 +219,27 @@ export function RuleFormModal({
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <label className="fld">
-              <span className="fld-label">Tipo financeiro (opcional)</span>
+              <span className="fld-label">Filtrar por tipo financeiro</span>
+              <select className="fld-select" value={form.direction_filter} onChange={(e) => setForm({ ...form, direction_filter: e.target.value })}>
+                <option value="">Qualquer</option>
+                <option value="debit">Despesa</option>
+                <option value="credit">Receita</option>
+                <option value="payment">Pagamento de fatura</option>
+              </select>
+              <span className="fld-help">A regra só se aplica a lançamentos deste tipo.</span>
+            </label>
+            <label className="fld">
+              <span className="fld-label">Alterar tipo para (opcional)</span>
               <select className="fld-select" value={form.target_direction} onChange={(e) => setForm({ ...form, target_direction: e.target.value })}>
                 <option value="">Não alterar</option>
                 <option value="debit">Despesa</option>
                 <option value="credit">Receita</option>
                 <option value="payment">Pagamento de fatura</option>
               </select>
+              <span className="fld-help">Marca os lançamentos casados com este tipo.</span>
             </label>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <label className="fld">
               <span className="fld-label">Prioridade</span>
               <input
