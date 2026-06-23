@@ -37,6 +37,7 @@ import {
   CIcon,
   CAT_PALETTE,
   CAT_ICON_OPTIONS,
+  CAT_ICON_LABELS,
   defaultCatIcon,
 } from "../components/CatModal";
 import type { CatModalState } from "../components/CatModal";
@@ -231,6 +232,7 @@ function EditCatModal({ category, categories, onClose, onSave }: EditModalProps)
                   className={"swatch" + (color === p ? " on" : "")}
                   style={{ background: p }}
                   onClick={() => setColor(p)}
+                  title={p}
                   aria-label={p}
                 />
               ))}
@@ -245,6 +247,7 @@ function EditCatModal({ category, categories, onClose, onSave }: EditModalProps)
                 <button
                   key={ic}
                   onClick={() => setIconName(ic)}
+                  title={CAT_ICON_LABELS[ic] ?? ic}
                   style={{
                     width: 34, height: 34, borderRadius: 9,
                     display: "grid", placeItems: "center",
@@ -253,12 +256,15 @@ function EditCatModal({ category, categories, onClose, onSave }: EditModalProps)
                     color: iconName === ic ? "#fff" : "var(--ink-2)",
                     transition: "all .12s",
                   }}
-                  aria-label={ic}
+                  aria-label={CAT_ICON_LABELS[ic] ?? ic}
                 >
                   <CIcon name={ic} size={16} />
                 </button>
               ))}
             </div>
+            <span className="fld-help">
+              Ícone selecionado: <strong>{CAT_ICON_LABELS[iconName] ?? iconName}</strong> · passe o mouse para ver cada um
+            </span>
           </label>
 
           {err && <div className="fld-error">{err}</div>}

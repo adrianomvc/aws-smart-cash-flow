@@ -62,12 +62,53 @@ export function CIcon({ name, size = 15 }: { name: string; size?: number }) {
 // Constants
 // ---------------------------------------------------------------------------
 
-export const CAT_PALETTE = CATEGORY_HEX_PALETTE;
+// Picker palette: the chart palette first (visual continuity) plus extra distinct
+// hues, so a new category can be auto-assigned a fresh, still-unused color.
+export const CAT_PALETTE = [
+  ...CATEGORY_HEX_PALETTE,
+  "#2563eb", "#0891b2", "#16a34a", "#65a30d", "#ea580c", "#e11d48",
+  "#db2777", "#9333ea", "#7c3aed", "#4f46e5", "#0d9488", "#b45309",
+];
 
 export const CAT_ICON_OPTIONS = [
   "home", "wallet", "coins", "car", "cap", "shield", "plane", "spark",
   "flag", "target", "building", "receipt", "tag", "star", "zap", "globe",
+  "folder", "repeat",
 ];
+
+// Human-readable description for each icon (tooltip + "selected icon" caption).
+export const CAT_ICON_LABELS: Record<string, string> = {
+  home: "Casa / Moradia",
+  wallet: "Carteira / Alimentação",
+  coins: "Dinheiro / Investimento",
+  car: "Carro / Transporte",
+  cap: "Educação",
+  shield: "Saúde / Seguro",
+  plane: "Viagem / Lazer",
+  spark: "Filhos / Especial",
+  flag: "Meta",
+  target: "Objetivo",
+  building: "Impostos / Empresa",
+  receipt: "Contas / Serviços",
+  tag: "Etiqueta / Mercado",
+  star: "Favoritos",
+  zap: "Energia",
+  globe: "Internet / Global",
+  folder: "Pasta (genérico)",
+  repeat: "Assinatura / Recorrente",
+};
+
+/** First palette color not already used by a category, so new categories get a
+ * distinct color automatically. Falls back to a rotating color when all are used. */
+export function pickUnusedCatColor(categories: CategoryRead[]): string {
+  const used = new Set(
+    categories.filter((c) => c.color).map((c) => (c.color as string).toLowerCase()),
+  );
+  return (
+    CAT_PALETTE.find((p) => !used.has(p.toLowerCase())) ??
+    CAT_PALETTE[used.size % CAT_PALETTE.length]
+  );
+}
 
 // Default icon by category name, used when no icon was saved (mirrors prototype).
 export function defaultCatIcon(name: string): string {
@@ -111,8 +152,9 @@ export function CatModal({ state, categories, onClose, onSaveCat, onSaveSub }: C
     state.editing?.parent_category_id ??
     (categories.find((c) => !c.parent_category_id)?.id ?? "")
   );
-  const [color, setColor] = useState(CAT_PALETTE[0]);
-  const [iconName, setIconName] = useState("folder");
+  // Prefill from the category being edited; for a new one, auto-pick an unused color.
+  const [color, setColor] = useState(() => state.editing?.color ?? pickUnusedCatColor(categories));
+  const [iconName, setIconName] = useState(() => state.editing?.icon ?? "folder");
   const [subsText, setSubsText] = useState("");
   const [err, setErr] = useState("");
 
@@ -219,10 +261,14 @@ export function CatModal({ state, categories, onClose, onSaveCat, onSaveSub }: C
                       className={"swatch" + (color === p ? " on" : "")}
                       style={{ background: p }}
                       onClick={() => setColor(p)}
+                      title={p}
                       aria-label={p}
                     />
                   ))}
                 </div>
+                <span className="fld-help">
+                  {state.editing ? "Cor da categoria." : "Sugerimos uma cor ainda não usada — clique para trocar."}
+                </span>
               </label>
 
               {/* Icon */}
@@ -233,6 +279,7 @@ export function CatModal({ state, categories, onClose, onSaveCat, onSaveSub }: C
                     <button
                       key={ic}
                       onClick={() => setIconName(ic)}
+                      title={CAT_ICON_LABELS[ic] ?? ic}
                       style={{
                         width: 34, height: 34, borderRadius: 9,
                         display: "grid", placeItems: "center",
@@ -241,12 +288,15 @@ export function CatModal({ state, categories, onClose, onSaveCat, onSaveSub }: C
                         color: iconName === ic ? "#fff" : "var(--ink-2)",
                         transition: "all .12s",
                       }}
-                      aria-label={ic}
+                      aria-label={CAT_ICON_LABELS[ic] ?? ic}
                     >
                       <CIcon name={ic} size={16} />
                     </button>
                   ))}
                 </div>
+                <span className="fld-help">
+                  Ícone selecionado: <strong>{CAT_ICON_LABELS[iconName] ?? iconName}</strong> · passe o mouse para ver cada um
+                </span>
               </label>
 
               {/* Initial subcategories */}
