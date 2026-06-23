@@ -525,6 +525,7 @@ function RuleFromTxModal({ transaction, categories, session, onClose }: {
   const [categoryId, setCategoryId] = useState(transaction.category?.category_id ?? "");
   const [applyNow, setApplyNow] = useState(true);
   const [error, setError] = useState("");
+  const requestNewCategory = useContext(NewCategoryContext);
 
   // Prefill the name from the backend suggestion once it loads (unless edited).
   useEffect(() => {
@@ -610,11 +611,20 @@ function RuleFromTxModal({ transaction, categories, session, onClose }: {
 
           <label className="fld">
             <span className="fld-label">Aplicar a categoria</span>
-            <select className="fld-select" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+            <select
+              className="fld-select"
+              value={categoryId}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === NEW_CATEGORY_VALUE) { requestNewCategory?.((id) => setCategoryId(id)); return; }
+                setCategoryId(v);
+              }}
+            >
               <option value="">Selecione…</option>
               {categoryOptions.map((c) => (
                 <option key={c.id} value={c.id}>{c.label}</option>
               ))}
+              {requestNewCategory ? <option value={NEW_CATEGORY_VALUE}>＋ Nova categoria…</option> : null}
             </select>
           </label>
 
@@ -1640,6 +1650,7 @@ export function TransactionExplorer({
       <CatModal
         state={{ kind: "cat" }}
         categories={allCategories}
+        zIndex={400}
         onClose={() => setNewCat(null)}
         onSaveCat={(payload) => createCategoryInline.mutate({ kind: "cat", payload: { name: payload.name, color: payload.color, icon: payload.icon, subs: payload.subs } })}
         onSaveSub={(name, parentId) => createCategoryInline.mutate({ kind: "sub", name, parentId })}
