@@ -784,6 +784,11 @@ async def apply_rules(
                 matched = value.startswith(pattern)
             elif match_type == "equals":
                 matched = value == pattern
+            elif match_type == "regex":
+                try:
+                    matched = bool(re.search(pattern, value))
+                except re.error:
+                    matched = False
             else:
                 matched = False
             if matched:
