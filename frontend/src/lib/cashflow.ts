@@ -29,6 +29,7 @@ type DailyCashflowRow = {
   date: string;
   expenses: number;
   income: number;
+  payments: number;
   projectedBalance: number | null;
 };
 
@@ -56,7 +57,7 @@ export function buildDailyCashflow({
   const fallbackDate = items[0]?.date ?? isoDate(new Date());
   const start = parsedStart ?? parseIsoDate(fallbackDate) ?? new Date();
   const end = parsedEnd ?? start;
-  const byDate = new Map<string, { expenses: number; income: number }>();
+  const byDate = new Map<string, { expenses: number; income: number; payments: number }>();
   const sourceByDate = new Map<string, DailyCashflowItem>();
 
   for (const item of items) {
@@ -64,6 +65,7 @@ export function buildDailyCashflow({
     byDate.set(item.date, {
       expenses: -Math.abs(Number(item.expenses ?? 0)),
       income: Math.abs(Number(item.income ?? 0)),
+      payments: -Math.abs(Number(item.payments ?? 0)),
     });
   }
 
@@ -73,7 +75,7 @@ export function buildDailyCashflow({
   const cursor = new Date(start);
   while (cursor <= end) {
     const date = isoDate(cursor);
-    const bucket = byDate.get(date) ?? { expenses: 0, income: 0 };
+    const bucket = byDate.get(date) ?? { expenses: 0, income: 0, payments: 0 };
     const sourceItem = sourceByDate.get(date);
     cumulative += bucket.income + bucket.expenses;
     rows.push({
@@ -81,6 +83,7 @@ export function buildDailyCashflow({
       date,
       expenses: bucket.expenses,
       income: bucket.income,
+      payments: bucket.payments,
       projectedBalance: null,
     });
     cursor.setDate(cursor.getDate() + 1);

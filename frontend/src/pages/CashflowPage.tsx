@@ -851,7 +851,7 @@ function CashflowTooltip({
   view,
 }: {
   active?: boolean;
-  payload?: Array<{ payload?: { balance?: number | null; date?: string; expenses?: number; income?: number; month?: string; projectedBalance?: number | null }; value?: number }>;
+  payload?: Array<{ payload?: { balance?: number | null; date?: string; expenses?: number; income?: number; month?: string; pay?: number; projectedBalance?: number | null }; value?: number }>;
   view: "day" | "month";
 }) {
   const pt = payload?.[0]?.payload;
@@ -862,6 +862,7 @@ function CashflowTooltip({
       <strong style={{ display: "block", marginBottom: 6, fontSize: 13 }}>{label}</strong>
       <div style={{ color: "var(--acc-ink)" }}>Receitas: {moneyAbs(pt.income ?? 0)}</div>
       <div style={{ color: "var(--neg)" }}>Saídas: {moneyAbs(pt.expenses ?? 0)}</div>
+      {view === "day" && pt.pay ? <div style={{ color: "var(--warn)" }}>Pagamento de fatura: {moneyAbs(pt.pay)}</div> : null}
       {pt.balance != null ? <div>Saldo: {money(pt.balance)}</div> : null}
       {pt.projectedBalance != null ? <div className="faint">Projetado: {money(pt.projectedBalance)}</div> : null}
     </div>
@@ -973,6 +974,7 @@ export function CashflowPage({
     () => chartRows.map((row) => {
       const bal = row.balance ?? 0;
       const net = row.income + row.expenses;
+      const pay = "payments" in row ? (row as { payments: number }).payments : 0;
       return {
         ...row,
         netFlow: net,
@@ -980,6 +982,7 @@ export function CashflowPage({
         balNeg: Math.min(0, bal),
         netPos: Math.max(0, net),
         netNeg: Math.min(0, net),
+        pay,
       };
     }),
     [chartRows],
@@ -1193,7 +1196,12 @@ export function CashflowPage({
                   />
                   <Tooltip content={<CashflowTooltip view={chartMode} />} wrapperStyle={{ zIndex: 30, pointerEvents: "none" }} />
                   <Bar dataKey="income" name="Receitas" fill="var(--acc)" radius={[4, 4, 0, 0]} isAnimationActive={false} />
-                  <Bar dataKey="expenses" name="Saídas" fill="var(--neg)" radius={[0, 0, 4, 4]} isAnimationActive={false} />
+                  <Bar dataKey="expenses" name="Saídas" fill="var(--neg)" stackId="out" radius={[0, 0, 4, 4]} isAnimationActive={false} />
+                  {/* Invoice payment: amber bar in day mode only (cash basis). Not shown
+                      in month mode (accrual line) to avoid looking like double spend. */}
+                  {chartMode === "day" && (
+                    <Bar dataKey="pay" name="Pagamento de fatura" fill="var(--warn)" stackId="out" radius={[0, 0, 4, 4]} isAnimationActive={false} />
+                  )}
                   <Line dataKey="balance" name="Saldo" stroke="var(--info)" strokeWidth={2.5} dot={false} connectNulls isAnimationActive={false} />
                 </ComposedChart>
               ) : (
@@ -1239,6 +1247,9 @@ export function CashflowPage({
               <>
                 <span className="legend-item"><span className="lz" style={{ background: "var(--acc)" }} />Receitas</span>
                 <span className="legend-item"><span className="lz" style={{ background: "var(--neg)" }} />Despesas</span>
+                {chartMode === "day" && (
+                  <span className="legend-item"><span className="lz" style={{ background: "var(--warn)" }} />Pagamento de fatura</span>
+                )}
                 <span className="legend-item"><span className="lz" style={{ background: "var(--info)" }} />Saldo acumulado</span>
               </>
             ) : (
