@@ -184,19 +184,33 @@ function faturaMonthLabel(iso?: string | null): string {
   return `${m}/${d.getFullYear()}`;
 }
 
-function CardTransactionList({ emptyMessage, items, loading, onOpenTransaction }: {
+function CardTransactionList({ emptyMessage, items, loading, onOpenTransaction, sort, sortDir, onSort }: {
   emptyMessage: string;
   items: TransactionRead[];
   loading: boolean;
   onOpenTransaction: (t: TransactionRead) => void;
+  sort?: string;
+  sortDir?: "asc" | "desc";
+  onSort?: (col: string) => void;
 }) {
   if (loading) return <LoadingRows />;
   if (!items.length) return <EmptyState message={emptyMessage} />;
+  const arrow = (col: string) => (sort === col ? (sortDir === "asc" ? " ▲" : " ▼") : "");
+  const sortable = (col: string, label: string, extraClass = "") => (
+    onSort
+      ? <th className={extraClass} style={{ cursor: "pointer", userSelect: "none" }} onClick={() => onSort(col)} title="Clique para ordenar">{label}{arrow(col)}</th>
+      : <th className={extraClass}>{label}</th>
+  );
   return (
     <div style={{ overflowX: "auto" }}>
       <table className="tbl">
         <thead>
-          <tr><th>Data / Fatura</th><th>Descrição</th><th>Tipo</th><th className="num">Valor</th></tr>
+          <tr>
+            {sortable("transaction_date", "Data / Fatura")}
+            {sortable("description", "Descrição")}
+            {sortable("direction", "Tipo")}
+            {sortable("amount", "Valor", "num")}
+          </tr>
         </thead>
         <tbody>
           {items.map((t) => (
@@ -343,15 +357,20 @@ export function CardsPage({
   // page through every transaction in place (without jumping to Transações).
   const CARD_LEDGER_PAGE_SIZE = 12;
   const [ledgerPage, setLedgerPage] = useState(0);
-  // Sort the invoice list by purchase date or by amount — sorting by value brings
-  // the big (often parceled) charges to the top instead of burying them.
-  const [ledgerSort, setLedgerSort] = useState<"transaction_date" | "amount">("transaction_date");
-  useEffect(() => { setLedgerPage(0); }, [selectedCard?.id, period.dateFrom, period.dateTo, ledgerSort]);
+  // Sort the invoice list by clicking a column header. Sorting by value brings the
+  // big (often parceled) charges to the top instead of burying them by purchase date.
+  const [ledgerSort, setLedgerSort] = useState<string>("transaction_date");
+  const [ledgerSortDir, setLedgerSortDir] = useState<"asc" | "desc">("desc");
+  function toggleLedgerSort(col: string) {
+    if (col === ledgerSort) setLedgerSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setLedgerSort(col); setLedgerSortDir("desc"); }
+  }
+  useEffect(() => { setLedgerPage(0); }, [selectedCard?.id, period.dateFrom, period.dateTo, ledgerSort, ledgerSortDir]);
   const ledgerParams: Record<string, string> = {
     limit: String(CARD_LEDGER_PAGE_SIZE),
     offset: String(ledgerPage * CARD_LEDGER_PAGE_SIZE),
     sort_by: ledgerSort,
-    sort_dir: "desc",
+    sort_dir: ledgerSortDir,
     source_type: "credit_card_statement",
   };
   if (selectedCard) ledgerParams.credit_card_id = selectedCard.id;
@@ -689,10 +708,6 @@ export function CardsPage({
               </div>
             </div>
             <div className="spacer" />
-            <div className="seg" style={{ marginRight: 8 }}>
-              <button className={ledgerSort === "transaction_date" ? "on" : ""} onClick={() => setLedgerSort("transaction_date")} type="button" title="Ordenar por data da compra">Data</button>
-              <button className={ledgerSort === "amount" ? "on" : ""} onClick={() => setLedgerSort("amount")} type="button" title="Ordenar por valor — traz as parcelas grandes ao topo">Valor</button>
-            </div>
             <button className="btn btn-quiet btn-sm" type="button" onClick={openInvoiceTransactions}>
               Ver todas <KIcon name="chevR" size={13} />
             </button>
@@ -703,6 +718,9 @@ export function CardsPage({
               items={ledgerItems}
               loading={cardLedger.isLoading}
               onOpenTransaction={openTransaction}
+              sort={ledgerSort}
+              sortDir={ledgerSortDir}
+              onSort={toggleLedgerSort}
             />
             {ledgerTotal > CARD_LEDGER_PAGE_SIZE && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 12 }}>
