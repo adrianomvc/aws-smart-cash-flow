@@ -439,12 +439,14 @@ def get_category_ranking(
     date_from: date | None = None,
     date_to: date | None = None,
     limit: int = Query(default=10, ge=1, le=50),
+    direction: str = Query(default="debit", pattern="^(debit|credit|payment)$"),
 ) -> CategoryRankingResponse:
     items = DashboardService(db).category_ranking(
         workspace_id=auth.workspace_id,
         date_from=date_from,
         date_to=date_to,
         limit=limit,
+        direction=direction,
     )
     return CategoryRankingResponse(workspace_id=auth.workspace_id, items=items)
 
@@ -457,6 +459,7 @@ def get_subcategory_ranking(
     date_to: date | None = None,
     category_id: str | None = None,
     limit: int = Query(default=10, ge=1, le=50),
+    direction: str = Query(default="debit", pattern="^(debit|credit|payment)$"),
 ) -> SubcategoryRankingResponse:
     items = DashboardService(db).subcategory_ranking(
         workspace_id=auth.workspace_id,
@@ -464,6 +467,7 @@ def get_subcategory_ranking(
         date_to=date_to,
         category_id=category_id,
         limit=limit,
+        direction=direction,
     )
     return SubcategoryRankingResponse(workspace_id=auth.workspace_id, items=items)
 

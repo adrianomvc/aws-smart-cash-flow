@@ -323,6 +323,7 @@ class DashboardService:
         date_from: date | None,
         date_to: date | None,
         limit: int,
+        direction: str = "debit",
     ) -> list[dict[str, object]]:
         filters = self._transaction_filters(
             workspace_id=workspace_id,
@@ -368,7 +369,7 @@ class DashboardService:
                     parent.workspace_id == workspace_id,
                 ),
             )
-            .where(*filters, Transaction.direction == "debit")
+            .where(*filters, Transaction.direction == direction)
             .group_by(display_id, display_name, display_color, display_icon)
         ).all()
 
@@ -409,6 +410,7 @@ class DashboardService:
         date_to: date | None,
         category_id: str | None,
         limit: int,
+        direction: str = "debit",
     ) -> list[dict[str, object]]:
         filters = self._transaction_filters(
             workspace_id=workspace_id,
@@ -455,7 +457,7 @@ class DashboardService:
                     parent.workspace_id == workspace_id,
                 ),
             )
-            .where(*filters, Transaction.direction == "debit")
+            .where(*filters, Transaction.direction == direction)
             .group_by(Category.id, parent_id, subcategory_name, parent_color)
         )
         if category_id is not None:
