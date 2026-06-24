@@ -299,7 +299,26 @@ export function CardsPage({
   if (period.dateFrom) cardQueryParams.due_from = period.dateFrom;
   if (period.dateTo) cardQueryParams.due_to = period.dateTo;
   const cardQuery = withQueryParams("", cardQueryParams);
-  const cards = useQuery({ queryKey: ["card-transactions", session.token, cardQuery], queryFn: () => getTransactions(session, cardQuery) });
+  // The chart, category breakdown and per-day aggregate must cover the WHOLE invoice.
+  // A single page is capped at 100 and sorted by purchase date, which dropped
+  // old-purchase-date installments (e.g. a 24/02 charge billed in April) — so page
+  // past the 100 limit and merge. Server-side aggregates (total_expense/income) come
+  // from the first page (computed over all matching rows).
+  const cards = useQuery({
+    queryKey: ["card-transactions", session.token, cardQuery],
+    queryFn: async () => {
+      const first = await getTransactions(session, withQueryParams("", { ...cardQueryParams, offset: "0" }));
+      const items = [...first.items];
+      let offset = 100;
+      while (items.length < (first.total ?? items.length) && offset < 2000) {
+        const page = await getTransactions(session, withQueryParams("", { ...cardQueryParams, offset: String(offset) }));
+        if (page.items.length === 0) break;
+        items.push(...page.items);
+        offset += 100;
+      }
+      return { ...first, items };
+    },
+  });
 
   // Day-by-day purchases of the selected invoice/period (by purchase date) + a
   // running cumulative — a visual tracking of how the invoice builds up.
