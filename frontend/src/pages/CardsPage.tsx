@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Area, Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from "recharts";
 
 import {
   createCreditCard,
@@ -14,6 +17,7 @@ import {
   amountClass,
   apiErrorMessage,
   compactMoneyAbs,
+  compactMoneyAxis,
   compactValueAbs,
   dateLabel,
   directionLabel,
@@ -292,6 +296,20 @@ export function CardsPage({
   if (period.dateTo) cardQueryParams.due_to = period.dateTo;
   const cardQuery = withQueryParams("", cardQueryParams);
   const cards = useQuery({ queryKey: ["card-transactions", session.token, cardQuery], queryFn: () => getTransactions(session, cardQuery) });
+
+  // Day-by-day purchases of the selected invoice/period (by purchase date) + a
+  // running cumulative — a visual tracking of how the invoice builds up.
+  const dailySpend = useMemo(() => {
+    const byDay = new Map<string, number>();
+    for (const t of cards.data?.items ?? []) {
+      if (t.direction !== "debit") continue;
+      byDay.set(t.transaction_date, (byDay.get(t.transaction_date) ?? 0) + Math.abs(Number(t.amount ?? 0)));
+    }
+    let acc = 0;
+    return [...byDay.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, value]) => { acc += value; return { date, value, acc }; });
+  }, [cards.data?.items]);
 
   // Separate, paginated query for the "Lançamentos da fatura" list so the user can
   // page through every transaction in place (without jumping to Transações).
@@ -575,6 +593,44 @@ export function CardsPage({
           </div>
         )}
       </div>
+
+      {/* ── Compras dia a dia + acumulado ── */}
+      {dailySpend.length > 0 && (
+        <div className="card card-pad" style={{ marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <span className="eyebrow">Compras dia a dia · {selectedCard ? selectedCard.name : "todos os cartões"}</span>
+            <span className="mono" style={{ fontSize: 12.5, color: "var(--ink-3)" }}>
+              {dailySpend.length} dia{dailySpend.length === 1 ? "" : "s"} · acumulado {moneyAbs(dailySpend[dailySpend.length - 1]?.acc)}
+            </span>
+          </div>
+          <ResponsiveContainer width="100%" height={220}>
+            <ComposedChart data={dailySpend} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+              <defs>
+                <linearGradient id="cardAcc" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--acc)" stopOpacity={0.18} />
+                  <stop offset="100%" stopColor="var(--acc)" stopOpacity={0.01} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" vertical={false} />
+              <XAxis dataKey="date" tickFormatter={(d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`} tick={{ fontSize: 11, fill: "var(--ink-faint)" }} axisLine={false} tickLine={false} />
+              <YAxis tickFormatter={compactMoneyAxis} tick={{ fontSize: 11, fill: "var(--ink-faint)" }} axisLine={false} tickLine={false} width={52} />
+              <YAxis yAxisId="acc" orientation="right" tickFormatter={compactMoneyAxis} tick={{ fontSize: 11, fill: "var(--ink-faint)" }} axisLine={false} tickLine={false} width={52} />
+              <Tooltip
+                contentStyle={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 10, fontSize: 12, color: "var(--ink)" }}
+                labelFormatter={(d) => dateLabel(String(d))}
+                formatter={(v: number, n: string) => [moneyAbs(v), n === "acc" ? "Acumulado" : "Compras do dia"]}
+              />
+              <Area yAxisId="acc" type="monotone" dataKey="acc" stroke="none" fill="url(#cardAcc)" isAnimationActive={false} legendType="none" tooltipType="none" />
+              <Bar dataKey="value" name="value" fill="var(--acc)" maxBarSize={22} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              <Line yAxisId="acc" type="monotone" dataKey="acc" name="acc" stroke="var(--acc-strong)" strokeWidth={2} dot={false} isAnimationActive={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
+          <div className="legend" style={{ marginTop: 10 }}>
+            <span className="legend-item"><span className="lz" style={{ background: "var(--acc)" }} />Compras do dia</span>
+            <span className="legend-item"><span className="lz" style={{ background: "var(--acc-strong)" }} />Acumulado no ciclo</span>
+          </div>
+        </div>
+      )}
 
       {/* ── 4 estágios ── */}
       <div className="grid cols-4" style={{ marginBottom: 20 }}>
