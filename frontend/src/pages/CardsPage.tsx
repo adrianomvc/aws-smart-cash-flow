@@ -200,7 +200,11 @@ function CardTransactionList({ emptyMessage, items, loading, onOpenTransaction }
         </thead>
         <tbody>
           {items.map((t) => (
-            <tr key={t.id} style={{ cursor: "pointer" }} onClick={() => onOpenTransaction(t)}>
+            <tr
+              key={t.id}
+              style={{ cursor: "pointer", ...(t.installment_total ? { background: "var(--warn-soft)" } : {}) }}
+              onClick={() => onOpenTransaction(t)}
+            >
               <td className="mono t-sub" style={{ whiteSpace: "nowrap" }}>
                 <div>{dateLabel(t.transaction_date)}</div>
                 {t.invoice_due_date && (
@@ -300,26 +304,34 @@ export function CardsPage({
   // Day-by-day purchases of the selected invoice/period (by purchase date) + a
   // running cumulative — a visual tracking of how the invoice builds up.
   const dailySpend = useMemo(() => {
-    const byDay = new Map<string, number>();
+    const byDay = new Map<string, { value: number; inst: number }>();
     for (const t of cards.data?.items ?? []) {
       if (t.direction !== "debit") continue;
-      byDay.set(t.transaction_date, (byDay.get(t.transaction_date) ?? 0) + Math.abs(Number(t.amount ?? 0)));
+      const amt = Math.abs(Number(t.amount ?? 0));
+      const cur = byDay.get(t.transaction_date) ?? { value: 0, inst: 0 };
+      cur.value += amt;
+      if (t.installment_total) cur.inst += amt; // parceladas (compradas neste dia)
+      byDay.set(t.transaction_date, cur);
     }
     let acc = 0;
     return [...byDay.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([date, value]) => { acc += value; return { date, value, acc }; });
+      .map(([date, d]) => { acc += d.value; return { date, value: d.value, regular: d.value - d.inst, inst: d.inst, acc }; });
   }, [cards.data?.items]);
+  const hasInstallmentsInChart = dailySpend.some((d) => d.inst > 0);
 
   // Separate, paginated query for the "Lançamentos da fatura" list so the user can
   // page through every transaction in place (without jumping to Transações).
   const CARD_LEDGER_PAGE_SIZE = 12;
   const [ledgerPage, setLedgerPage] = useState(0);
-  useEffect(() => { setLedgerPage(0); }, [selectedCard?.id, period.dateFrom, period.dateTo]);
+  // Sort the invoice list by purchase date or by amount — sorting by value brings
+  // the big (often parceled) charges to the top instead of burying them.
+  const [ledgerSort, setLedgerSort] = useState<"transaction_date" | "amount">("transaction_date");
+  useEffect(() => { setLedgerPage(0); }, [selectedCard?.id, period.dateFrom, period.dateTo, ledgerSort]);
   const ledgerParams: Record<string, string> = {
     limit: String(CARD_LEDGER_PAGE_SIZE),
     offset: String(ledgerPage * CARD_LEDGER_PAGE_SIZE),
-    sort_by: "transaction_date",
+    sort_by: ledgerSort,
     sort_dir: "desc",
     source_type: "credit_card_statement",
   };
@@ -618,15 +630,20 @@ export function CardsPage({
               <Tooltip
                 contentStyle={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 10, fontSize: 12, color: "var(--ink)" }}
                 labelFormatter={(d) => dateLabel(String(d))}
-                formatter={(v: number, n: string) => [moneyAbs(v), n === "acc" ? "Acumulado" : "Compras do dia"]}
+                formatter={(v: number, n: string) => {
+                  if (!v) return ["", ""] as [string, string];
+                  return [moneyAbs(v), n === "acc" ? "Acumulado" : n === "inst" ? "Parcelas (comprado neste dia)" : "Compras à vista"];
+                }}
               />
               <Area yAxisId="acc" type="monotone" dataKey="acc" stroke="none" fill="url(#cardAcc)" isAnimationActive={false} legendType="none" tooltipType="none" />
-              <Bar dataKey="value" name="value" fill="var(--acc)" maxBarSize={22} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              <Bar dataKey="regular" name="regular" stackId="d" fill="var(--acc)" maxBarSize={22} isAnimationActive={false} />
+              <Bar dataKey="inst" name="inst" stackId="d" fill="var(--warn)" maxBarSize={22} radius={[3, 3, 0, 0]} isAnimationActive={false} />
               <Line yAxisId="acc" type="monotone" dataKey="acc" name="acc" stroke="var(--acc-strong)" strokeWidth={2} dot={false} isAnimationActive={false} />
             </ComposedChart>
           </ResponsiveContainer>
           <div className="legend" style={{ marginTop: 10 }}>
-            <span className="legend-item"><span className="lz" style={{ background: "var(--acc)" }} />Compras do dia</span>
+            <span className="legend-item"><span className="lz" style={{ background: "var(--acc)" }} />Compras à vista</span>
+            {hasInstallmentsInChart && <span className="legend-item"><span className="lz" style={{ background: "var(--warn)" }} />Parcelas (no dia da compra)</span>}
             <span className="legend-item"><span className="lz" style={{ background: "var(--acc-strong)" }} />Acumulado no ciclo</span>
           </div>
         </div>
@@ -653,6 +670,10 @@ export function CardsPage({
               </div>
             </div>
             <div className="spacer" />
+            <div className="seg" style={{ marginRight: 8 }}>
+              <button className={ledgerSort === "transaction_date" ? "on" : ""} onClick={() => setLedgerSort("transaction_date")} type="button" title="Ordenar por data da compra">Data</button>
+              <button className={ledgerSort === "amount" ? "on" : ""} onClick={() => setLedgerSort("amount")} type="button" title="Ordenar por valor — traz as parcelas grandes ao topo">Valor</button>
+            </div>
             <button className="btn btn-quiet btn-sm" type="button" onClick={openInvoiceTransactions}>
               Ver todas <KIcon name="chevR" size={13} />
             </button>
