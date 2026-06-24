@@ -7,6 +7,7 @@ import {
   getCalendarEvents,
   getCreditCards,
   getCreditCardInstallments,
+  getDataQuality,
   getRecurringExpenses,
   getTransactions,
   getWeekdaySpending,
@@ -381,6 +382,10 @@ export function CalendarPage({
     queryFn: () => getCreditCards(session),
     staleTime: 5 * 60 * 1000,
   });
+  const dataQuality = useQuery({
+    queryKey: ["calendar-data-quality", session.token, period.query],
+    queryFn: () => getDataQuality(session, period.query),
+  });
 
   const calendarEvents = useMemo(() => buildCalendarEvents({
     apiEvents: persistedEvents.data?.items,
@@ -646,8 +651,11 @@ export function CalendarPage({
         </div>
       </div>
 
-      {/* ── Próximos + Dias críticos (abaixo do calendário) ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20, alignItems: "stretch" }}>
+      {/* ── Cards abaixo do calendário — ordem visual via flex (order): Temporal → Trio → Próximos ── */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 20 }}>
+
+      {/* Próximos · Dias críticos · Pendências */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, order: 3, alignItems: "stretch" }}>
 
         {/* Próximos compromissos */}
         <div className="card" style={{ minHeight: 0 }}>
@@ -773,10 +781,55 @@ export function CalendarPage({
               )}
             </div>
           </div>
+
+          {/* Pendências */}
+          <div className="card" style={{ minHeight: 0 }}>
+            <div className="card-head">
+              <div className="kpi-ic" style={{ background: "var(--info-soft)", color: "var(--info)" }}>
+                <CalIcon name="alert" size={15} />
+              </div>
+              <div>
+                <div className="ttl">Pendências</div>
+                <div className="sub">A resolver no período</div>
+              </div>
+            </div>
+            <div className="card-body" style={{ padding: "10px 14px" }}>
+              {dataQuality.isLoading ? (
+                <div className="state" style={{ padding: "24px 16px" }}><div className="state-ic"><Spinner size={20} /></div><p>Carregando...</p></div>
+              ) : (dataQuality.data?.uncategorized_count ?? 0) + (dataQuality.data?.duplicate_imports ?? 0) + (dataQuality.data?.imports_with_errors ?? 0) === 0 ? (
+                <div className="state" style={{ padding: "24px 16px" }}>
+                  <div className="state-ic"><CalIcon name="check" size={22} /></div>
+                  <h4>Tudo em dia</h4>
+                  <p>Sem pendências no período.</p>
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <button className="row-item" type="button" disabled={(dataQuality.data?.uncategorized_count ?? 0) === 0}
+                    onClick={() => onOpenTransactions({ dateFrom: period.dateFrom, dateTo: period.dateTo, periodPreset: period.periodPreset, label: "Não categorizadas" })}
+                    style={{ padding: "9px 8px", borderRadius: 9, width: "100%", textAlign: "left", opacity: (dataQuality.data?.uncategorized_count ?? 0) === 0 ? 0.5 : 1 }}>
+                    <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>Não categorizadas</div>
+                    <span className="badge b-warn">{dataQuality.data?.uncategorized_count ?? 0}</span>
+                  </button>
+                  <button className="row-item" type="button" disabled={!onOpenImports || (dataQuality.data?.duplicate_imports ?? 0) === 0}
+                    onClick={() => onOpenImports?.()}
+                    style={{ padding: "9px 8px", borderRadius: 9, width: "100%", textAlign: "left", opacity: (dataQuality.data?.duplicate_imports ?? 0) === 0 ? 0.5 : 1 }}>
+                    <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>Possíveis duplicados</div>
+                    <span className="badge b-info">{dataQuality.data?.duplicate_imports ?? 0}</span>
+                  </button>
+                  <button className="row-item" type="button" disabled={!onOpenImports || (dataQuality.data?.imports_with_errors ?? 0) === 0}
+                    onClick={() => onOpenImports?.()}
+                    style={{ padding: "9px 8px", borderRadius: 9, width: "100%", textAlign: "left", opacity: (dataQuality.data?.imports_with_errors ?? 0) === 0 ? 0.5 : 1 }}>
+                    <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>Importações com erro</div>
+                    <span className="badge b-neg">{dataQuality.data?.imports_with_errors ?? 0}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
       </div>
 
       {/* ── Trio: Média semanal · Recorrências · Faturas ── */}
-      <div className="cal-trio">
+      <div className="cal-trio" style={{ order: 2 }}>
 
         {/* Saídas por categoria */}
         <div className="card card-pad cal-trio-card">
@@ -917,8 +970,8 @@ export function CalendarPage({
         </div>
       </div>
 
-      {/* ── Média por dia da semana + Entradas ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 18 }}>
+      {/* ── Média por dia da semana + Entradas (Visão temporal, no topo via order) ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, order: 1 }}>
 
         {/* Média por dia da semana */}
         <div className="card card-pad cal-trio-card">
@@ -1015,6 +1068,7 @@ export function CalendarPage({
             Ver entradas <CalIcon name="chevR" size={13} />
           </button>
         </div>
+      </div>
       </div>
 
       {/* ── Modal: Novo compromisso ── */}
