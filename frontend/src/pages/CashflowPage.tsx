@@ -511,7 +511,7 @@ function SankeyPanel({
     if (sobra > 0) rightNodes.push({ id: "sobra", label: "Sobrou", value: sobra, color: "#1f8a5b", kind: "save" });
     columns = [
       { id: "sources", nodes: sources },
-      { id: "income",  nodes: [{ id: "total", label: "Saldo", value: totalIncome, color: "#3d7d63" }] },
+      { id: "income",  nodes: [{ id: "total", label: "Renda total", value: totalIncome, color: "#3d7d63" }] },
       { id: "right",   nodes: rightNodes },
     ];
     links = [
@@ -547,7 +547,7 @@ function SankeyPanel({
     }
     columns = [
       { id: "sources", nodes: sources },
-      { id: "income",  nodes: [{ id: "total", label: "Saldo", value: totalIncome, color: "#3d7d63" }] },
+      { id: "income",  nodes: [{ id: "total", label: "Renda total", value: totalIncome, color: "#3d7d63" }] },
       { id: "cats",    nodes: expenseCats },
       { id: "subs",    nodes: subNodes },
     ];
