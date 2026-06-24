@@ -405,7 +405,16 @@ export function CalendarPage({
   // ── Aggregates for the KPI strip + side panels (respect the active filter) ──
   const outCount = useMemo(() => filteredEvents.filter((e) => Number(e.amount) < 0).length, [filteredEvents]);
   const inCount = useMemo(() => filteredEvents.filter((e) => Number(e.amount) > 0).length, [filteredEvents]);
-  const monthParts = period.dateFrom.split("-").map(Number);
+  // The grid needs a single month. When the period has no specific month (e.g.
+  // "Todos"/personalizado leaves dateFrom empty) fall back to the current month so
+  // the calendar still renders instead of going blank.
+  const gridMonthFrom = useMemo(() => {
+    const p = period.dateFrom.split("-").map(Number);
+    if (p[0] && p[1]) return period.dateFrom;
+    const now = new Date();
+    return isoDate(new Date(now.getFullYear(), now.getMonth(), 1));
+  }, [period.dateFrom]);
+  const monthParts = gridMonthFrom.split("-").map(Number);
   const daysInMonth = monthParts[0] && monthParts[1] ? new Date(monthParts[0], monthParts[1], 0).getDate() : 30;
   const daysWith = useMemo(() => new Set(filteredEvents.map((e) => e.date)).size, [filteredEvents]);
   const heaviest = useMemo(() => {
@@ -608,7 +617,7 @@ export function CalendarPage({
           <CalendarMonthGrid
             events={filteredEvents}
             allEvents={filteredEvents}
-            dateFrom={period.dateFrom}
+            dateFrom={gridMonthFrom}
             dateTo={period.dateTo}
             loading={isLoading}
             onEventClick={drilldown}
