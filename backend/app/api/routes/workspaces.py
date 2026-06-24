@@ -28,6 +28,31 @@ class CurrentWorkspaceResponse(BaseModel):
     created_at: datetime
 
 
+class WorkspaceSummary(BaseModel):
+    workspace_id: str
+    workspace_name: str
+    role: str
+
+
+class WorkspaceListResponse(BaseModel):
+    items: list[WorkspaceSummary]
+
+
+@router.get("")
+def list_workspaces(
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> WorkspaceListResponse:
+    """All workspaces the user belongs to — feeds the workspace switcher."""
+    rows = WorkspaceService(db).list_user_workspaces(auth.user_id)
+    return WorkspaceListResponse(
+        items=[
+            WorkspaceSummary(workspace_id=w.id, workspace_name=w.name, role=role)
+            for w, role in rows
+        ]
+    )
+
+
 @router.get("/current")
 async def get_current_workspace(
     auth: AuthContext = AuthDependency,

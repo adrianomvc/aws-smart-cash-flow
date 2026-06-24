@@ -163,3 +163,26 @@ def test_rename_workspace_returns_updated_workspace(client: TestClient) -> None:
     # The new name persists on the next read.
     after = client.get("/v1/workspaces/current", headers={"Authorization": "Bearer local-dev"})
     assert after.json()["workspace_name"] == "Família Costa"
+
+
+def test_list_workspaces_returns_the_users_workspaces(client: TestClient) -> None:
+    # Ensure the local workspace/membership exist.
+    client.get("/v1/workspaces/current", headers={"Authorization": "Bearer local-dev"})
+
+    response = client.get("/v1/workspaces", headers={"Authorization": "Bearer local-dev"})
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert len(items) >= 1
+    assert any(i["role"] == "owner" for i in items)
+
+
+def test_x_workspace_id_header_is_ignored_when_not_a_member(client: TestClient) -> None:
+    client.get("/v1/workspaces/current", headers={"Authorization": "Bearer local-dev"})
+    # A workspace the local user is NOT a member of must not be honored.
+    response = client.get(
+        "/v1/workspaces/current",
+        headers={"Authorization": "Bearer local-dev", "X-Workspace-Id": str(uuid4())},
+    )
+    assert response.status_code == 200
+    assert response.json()["workspace_id"] == auth_module.LOCAL_WORKSPACE_ID
