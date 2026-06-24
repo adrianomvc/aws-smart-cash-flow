@@ -354,8 +354,22 @@ export function CalendarPage({
   });
   const recentTransactions = useQuery({
     queryKey: ["calendar-recent-transactions", session.token, period.query],
-    queryFn: () =>
-      getTransactions(session, withQueryParams(period.query, { limit: "500", sort_by: "transaction_date", sort_dir: "desc" })),
+    // The list endpoint caps limit at 100, so limit=500 used to 422 and the calendar
+    // showed no real transactions (only forecasts). Page through at 100/request and
+    // merge so every day's movements appear.
+    queryFn: async () => {
+      const base = { sort_by: "transaction_date", sort_dir: "desc", limit: "100" };
+      const first = await getTransactions(session, withQueryParams(period.query, { ...base, offset: "0" }));
+      const items = [...first.items];
+      let offset = 100;
+      while (items.length < (first.total ?? items.length) && offset < 1000) {
+        const page = await getTransactions(session, withQueryParams(period.query, { ...base, offset: String(offset) }));
+        if (page.items.length === 0) break;
+        items.push(...page.items);
+        offset += 100;
+      }
+      return { ...first, items };
+    },
   });
   const categories = useCategories(session);
   const weekday = useQuery({
