@@ -1165,6 +1165,8 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
   const [tab, setTab] = useState<"rules" | "aliases" | "ai">("rules");
   const [ruleSearch, setRuleSearch] = useState("");
   const [ruleOriginFilter, setRuleOriginFilter] = useState<"all" | "ai" | "manual">("all");
+  const [ruleSort, setRuleSort] = useState<"priority" | "name" | "category" | "recent">("priority");
+  const [ruleSortDir, setRuleSortDir] = useState<"asc" | "desc">("asc");
   const [rulePage, setRulePage] = useState(0);
   const [rulePageSize, setRulePageSize] = useState(10);
   const dataQuality = useQuery({
@@ -1337,9 +1339,25 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
     if (ruleQuery && !(r.name.toLowerCase().includes(ruleQuery) || r.pattern.toLowerCase().includes(ruleQuery))) return false;
     return true;
   });
-  const rulePageCount = Math.max(1, Math.ceil(filteredRules.length / rulePageSize));
+  const catLabelById = (id: string | null) =>
+    id ? (categoryOptions.find((c) => c.id === id)?.label ?? "") : "";
+  const sortDirMul = ruleSortDir === "asc" ? 1 : -1;
+  const sortedRules = [...filteredRules].sort((a, b) => {
+    let cmp: number;
+    if (ruleSort === "name") cmp = a.name.localeCompare(b.name, "pt-BR");
+    else if (ruleSort === "category") cmp = catLabelById(a.category_id).localeCompare(catLabelById(b.category_id), "pt-BR");
+    else if (ruleSort === "recent") cmp = (a.created_at ?? "").localeCompare(b.created_at ?? "");
+    else cmp = a.priority - b.priority || a.name.localeCompare(b.name, "pt-BR"); // priority
+    return cmp * sortDirMul;
+  });
+  function toggleRuleSort(col: typeof ruleSort) {
+    if (ruleSort === col) setRuleSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setRuleSort(col); setRuleSortDir(col === "recent" ? "desc" : "asc"); }
+    setRulePage(0);
+  }
+  const rulePageCount = Math.max(1, Math.ceil(sortedRules.length / rulePageSize));
   const safeRulePage = Math.min(rulePage, rulePageCount - 1);
-  const pagedRules = filteredRules.slice(
+  const pagedRules = sortedRules.slice(
     safeRulePage * rulePageSize,
     safeRulePage * rulePageSize + rulePageSize,
   );
@@ -1534,10 +1552,23 @@ export function RulesPage({ session, embedded = false }: { session: ApiSession; 
             <table className="tbl">
               <thead>
                 <tr>
-                  <th>Prioridade</th>
-                  <th>Nome</th>
+                  {([
+                    ["priority", "Prioridade"],
+                    ["name", "Nome"],
+                  ] as [typeof ruleSort, string][]).map(([col, label]) => (
+                    <th
+                      key={col}
+                      onClick={() => toggleRuleSort(col)}
+                      style={{ cursor: "pointer", userSelect: "none" }}
+                      title="Clique para ordenar"
+                    >
+                      {label}{ruleSort === col ? (ruleSortDir === "asc" ? " ▲" : " ▼") : ""}
+                    </th>
+                  ))}
                   <th>Condição</th>
-                  <th>Categoria</th>
+                  <th onClick={() => toggleRuleSort("category")} style={{ cursor: "pointer", userSelect: "none" }} title="Clique para ordenar">
+                    Categoria{ruleSort === "category" ? (ruleSortDir === "asc" ? " ▲" : " ▼") : ""}
+                  </th>
                   <th>Direção</th>
                   <th>Status</th>
                   <th></th>

@@ -2,7 +2,6 @@ import { Dispatch, SetStateAction, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Area,
-  AreaChart,
   Bar,
   CartesianGrid,
   ComposedChart,
@@ -30,6 +29,7 @@ import {
   getSpendingBreakdown,
 } from "../lib/api";
 import {
+  categoryChartColor,
   compactMoneyAxis,
   dateLabel,
   money,
@@ -196,29 +196,6 @@ function num(val: number | string | null | undefined, dec = 0): string {
   return Math.abs(n).toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
 }
 
-const CAT_COLORS: Record<string, string> = {
-  "Moradia": "#3567b8", "Habitação": "#3567b8", "Casa": "#3567b8",
-  "Alimentação": "#1f8a5b", "Comida": "#1f8a5b",
-  "Educação": "#6a52c9", "Ensino": "#6a52c9",
-  "Transporte": "#c98a2b", "Mobilidade": "#c98a2b",
-  "Saúde": "#cf4d43", "Médico": "#cf4d43",
-  "Lazer": "#d98234", "Entretenimento": "#d98234",
-  "Assinaturas": "#9a6b14", "Streaming": "#9a6b14",
-  "Mercado": "#2a9d8f", "Supermercado": "#2a9d8f",
-  "Serviços": "#7c8696",
-  "Investimentos": "#135737", "Investimento": "#135737",
-  "Renda": "#1f8a5b", "Receita": "#1f8a5b",
-  "Outros": "#9aa3b0",
-};
-function catColor(name: string): string {
-  if (CAT_COLORS[name]) return CAT_COLORS[name];
-  for (const [k, v] of Object.entries(CAT_COLORS)) {
-    if (name.toLowerCase().includes(k.toLowerCase())) return v;
-  }
-  const palette = Object.values(CAT_COLORS);
-  const h = name.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
-  return palette[h % palette.length];
-}
 
 // ---------------------------------------------------------------------------
 // CIcon — prototype icon set (mirrors DIcon in DashboardPage)
@@ -516,7 +493,8 @@ function SankeyPanel({
       id: c.category_id ?? c.category_name,
       label: c.category_name,
       value: parseFloat(c.amount ?? "0"),
-      color: c.color ?? catColor(c.category_name),
+      // Consistent with the rest of the app: "Sem categoria" (null id) → grey.
+      color: categoryChartColor(c.category_name, c.color, c.category_id),
       kind: "expense" as const,
     }));
 
@@ -873,7 +851,7 @@ function CashflowTooltip({
   view,
 }: {
   active?: boolean;
-  payload?: Array<{ payload?: { balance?: number | null; date?: string; expenses?: number; income?: number; month?: string; projectedBalance?: number | null }; value?: number }>;
+  payload?: Array<{ payload?: { balance?: number | null; date?: string; expenses?: number; income?: number; month?: string; pay?: number; projectedBalance?: number | null }; value?: number }>;
   view: "day" | "month";
 }) {
   const pt = payload?.[0]?.payload;
@@ -884,6 +862,7 @@ function CashflowTooltip({
       <strong style={{ display: "block", marginBottom: 6, fontSize: 13 }}>{label}</strong>
       <div style={{ color: "var(--acc-ink)" }}>Receitas: {moneyAbs(pt.income ?? 0)}</div>
       <div style={{ color: "var(--neg)" }}>Saídas: {moneyAbs(pt.expenses ?? 0)}</div>
+      {view === "day" && pt.pay ? <div style={{ color: "var(--warn)" }}>Pagamento de fatura: {moneyAbs(pt.pay)}</div> : null}
       {pt.balance != null ? <div>Saldo: {money(pt.balance)}</div> : null}
       {pt.projectedBalance != null ? <div className="faint">Projetado: {money(pt.projectedBalance)}</div> : null}
     </div>
@@ -989,8 +968,23 @@ export function CashflowPage({
       ),
     [chartRows],
   );
-  const netSeries = useMemo(
-    () => chartRows.map((row) => ({ ...row, netFlow: row.income + row.expenses })),
+  // Derived split fields so both charts can fill green when positive / red when
+  // negative (same visual language as the dashboard money-story chart).
+  const chartData = useMemo(
+    () => chartRows.map((row) => {
+      const bal = row.balance ?? 0;
+      const net = row.income + row.expenses;
+      const pay = "payments" in row ? (row as { payments: number }).payments : 0;
+      return {
+        ...row,
+        netFlow: net,
+        balPos: Math.max(0, bal),
+        balNeg: Math.min(0, bal),
+        netPos: Math.max(0, net),
+        netNeg: Math.min(0, net),
+        pay,
+      };
+    }),
     [chartRows],
   );
 
@@ -1169,13 +1163,25 @@ export function CashflowPage({
             <ResponsiveContainer width="100%" height="100%">
               {view === "mes" ? (
                 <ComposedChart
-                  data={chartRows}
+                  data={chartData}
                   margin={{ top: 4, right: 8, bottom: 0, left: 0 }}
                   onClick={openChartTransactions}
                   style={{ cursor: "pointer" }}
                 >
+                  <defs>
+                    <linearGradient id="cfPos" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--pos)" stopOpacity={0.22} />
+                      <stop offset="100%" stopColor="var(--pos)" stopOpacity={0.02} />
+                    </linearGradient>
+                    <linearGradient id="cfNeg" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--neg)" stopOpacity={0.02} />
+                      <stop offset="100%" stopColor="var(--neg)" stopOpacity={0.22} />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid stroke="var(--line)" strokeDasharray="3 3" />
                   <ReferenceLine y={0} stroke="var(--ink-faint)" strokeWidth={1} />
+                  <Area dataKey="balPos" fill="url(#cfPos)" stroke="none" isAnimationActive={false} legendType="none" tooltipType="none" />
+                  <Area dataKey="balNeg" fill="url(#cfNeg)" stroke="none" isAnimationActive={false} legendType="none" tooltipType="none" />
                   <XAxis
                     dataKey={chartMode === "month" ? "month" : "date"}
                     tickFormatter={chartMode === "month" ? monthTickLabel : dayTickLabel}
@@ -1190,24 +1196,33 @@ export function CashflowPage({
                   />
                   <Tooltip content={<CashflowTooltip view={chartMode} />} wrapperStyle={{ zIndex: 30, pointerEvents: "none" }} />
                   <Bar dataKey="income" name="Receitas" fill="var(--acc)" radius={[4, 4, 0, 0]} isAnimationActive={false} />
-                  <Bar dataKey="expenses" name="Saídas" fill="var(--neg)" radius={[0, 0, 4, 4]} isAnimationActive={false} />
+                  <Bar dataKey="expenses" name="Saídas" fill="var(--neg)" stackId="out" radius={[0, 0, 4, 4]} isAnimationActive={false} />
+                  {/* Invoice payment: amber bar in day mode only (cash basis). Not shown
+                      in month mode (accrual line) to avoid looking like double spend. */}
+                  {chartMode === "day" && (
+                    <Bar dataKey="pay" name="Pagamento de fatura" fill="var(--warn)" stackId="out" radius={[0, 0, 4, 4]} isAnimationActive={false} />
+                  )}
                   <Line dataKey="balance" name="Saldo" stroke="var(--info)" strokeWidth={2.5} dot={false} connectNulls isAnimationActive={false} />
                 </ComposedChart>
               ) : (
-                <AreaChart
-                  data={netSeries}
+                <ComposedChart
+                  data={chartData}
                   margin={{ top: 4, right: 8, bottom: 0, left: 0 }}
                   onClick={openChartTransactions}
                   style={{ cursor: "pointer" }}
                 >
                   <defs>
-                    <linearGradient id="cfGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="var(--info)" stopOpacity={0.25} />
-                      <stop offset="95%" stopColor="var(--info)" stopOpacity={0} />
+                    <linearGradient id="cfPos" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--pos)" stopOpacity={0.28} />
+                      <stop offset="100%" stopColor="var(--pos)" stopOpacity={0.02} />
+                    </linearGradient>
+                    <linearGradient id="cfNeg" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--neg)" stopOpacity={0.02} />
+                      <stop offset="100%" stopColor="var(--neg)" stopOpacity={0.28} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid stroke="var(--line)" strokeDasharray="3 3" />
-                  <ReferenceLine y={0} stroke="var(--neg)" strokeDasharray="4 3" strokeWidth={1.5} />
+                  <ReferenceLine y={0} stroke="var(--ink-faint)" strokeWidth={1} />
                   <XAxis
                     dataKey={chartMode === "month" ? "month" : "date"}
                     tickFormatter={chartMode === "month" ? monthTickLabel : dayTickLabel}
@@ -1220,8 +1235,10 @@ export function CashflowPage({
                     tick={{ fontSize: 11, fill: "var(--ink-3)" }}
                   />
                   <Tooltip content={<CashflowTooltip view={chartMode} />} wrapperStyle={{ zIndex: 30, pointerEvents: "none" }} />
-                  <Area dataKey="netFlow" name="Fluxo líquido" stroke="var(--info)" fill="url(#cfGrad)" strokeWidth={2.5} dot={false} connectNulls isAnimationActive={false} />
-                </AreaChart>
+                  <Area dataKey="netPos" fill="url(#cfPos)" stroke="none" isAnimationActive={false} legendType="none" tooltipType="none" />
+                  <Area dataKey="netNeg" fill="url(#cfNeg)" stroke="none" isAnimationActive={false} legendType="none" tooltipType="none" />
+                  <Line dataKey="netFlow" name="Fluxo líquido" stroke="var(--info)" strokeWidth={2.5} dot={false} connectNulls isAnimationActive={false} />
+                </ComposedChart>
               )}
             </ResponsiveContainer>
           </div>
@@ -1230,6 +1247,9 @@ export function CashflowPage({
               <>
                 <span className="legend-item"><span className="lz" style={{ background: "var(--acc)" }} />Receitas</span>
                 <span className="legend-item"><span className="lz" style={{ background: "var(--neg)" }} />Despesas</span>
+                {chartMode === "day" && (
+                  <span className="legend-item"><span className="lz" style={{ background: "var(--warn)" }} />Pagamento de fatura</span>
+                )}
                 <span className="legend-item"><span className="lz" style={{ background: "var(--info)" }} />Saldo acumulado</span>
               </>
             ) : (

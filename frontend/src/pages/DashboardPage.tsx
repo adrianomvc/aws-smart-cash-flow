@@ -433,7 +433,7 @@ function KpiDeck({
 const FLOW_MONTHS = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
 
 type FlowEntry = {
-  label: string; inc: number; exp: number;
+  label: string; inc: number; exp: number; pay: number;
   acc: number | null; accProj: number | null; accPos: number; accNeg: number; proj: boolean;
 };
 
@@ -449,6 +449,7 @@ function FlowCard({
       label: d.date.slice(8),
       inc: parseFloat(d.income   ?? "0"),
       exp: -parseFloat(d.expenses ?? "0"),
+      pay: -parseFloat(d.payments ?? "0"),
       val: parseFloat(d.closing_balance ?? "0"),
       proj: d.date > today,
     }));
@@ -471,7 +472,7 @@ function FlowCard({
       const end = new Date(endDate + "T12:00:00");
       while (d <= end) {
         val += avgInc - avgExp;
-        items.push({ label: String(d.getDate()).padStart(2, "0"), inc: avgInc, exp: -avgExp, val, proj: true });
+        items.push({ label: String(d.getDate()).padStart(2, "0"), inc: avgInc, exp: -avgExp, pay: 0, val, proj: true });
         d.setDate(d.getDate() + 1);
       }
     }
@@ -479,7 +480,7 @@ function FlowCard({
     let lastActualIdx = -1;
     items.forEach((it, i) => { if (!it.proj) lastActualIdx = i; });
     return items.map((it, i) => ({
-      label: it.label, inc: it.inc, exp: it.exp, proj: it.proj,
+      label: it.label, inc: it.inc, exp: it.exp, pay: it.pay, proj: it.proj,
       acc:     it.proj ? null : it.val,
       accProj: (!it.proj && i < lastActualIdx) ? null : it.val,
       accPos:  Math.max(0, it.val),
@@ -505,10 +506,11 @@ function FlowCard({
       const m = actualMap.get(ym);
       const inc = isActual ? parseFloat(m?.income   ?? "0") : avgInc;
       const exp = isActual ? parseFloat(m?.expenses ?? "0") : avgExp;
+      const pay = isActual ? parseFloat(m?.payments ?? "0") : 0;
       runAcc += inc - exp;
       return {
         label: FLOW_MONTHS[i],
-        inc, exp: -exp, proj: !isActual,
+        inc, exp: -exp, pay: -pay, proj: !isActual,
         acc:     isActual ? runAcc : null,
         accProj: (!isActual || isLast) ? runAcc : null,
         accPos:  Math.max(0, runAcc),
@@ -564,7 +566,8 @@ function FlowCard({
               itemStyle={{ color: "var(--ink-2)" }}
               formatter={(value: number, name: string) => {
                 if (name === "accPos" || name === "accNeg") return ["", ""] as [string, string];
-                return [brl(Math.abs(value ?? 0)), name === "inc" ? "Receitas" : name === "exp" ? "Despesas" : name === "acc" ? "Saldo acumulado" : "Saldo projetado"];
+                if (name === "pay" && !value) return ["", ""] as [string, string];
+                return [brl(Math.abs(value ?? 0)), name === "inc" ? "Receitas" : name === "exp" ? "Despesas" : name === "pay" ? "Pagamento de fatura" : name === "acc" ? "Saldo acumulado" : "Saldo projetado"];
               }}
               labelStyle={{ color: "var(--ink-2)", fontWeight: 700 }}
             />
@@ -576,11 +579,22 @@ function FlowCard({
                 <Cell key={i} fill="var(--acc)" opacity={entry.proj ? 0.45 : 0.9} />
               ))}
             </Bar>
-            <Bar dataKey="exp" name="exp" maxBarSize={16} radius={[0, 0, 2, 2]}>
+            <Bar dataKey="exp" name="exp" stackId="out" maxBarSize={16} radius={[0, 0, 2, 2]}>
               {data.map((entry, i) => (
                 <Cell key={i} fill="var(--neg)" opacity={entry.proj ? 0.4 : 0.72} />
               ))}
             </Bar>
+            {/* Credit-card invoice payments: a real cash outflow that isn't a common
+                expense — shown only in day mode, where the balance line is cash-basis
+                and the dip lines up. In month mode the line is accrual (receitas −
+                despesas), so a payment bar there would look like double-counted spend. */}
+            {mode === "day" && (
+              <Bar dataKey="pay" name="pay" stackId="out" maxBarSize={16} radius={[0, 0, 2, 2]}>
+                {data.map((entry, i) => (
+                  <Cell key={i} fill="var(--warn)" opacity={entry.proj ? 0.4 : 0.8} />
+                ))}
+              </Bar>
+            )}
             <Line type="monotone" dataKey="acc" name="acc" stroke="var(--acc-strong)" strokeWidth={2} dot={false} connectNulls={false} />
             <Line type="monotone" dataKey="accProj" name="accProj" stroke="var(--acc-strong)" strokeWidth={2} dot={false} strokeDasharray="5 3" connectNulls={false} />
           </ComposedChart>
@@ -588,6 +602,9 @@ function FlowCard({
         <div className="legend" style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--line)" }}>
           <span className="legend-item"><span className="lz" style={{ background: "var(--acc)" }} />Receitas</span>
           <span className="legend-item"><span className="lz" style={{ background: "var(--neg)" }} />Despesas</span>
+          {mode === "day" && (
+            <span className="legend-item"><span className="lz" style={{ background: "var(--warn)" }} />Pagamento de fatura</span>
+          )}
           <span className="legend-item"><span className="lz" style={{ background: "var(--acc-strong)" }} />Saldo acumulado</span>
           <span className="legend-item" style={{ gap: 5, alignItems: "center" }}>
             <svg width={20} height={8} style={{ flex: "none" }}><line x1="0" y1="4" x2="20" y2="4" stroke="var(--acc-strong)" strokeWidth={2} strokeDasharray="5 3" /></svg>
@@ -1390,8 +1407,8 @@ export function DashboardPage({
           <button className="btn btn-ghost btn-sm" onClick={() => onNavigate("reports")}>
             <DIcon name="report" size={14} /> Relatório
           </button>
-          <button className="btn btn-ghost btn-sm" onClick={() => {}}>
-            <DIcon name="chat" size={14} /> Perguntar ao Copilot
+          <button className="btn btn-ghost btn-sm" onClick={() => onNavigate("copilot")}>
+            <DIcon name="chat" size={14} /> Copiloto IA
           </button>
         </div>
       </div>

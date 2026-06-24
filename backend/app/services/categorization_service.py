@@ -7,7 +7,6 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.db.models import CategorizationRule, Transaction, TransactionCategoryAssignment
-from app.services.parsers import normalize_transaction_description
 
 _TRGM_THRESHOLD = 0.45  # piso: abaixo disso nem sugere
 # Tier de auto-aplicação. Medido por leave-one-out na base real: >=0.65 deu
@@ -141,9 +140,12 @@ class CategorizationService:
         return False
 
     def _normalize_for_match(self, value: str, field: str) -> str:
-        if field == "raw_description":
-            return normalize_transaction_description(value).casefold()
-        # description is already normalized (uppercase); just casefold + strip accents
+        # Both fields match on ascii-folded + casefolded + whitespace-collapsed text.
+        # We deliberately do NOT run normalize_transaction_description here, so the
+        # "Descrição original" (raw_description) option matches the LITERAL text —
+        # including trailing numbers, installments and glued codes (e.g. "BOX274")
+        # that normalization would strip. "description" is already the normalized
+        # value, so it is unaffected.
         ascii_val = "".join(
             c for c in unicode_normalize("NFKD", value)
             if c.encode("ascii", "ignore") != b""

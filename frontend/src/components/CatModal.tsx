@@ -169,9 +169,11 @@ interface CatModalProps {
   onClose: () => void;
   onSaveCat: (payload: { name: string; parentId: string | null; color: string; icon: string; subs: string[] }) => void;
   onSaveSub: (name: string, parentId: string) => void;
+  /** Override backdrop z-index when opened over another modal. */
+  zIndex?: number;
 }
 
-export function CatModal({ state, categories, onClose, onSaveCat, onSaveSub }: CatModalProps) {
+export function CatModal({ state, categories, onClose, onSaveCat, onSaveSub, zIndex }: CatModalProps) {
   const [kind, setKind] = useState<"cat" | "sub">(state.kind);
   const [name, setName] = useState(state.editing?.name ?? "");
   const [parentId, setParentId] = useState(
@@ -211,7 +213,7 @@ export function CatModal({ state, categories, onClose, onSaveCat, onSaveSub }: C
   }
 
   return (
-    <div className="mdl-backdrop" onClick={onClose}>
+    <div className="mdl-backdrop" onClick={onClose} style={zIndex != null ? { zIndex } : undefined}>
       <div className="mdl" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         {/* Head */}
         <div className="mdl-head">

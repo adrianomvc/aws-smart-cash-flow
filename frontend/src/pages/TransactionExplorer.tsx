@@ -523,8 +523,10 @@ function RuleFromTxModal({ transaction, categories, session, onClose }: {
   const [pattern, setPattern] = useState(containsDefault);
   const [touchedPattern, setTouchedPattern] = useState(false);
   const [categoryId, setCategoryId] = useState(transaction.category?.category_id ?? "");
+  const [targetDirection, setTargetDirection] = useState("");
   const [applyNow, setApplyNow] = useState(true);
   const [error, setError] = useState("");
+  const requestNewCategory = useContext(NewCategoryContext);
 
   // Prefill the name from the backend suggestion once it loads (unless edited).
   useEffect(() => {
@@ -550,7 +552,7 @@ function RuleFromTxModal({ transaction, categories, session, onClose }: {
         match_type: matchType,
         pattern: pattern.trim(),
         category_id: categoryId || null,
-        target_direction: null,
+        target_direction: targetDirection || null,
         priority: 100,
         active: true,
       });
@@ -567,7 +569,7 @@ function RuleFromTxModal({ transaction, categories, session, onClose }: {
   });
 
   function submit() {
-    if (!categoryId) { setError("Escolha a categoria que a regra vai aplicar."); return; }
+    if (!categoryId && !targetDirection) { setError("Escolha a categoria e/ou o tipo financeiro que a regra vai aplicar."); return; }
     if (!pattern.trim()) { setError("Informe o padrão de texto."); return; }
     setError("");
     create.mutate();
@@ -610,12 +612,32 @@ function RuleFromTxModal({ transaction, categories, session, onClose }: {
 
           <label className="fld">
             <span className="fld-label">Aplicar a categoria</span>
-            <select className="fld-select" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+            <select
+              className="fld-select"
+              value={categoryId}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === NEW_CATEGORY_VALUE) { requestNewCategory?.((id) => setCategoryId(id)); return; }
+                setCategoryId(v);
+              }}
+            >
               <option value="">Selecione…</option>
               {categoryOptions.map((c) => (
                 <option key={c.id} value={c.id}>{c.label}</option>
               ))}
+              {requestNewCategory ? <option value={NEW_CATEGORY_VALUE}>＋ Nova categoria…</option> : null}
             </select>
+          </label>
+
+          <label className="fld">
+            <span className="fld-label">Tipo financeiro (opcional)</span>
+            <select className="fld-select" value={targetDirection} onChange={(e) => setTargetDirection(e.target.value)}>
+              <option value="">Não alterar</option>
+              <option value="debit">Despesa</option>
+              <option value="credit">Receita</option>
+              <option value="payment">Pagamento de fatura</option>
+            </select>
+            <span className="fld-help">A regra também marca os lançamentos parecidos com este tipo.</span>
           </label>
 
           {suggestion != null && suggestion.affected_count > 0 && (
@@ -1069,7 +1091,7 @@ export function TransactionExplorer({
   const [keepId, setKeepId] = useState("");
   const [pageSize, setPageSize] = useState(50);
   // Tab state: all | in | out | pending
-  const [tab, setTab] = useState<"all" | "in" | "out" | "pending">(initialCategoryId === "__pending__" ? "pending" : "all");
+  const [tab, setTab] = useState<"all" | "in" | "out" | "pay" | "pending">(initialCategoryId === "__pending__" ? "pending" : "all");
   const [accountFilter, setAccountFilter] = useState("all");
   const duplicatePageSize = 10;
   const categories = useCategories(session);
@@ -1242,6 +1264,7 @@ export function TransactionExplorer({
       if (tab === "all") setDirection("");
       else if (tab === "in") setDirection("credit");
       else if (tab === "out") setDirection("debit");
+      else if (tab === "pay") setDirection("payment");
     }
   }, [tab]);
 
@@ -1640,6 +1663,7 @@ export function TransactionExplorer({
       <CatModal
         state={{ kind: "cat" }}
         categories={allCategories}
+        zIndex={400}
         onClose={() => setNewCat(null)}
         onSaveCat={(payload) => createCategoryInline.mutate({ kind: "cat", payload: { name: payload.name, color: payload.color, icon: payload.icon, subs: payload.subs } })}
         onSaveSub={(name, parentId) => createCategoryInline.mutate({ kind: "sub", name, parentId })}
@@ -1753,10 +1777,11 @@ export function TransactionExplorer({
           <div className="seg">
             {([
               { id: "all", label: "Todas" },
-              { id: "in", label: "Entradas" },
-              { id: "out", label: "Saídas" },
+              { id: "in", label: "Receitas" },
+              { id: "out", label: "Despesas" },
+              { id: "pay", label: "Pagamentos" },
               { id: "pending", label: "A revisar", count: pagePending },
-            ] as { id: "all" | "in" | "out" | "pending"; label: string; count?: number }[]).map(({ id, label, count }) => (
+            ] as { id: "all" | "in" | "out" | "pay" | "pending"; label: string; count?: number }[]).map(({ id, label, count }) => (
               <button
                 key={id}
                 className={tab === id ? "on" : ""}
