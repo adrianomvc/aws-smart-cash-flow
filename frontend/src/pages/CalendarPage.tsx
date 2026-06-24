@@ -416,6 +416,15 @@ export function CalendarPage({
   }, [period.dateFrom]);
   const monthParts = gridMonthFrom.split("-").map(Number);
   const daysInMonth = monthParts[0] && monthParts[1] ? new Date(monthParts[0], monthParts[1], 0).getDate() : 30;
+  // Navigate the calendar month by month (sets the period to that single month, so
+  // the user can browse past months — most data lives in earlier months).
+  function shiftMonth(delta: number) {
+    const d = new Date(monthParts[0], (monthParts[1] || 1) - 1 + delta, 1);
+    const last = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+    setCalendarPeriod((prev) => ({ ...prev, dateFrom: isoDate(d), dateTo: isoDate(last), periodPreset: "custom" }));
+  }
+  const gridMonthLabel = new Date(monthParts[0], (monthParts[1] || 1) - 1, 1)
+    .toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
   const daysWith = useMemo(() => new Set(filteredEvents.map((e) => e.date)).size, [filteredEvents]);
   const heaviest = useMemo(() => {
     const net = new Map<string, number>();
@@ -591,6 +600,11 @@ export function CalendarPage({
 
       {/* ── Filtros + legenda (acima do calendário) ── */}
       <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 4, marginRight: 6 }}>
+          <button type="button" className="btn btn-quiet btn-sm" onClick={() => shiftMonth(-1)} title="Mês anterior" style={{ padding: "4px 8px" }}><CalIcon name="chevL" size={15} /></button>
+          <span style={{ minWidth: 130, textAlign: "center", fontWeight: 700, fontSize: 13, textTransform: "capitalize" }}>{gridMonthLabel}</span>
+          <button type="button" className="btn btn-quiet btn-sm" onClick={() => shiftMonth(1)} title="Próximo mês" style={{ padding: "4px 8px" }}><CalIcon name="chevR" size={15} /></button>
+        </div>
         {calFilterTabs.map((tab) => (
           <button
             key={tab.key}
