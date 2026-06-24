@@ -623,8 +623,8 @@ export function CalendarPage({
         </div>
       </div>
 
-      {/* ── Calendário + painéis ── */}
-      <div className="cal-layout" style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 16, marginBottom: 20, alignItems: "stretch" }}>
+      {/* ── Calendário (largura total) ── */}
+      <div style={{ marginBottom: 16 }}>
 
         {/* Calendário */}
         <div className="card card-pad">
@@ -644,12 +644,13 @@ export function CalendarPage({
             </span>
           </div>
         </div>
+      </div>
 
-        {/* Painéis laterais */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 16, height: "100%" }}>
+      {/* ── Próximos + Dias críticos (abaixo do calendário) ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20, alignItems: "stretch" }}>
 
         {/* Próximos compromissos */}
-        <div className="card" style={{ flex: 1, minHeight: 0 }}>
+        <div className="card" style={{ minHeight: 0 }}>
           <div className="card-head">
             <div className="kpi-ic" style={{ background: "var(--acc-soft)", color: "var(--acc)" }}>
               <CalIcon name="clock" size={15} />
@@ -720,7 +721,7 @@ export function CalendarPage({
         </div>
 
           {/* Dias críticos */}
-          <div className="card" style={{ flex: 1, minHeight: 0 }}>
+          <div className="card" style={{ minHeight: 0 }}>
             <div className="card-head">
               <div className="kpi-ic" style={{ background: "var(--warn-soft)", color: "var(--warn)" }}>
                 <CalIcon name="alert" size={15} />
@@ -772,7 +773,6 @@ export function CalendarPage({
               )}
             </div>
           </div>
-        </div>
       </div>
 
       {/* ── Trio: Média semanal · Recorrências · Faturas ── */}
