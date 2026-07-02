@@ -186,7 +186,11 @@ export function ReportsPage({ session, period, onNavigate }: {
   const [rep, setRep] = useState<RepId>("exec");
   const [csv, setCsv] = useState<CsvFn>(null);
   const q = periodQuery(period);
-  const common: RepProps = { session, q, period, onNavigate, registerCsv: setCsv };
+  // Store the CSV callback as state WITHOUT invoking it. Passing a function
+  // straight to setCsv makes React treat it as an updater and run it immediately
+  // (which downloaded the CSV the moment Reports opened) — wrap it so the function
+  // itself is stored and only runs when the user clicks "CSV".
+  const common: RepProps = { session, q, period, onNavigate, registerCsv: (fn) => setCsv(() => fn) };
 
   return (
     <div className="canvas stg">
