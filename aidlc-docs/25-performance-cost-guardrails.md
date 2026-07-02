@@ -36,12 +36,36 @@ Também: migration `0030` com índices compostos para os filtros quentes
 (`transactions(workspace_id, transaction_date)`, `(workspace_id, direction,
 transaction_date)`, assignments, categories, import_jobs, source_files).
 
+### 2ª rodada — projeção de coluna nos scans que sobraram (branch `perf/load-only-shared-scans`)
+
+A agregação SQL de `monthly_cashflow` / `daily_cashflow` / `summary` continua
+inviável em SQL puro (a lógica de realocar cada parcela para o mês da fatura roda
+em Python via `_cashflow_date`). Em vez de empurrar pro SQL, **atacamos o tamanho
+da linha**: esses métodos usam o scan compartilhado `_transactions` /
+`_cashflow_transactions`, que trazia a **entidade `Transaction` inteira** (25
+colunas, incluindo `raw_description`, `source_name`, `account_or_card` e as 3
+chaves `String(64)` de dedupe) mesmo usando só ~8 colunas. No período "Todos" isso
+varre a base inteira — as colunas Text dominam os bytes.
+
+| Método | Antes | Agora |
+| --- | --- | --- |
+| `_transactions` / `_cashflow_transactions` (shared scan) | entidade inteira | `load_only` das 8 colunas usadas (workspace_id, source_file_id, source_type, direction, amount, transaction_date, installment_current/total) |
+| série mensal por categoria (`dashboard_service.py`) | entidade inteira | `load_only(transaction_date, amount)` |
+| `_recurring_transactions` (recurring_expenses/incomes) | entidade inteira | `load_only(description, transaction_date, amount)` |
+
+`load_only(..., raiseload=True)` garante que qualquer acesso a uma coluna não
+carregada **estoure na hora** (erro alto no `pytest`) em vez de virar um lazy
+SELECT por linha (regressão N+1 de egress). Validado: suíte `pytest` verde (185
+pass; 1 fail pré-existente de JWT Supabase, sem relação, passa no CI) + `ruff`.
+Isto cobre o "pendente" abaixo pelo lado do **tamanho da linha**, não da agregação.
+
 ### Ainda pendente (alto risco / baixo retorno)
 
-- `monthly_cashflow` / `daily_cashflow` — dependem da **data de fatura**
-  (`_cashflow_date` por source_file); difícil em SQL puro.
+- `monthly_cashflow` / `daily_cashflow` / `summary` — a **agregação** em SQL segue
+  pendente (dependem de `_cashflow_date` por source_file). Já mitigados via
+  `load_only` acima; só valeria mexer se a conta de egress ainda apertar.
 - `recurring_expenses` / `recurring_incomes` — detecção de recorrência
-  (algorítmica).
+  (algorítmica) segue em Python; scan já projetado via `load_only`.
 
 ## Guardrails (regras para novas telas/endpoints)
 
@@ -51,7 +75,10 @@ transaction_date)`, assignments, categories, import_jobs, source_files).
    endpoints individuais em paralelo.
 3. **Projete colunas** quando precisar de linhas: selecione só as colunas usadas
    (ex.: `select(Transaction.description, Transaction.amount)`), nunca a entidade
-   inteira, se não for usar `raw_description`, `natural_dedupe_key`, etc.
+   inteira, se não for usar `raw_description`, `natural_dedupe_key`, etc. Se o
+   código precisa de objetos `Transaction` (não tuplas), use
+   `.options(load_only(*cols, raiseload=True))` — mantém a entidade, corta as
+   colunas pesadas e faz qualquer acesso esquecido estourar no teste.
 4. **Portabilidade SQLite/Postgres.** Os testes rodam em SQLite. Evite funções de
    dialeto; quando inevitável, ramifique por `self.db.bind.dialect.name`
    (ex.: `strftime` vs `extract`/`date_trunc`). Coaja tipos de retorno de funções
