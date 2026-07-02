@@ -30,6 +30,9 @@ import {
   type InsightItem,
   getCurrentWorkspace,
   getPreferences,
+  getWorkspaces,
+  getActiveWorkspace,
+  setActiveWorkspace,
   getInsights,
   getTransactions,
   getTransactionDuplicates,
@@ -304,6 +307,22 @@ function App() {
   });
   setDisplayCurrency(preferencesQuery.data?.currency);
 
+  // Workspace switcher: list the user's workspaces (shown only when there's more
+  // than one). Switching sets the active workspace header and reloads so every
+  // query refetches scoped to it.
+  const workspacesQuery = useQuery({
+    queryKey: ["workspaces", session?.token],
+    queryFn: () => getWorkspaces(session!),
+    enabled: Boolean(session),
+    staleTime: 10 * 60 * 1000,
+  });
+  const workspaces = workspacesQuery.data?.items ?? [];
+  function switchWorkspace(id: string) {
+    if (id === (getActiveWorkspace() ?? workspaceQuery.data?.workspace_id)) return;
+    setActiveWorkspace(id);
+    window.location.reload();
+  }
+
   if (!session) {
     return <LoginScreen onLogin={handleSession} />;
   }
@@ -347,6 +366,9 @@ function App() {
       setMobileOpen={setMobileOpen}
       onLogout={() => handleSession(null)}
       workspaceName={workspaceName}
+      workspaces={workspaces}
+      currentWorkspaceId={getActiveWorkspace() ?? workspaceQuery.data?.workspace_id ?? ""}
+      onSwitchWorkspace={switchWorkspace}
       duplicateCount={duplicateCount}
     >
       <ProtectedApp
@@ -516,6 +538,9 @@ function AppShell({
   setPage,
   onLogout,
   workspaceName,
+  workspaces = [],
+  currentWorkspaceId = "",
+  onSwitchWorkspace,
   duplicateCount = 0,
 }: {
   children: ReactNode;
@@ -525,6 +550,9 @@ function AppShell({
   setMobileOpen: (open: boolean) => void;
   onLogout: () => void;
   workspaceName?: string;
+  workspaces?: { workspace_id: string; workspace_name: string; role: string }[];
+  currentWorkspaceId?: string;
+  onSwitchWorkspace?: (id: string) => void;
   duplicateCount?: number;
 }) {
   const initials = (workspaceName ?? "Local workspace")
@@ -536,6 +564,19 @@ function AppShell({
         {/* Brand / logo */}
         <div className="side-brand">
           <img src={smartCashFlowLogo} alt="SmartCashFlow" className="brand-logo" style={{ maxWidth: 180 }} />
+          {workspaces.length > 1 && onSwitchWorkspace && (
+            <select
+              className="cat-select"
+              value={currentWorkspaceId}
+              onChange={(e) => onSwitchWorkspace(e.target.value)}
+              title="Trocar de família / workspace"
+              style={{ marginTop: 8, width: "100%", fontSize: 12.5, padding: "6px 8px" }}
+            >
+              {workspaces.map((w) => (
+                <option key={w.workspace_id} value={w.workspace_id}>{w.workspace_name}</option>
+              ))}
+            </select>
+          )}
         </div>
 
         {/* Nav */}

@@ -94,3 +94,31 @@ class WorkspaceService:
                 WorkspaceMember.user_id == user_id,
             )
         )
+
+    def _user_by_auth_id(self, auth_user_id: str) -> User | None:
+        return self.db.scalar(select(User).where(User.supabase_user_id == auth_user_id))
+
+    def is_member(self, auth_user_id: str, workspace_id: str) -> bool:
+        """Whether the authenticated user belongs to the workspace (for the
+        workspace switcher: only honor an X-Workspace-Id the user can access)."""
+        user = self._user_by_auth_id(auth_user_id)
+        if user is None:
+            return False
+        return self.db.scalar(
+            select(WorkspaceMember.id).where(
+                WorkspaceMember.user_id == user.id,
+                WorkspaceMember.workspace_id == workspace_id,
+            )
+        ) is not None
+
+    def list_user_workspaces(self, auth_user_id: str) -> list[tuple[Workspace, str]]:
+        user = self._user_by_auth_id(auth_user_id)
+        if user is None:
+            return []
+        rows = self.db.execute(
+            select(Workspace, WorkspaceMember.role)
+            .join(WorkspaceMember, WorkspaceMember.workspace_id == Workspace.id)
+            .where(WorkspaceMember.user_id == user.id)
+            .order_by(WorkspaceMember.created_at, WorkspaceMember.id)
+        ).all()
+        return [(workspace, role) for workspace, role in rows]

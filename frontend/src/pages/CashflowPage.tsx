@@ -450,35 +450,35 @@ const INCOME_PALETTE = ["#1f8a5b", "#2a9d8f", "#3d7d63", "#5a9d63", "#6cb286"];
 function SankeyPanel({
   categories,
   subcategories,
+  incomeSubcategories,
   totalIncome,
   onNav,
 }: {
   categories: CategoryRankingItem[];
   subcategories: SubcategoryRankingItem[];
+  incomeSubcategories: SubcategoryRankingItem[];
   totalIncome: number;
   onNav: (p: Page) => void;
 }) {
   const [withSubs, setWithSubs] = useState(false);
 
-  // Income sources from income subcategories
-  const incomeCatIds = new Set(
-    categories
-      .filter(c => ["renda", "receita"].some(t => c.category_name?.toLowerCase().includes(t)))
-      .map(c => c.category_id)
-      .filter(Boolean),
-  );
-  const incomeSubs = subcategories.filter(s => s.category_id && incomeCatIds.has(s.category_id));
+  // Income broken down by its real (credit) subcategories, scaled so the sources
+  // sum to the income total. "Sem categoria" income shows grey.
+  const incomeSrc = incomeSubcategories.filter(s => parseFloat(s.amount ?? "0") > 0);
   let sources: SankeyNodeDef[];
-  if (incomeSubs.length > 0 && totalIncome > 0) {
-    const raw = incomeSubs.slice(0, 5).map((s, i) => ({
-      id: "src_" + i, label: s.subcategory_name,
-      value: parseFloat(s.amount ?? "0"),
-      color: INCOME_PALETTE[i % INCOME_PALETTE.length],
-    }));
-    const rawTotal = raw.reduce((s, x) => s + x.value, 0);
-    sources = rawTotal > 0
-      ? raw.map(s => ({ ...s, value: (s.value / rawTotal) * totalIncome }))
-      : [{ id: "src_0", label: "Total de receitas", value: totalIncome, color: "#1f8a5b" }];
+  if (incomeSrc.length > 0 && totalIncome > 0) {
+    const top = incomeSrc.slice(0, 5);
+    const rawTotal = top.reduce((sum, s) => sum + parseFloat(s.amount ?? "0"), 0);
+    sources = top.map((s, i) => {
+      const isNone = s.category_id == null || s.subcategory_name.toLowerCase().startsWith("sem categoria");
+      const value = parseFloat(s.amount ?? "0");
+      return {
+        id: "src_" + i,
+        label: isNone ? "Sem categoria" : s.subcategory_name,
+        value: rawTotal > 0 ? (value / rawTotal) * totalIncome : value,
+        color: isNone ? "#94a3b8" : INCOME_PALETTE[i % INCOME_PALETTE.length],
+      };
+    });
   } else {
     sources = [{ id: "src_0", label: "Total de receitas", value: totalIncome, color: "#1f8a5b" }];
   }
@@ -920,6 +920,11 @@ export function CashflowPage({
     queryFn: () => getSubcategoryRanking(session, withQueryParams(period.query, { limit: "50" })),
     staleTime: 3 * 60 * 1000,
   });
+  const incomeSubcategoryRanking = useQuery({
+    queryKey: ["cashflow-income-subranking", session.token, period.query],
+    queryFn: () => getSubcategoryRanking(session, withQueryParams(period.query, { limit: "50", direction: "credit" })),
+    staleTime: 3 * 60 * 1000,
+  });
   const recurring = useQuery({
     queryKey: ["cashflow-recurring", session.token, period.recurringQuery],
     queryFn: () =>
@@ -1133,6 +1138,7 @@ export function CashflowPage({
       <SankeyPanel
         categories={categoryItems}
         subcategories={subcategoryItems}
+        incomeSubcategories={incomeSubcategoryRanking.data?.items ?? []}
         totalIncome={income}
         onNav={onNavigate}
       />

@@ -188,9 +188,17 @@ _DbDependency = Depends(get_db)
 
 async def get_auth_context(
     authorization: str | None = Header(default=None),
+    x_workspace_id: str | None = Header(default=None),
     db: Session = _DbDependency,
 ) -> AuthContext:
     ctx = await _authenticate(authorization)
+    # Workspace switcher: honor an explicitly selected workspace, but only when the
+    # user is actually a member of it (never trust the header blindly).
+    if x_workspace_id:
+        from app.services.workspace_service import WorkspaceService
+
+        if WorkspaceService(db).is_member(ctx.user_id, x_workspace_id):
+            return replace(ctx, workspace_id=x_workspace_id)
     # For identity-provider auth (Cognito/Supabase) the token has no workspace;
     # resolve (and create on first sign-in) the user's workspace so every data
     # route is scoped correctly. Cached per user to avoid a DB round-trip on

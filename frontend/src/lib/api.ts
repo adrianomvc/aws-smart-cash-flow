@@ -724,6 +724,21 @@ export function setCognitoTokenProvider(fn: () => Promise<string | null>) {
   cognitoTokenProvider = fn;
 }
 
+// Active workspace (workspace switcher). Sent as X-Workspace-Id; the backend
+// honors it only when the user is a member of that workspace.
+let activeWorkspaceId: string | null =
+  (typeof localStorage !== "undefined" && localStorage.getItem("scf_workspace")) || null;
+export function getActiveWorkspace(): string | null {
+  return activeWorkspaceId;
+}
+export function setActiveWorkspace(id: string | null) {
+  activeWorkspaceId = id;
+  if (typeof localStorage !== "undefined") {
+    if (id) localStorage.setItem("scf_workspace", id);
+    else localStorage.removeItem("scf_workspace");
+  }
+}
+
 async function apiRequest<T>(path: string, session: ApiSession, options: ApiOptions = {}): Promise<T> {
   const headers = new Headers(options.headers);
   let token = session.token;
@@ -732,6 +747,7 @@ async function apiRequest<T>(path: string, session: ApiSession, options: ApiOpti
     if (fresh) token = fresh;
   }
   headers.set("Authorization", `Bearer ${token}`);
+  if (activeWorkspaceId) headers.set("X-Workspace-Id", activeWorkspaceId);
 
   let body: BodyInit | undefined;
   if (options.body instanceof FormData) {
@@ -781,6 +797,11 @@ export async function exportTransactionsCsv(session: ApiSession): Promise<string
 
 export function getCurrentWorkspace(session: ApiSession) {
   return apiRequest<WorkspaceCurrent>("/workspaces/current", session);
+}
+
+export type WorkspaceSummary = { workspace_id: string; workspace_name: string; role: string };
+export function getWorkspaces(session: ApiSession) {
+  return apiRequest<{ items: WorkspaceSummary[] }>("/workspaces", session);
 }
 
 export type DashboardOverview = {
