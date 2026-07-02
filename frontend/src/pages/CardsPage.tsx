@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Area, Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from "recharts";
 
 import {
   createCreditCard,
@@ -14,6 +17,7 @@ import {
   amountClass,
   apiErrorMessage,
   compactMoneyAbs,
+  compactMoneyAxis,
   compactValueAbs,
   dateLabel,
   directionLabel,
@@ -180,23 +184,41 @@ function faturaMonthLabel(iso?: string | null): string {
   return `${m}/${d.getFullYear()}`;
 }
 
-function CardTransactionList({ emptyMessage, items, loading, onOpenTransaction }: {
+function CardTransactionList({ emptyMessage, items, loading, onOpenTransaction, sort, sortDir, onSort }: {
   emptyMessage: string;
   items: TransactionRead[];
   loading: boolean;
   onOpenTransaction: (t: TransactionRead) => void;
+  sort?: string;
+  sortDir?: "asc" | "desc";
+  onSort?: (col: string) => void;
 }) {
   if (loading) return <LoadingRows />;
   if (!items.length) return <EmptyState message={emptyMessage} />;
+  const arrow = (col: string) => (sort === col ? (sortDir === "asc" ? " ▲" : " ▼") : "");
+  const sortable = (col: string, label: string, extraClass = "") => (
+    onSort
+      ? <th className={extraClass} style={{ cursor: "pointer", userSelect: "none" }} onClick={() => onSort(col)} title="Clique para ordenar">{label}{arrow(col)}</th>
+      : <th className={extraClass}>{label}</th>
+  );
   return (
     <div style={{ overflowX: "auto" }}>
       <table className="tbl">
         <thead>
-          <tr><th>Data / Fatura</th><th>Descrição</th><th>Tipo</th><th className="num">Valor</th></tr>
+          <tr>
+            {sortable("transaction_date", "Data / Fatura")}
+            {sortable("description", "Descrição")}
+            {sortable("direction", "Tipo")}
+            {sortable("amount", "Valor", "num")}
+          </tr>
         </thead>
         <tbody>
           {items.map((t) => (
-            <tr key={t.id} style={{ cursor: "pointer" }} onClick={() => onOpenTransaction(t)}>
+            <tr
+              key={t.id}
+              style={{ cursor: "pointer", ...(t.installment_total ? { background: "var(--warn-soft)" } : {}) }}
+              onClick={() => onOpenTransaction(t)}
+            >
               <td className="mono t-sub" style={{ whiteSpace: "nowrap" }}>
                 <div>{dateLabel(t.transaction_date)}</div>
                 {t.invoice_due_date && (
@@ -291,18 +313,64 @@ export function CardsPage({
   if (period.dateFrom) cardQueryParams.due_from = period.dateFrom;
   if (period.dateTo) cardQueryParams.due_to = period.dateTo;
   const cardQuery = withQueryParams("", cardQueryParams);
-  const cards = useQuery({ queryKey: ["card-transactions", session.token, cardQuery], queryFn: () => getTransactions(session, cardQuery) });
+  // The chart, category breakdown and per-day aggregate must cover the WHOLE invoice.
+  // A single page is capped at 100 and sorted by purchase date, which dropped
+  // old-purchase-date installments (e.g. a 24/02 charge billed in April) — so page
+  // past the 100 limit and merge. Server-side aggregates (total_expense/income) come
+  // from the first page (computed over all matching rows).
+  const cards = useQuery({
+    queryKey: ["card-transactions", session.token, cardQuery],
+    queryFn: async () => {
+      const first = await getTransactions(session, withQueryParams("", { ...cardQueryParams, offset: "0" }));
+      const items = [...first.items];
+      let offset = 100;
+      while (items.length < (first.total ?? items.length) && offset < 2000) {
+        const page = await getTransactions(session, withQueryParams("", { ...cardQueryParams, offset: String(offset) }));
+        if (page.items.length === 0) break;
+        items.push(...page.items);
+        offset += 100;
+      }
+      return { ...first, items };
+    },
+  });
+
+  // Day-by-day purchases of the selected invoice/period (by purchase date) + a
+  // running cumulative — a visual tracking of how the invoice builds up.
+  const dailySpend = useMemo(() => {
+    const byDay = new Map<string, { value: number; inst: number }>();
+    for (const t of cards.data?.items ?? []) {
+      if (t.direction !== "debit") continue;
+      const amt = Math.abs(Number(t.amount ?? 0));
+      const cur = byDay.get(t.transaction_date) ?? { value: 0, inst: 0 };
+      cur.value += amt;
+      if (t.installment_total) cur.inst += amt; // parceladas (compradas neste dia)
+      byDay.set(t.transaction_date, cur);
+    }
+    let acc = 0;
+    return [...byDay.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, d]) => { acc += d.value; return { date, value: d.value, regular: d.value - d.inst, inst: d.inst, acc }; });
+  }, [cards.data?.items]);
+  const hasInstallmentsInChart = dailySpend.some((d) => d.inst > 0);
 
   // Separate, paginated query for the "Lançamentos da fatura" list so the user can
   // page through every transaction in place (without jumping to Transações).
   const CARD_LEDGER_PAGE_SIZE = 12;
   const [ledgerPage, setLedgerPage] = useState(0);
-  useEffect(() => { setLedgerPage(0); }, [selectedCard?.id, period.dateFrom, period.dateTo]);
+  // Sort the invoice list by clicking a column header. Sorting by value brings the
+  // big (often parceled) charges to the top instead of burying them by purchase date.
+  const [ledgerSort, setLedgerSort] = useState<string>("transaction_date");
+  const [ledgerSortDir, setLedgerSortDir] = useState<"asc" | "desc">("desc");
+  function toggleLedgerSort(col: string) {
+    if (col === ledgerSort) setLedgerSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setLedgerSort(col); setLedgerSortDir("desc"); }
+  }
+  useEffect(() => { setLedgerPage(0); }, [selectedCard?.id, period.dateFrom, period.dateTo, ledgerSort, ledgerSortDir]);
   const ledgerParams: Record<string, string> = {
     limit: String(CARD_LEDGER_PAGE_SIZE),
     offset: String(ledgerPage * CARD_LEDGER_PAGE_SIZE),
-    sort_by: "transaction_date",
-    sort_dir: "desc",
+    sort_by: ledgerSort,
+    sort_dir: ledgerSortDir,
     source_type: "credit_card_statement",
   };
   if (selectedCard) ledgerParams.credit_card_id = selectedCard.id;
@@ -576,6 +644,49 @@ export function CardsPage({
         )}
       </div>
 
+      {/* ── Compras dia a dia + acumulado ── */}
+      {dailySpend.length > 0 && (
+        <div className="card card-pad" style={{ marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <span className="eyebrow">Compras dia a dia · {selectedCard ? selectedCard.name : "todos os cartões"}</span>
+            <span className="mono" style={{ fontSize: 12.5, color: "var(--ink-3)" }}>
+              {dailySpend.length} dia{dailySpend.length === 1 ? "" : "s"} · acumulado {moneyAbs(dailySpend[dailySpend.length - 1]?.acc)}
+            </span>
+          </div>
+          <ResponsiveContainer width="100%" height={220}>
+            <ComposedChart data={dailySpend} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+              <defs>
+                <linearGradient id="cardAcc" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--acc)" stopOpacity={0.18} />
+                  <stop offset="100%" stopColor="var(--acc)" stopOpacity={0.01} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" vertical={false} />
+              <XAxis dataKey="date" tickFormatter={(d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`} tick={{ fontSize: 11, fill: "var(--ink-faint)" }} axisLine={false} tickLine={false} />
+              <YAxis tickFormatter={compactMoneyAxis} tick={{ fontSize: 11, fill: "var(--ink-faint)" }} axisLine={false} tickLine={false} width={52} />
+              <YAxis yAxisId="acc" orientation="right" tickFormatter={compactMoneyAxis} tick={{ fontSize: 11, fill: "var(--ink-faint)" }} axisLine={false} tickLine={false} width={52} />
+              <Tooltip
+                contentStyle={{ background: "var(--card)", border: "1px solid var(--line)", borderRadius: 10, fontSize: 12, color: "var(--ink)" }}
+                labelFormatter={(d) => dateLabel(String(d))}
+                formatter={(v: number, n: string) => {
+                  if (!v) return ["", ""] as [string, string];
+                  return [moneyAbs(v), n === "acc" ? "Acumulado" : n === "inst" ? "Parcelas (comprado neste dia)" : "Compras à vista"];
+                }}
+              />
+              <Area yAxisId="acc" type="monotone" dataKey="acc" stroke="none" fill="url(#cardAcc)" isAnimationActive={false} legendType="none" tooltipType="none" />
+              <Bar dataKey="regular" name="regular" stackId="d" fill="var(--acc)" maxBarSize={22} isAnimationActive={false} />
+              <Bar dataKey="inst" name="inst" stackId="d" fill="var(--warn)" maxBarSize={22} radius={[3, 3, 0, 0]} isAnimationActive={false} />
+              <Line yAxisId="acc" type="monotone" dataKey="acc" name="acc" stroke="var(--acc-strong)" strokeWidth={2} dot={false} isAnimationActive={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
+          <div className="legend" style={{ marginTop: 10 }}>
+            <span className="legend-item"><span className="lz" style={{ background: "var(--acc)" }} />Compras à vista</span>
+            {hasInstallmentsInChart && <span className="legend-item"><span className="lz" style={{ background: "var(--warn)" }} />Parcelas (no dia da compra)</span>}
+            <span className="legend-item"><span className="lz" style={{ background: "var(--acc-strong)" }} />Acumulado no ciclo</span>
+          </div>
+        </div>
+      )}
+
       {/* ── 4 estágios ── */}
       <div className="grid cols-4" style={{ marginBottom: 20 }}>
         <StageCard icon="card"    tone="var(--info)"      title="Compra"         desc="Lançamento no cartão. Ainda não é despesa de caixa." amount={`${compactMoneyAbs(cardExpenses)} no ciclo`} />
@@ -607,6 +718,9 @@ export function CardsPage({
               items={ledgerItems}
               loading={cardLedger.isLoading}
               onOpenTransaction={openTransaction}
+              sort={ledgerSort}
+              sortDir={ledgerSortDir}
+              onSort={toggleLedgerSort}
             />
             {ledgerTotal > CARD_LEDGER_PAGE_SIZE && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 12 }}>
