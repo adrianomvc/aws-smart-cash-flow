@@ -1093,6 +1093,12 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   /* Inline multi-column grids (reports, calendar) that don't collapse on their
      own — force single column. !important beats the inline gridTemplateColumns. */
   .grid-collapse { grid-template-columns: 1fr !important; }
+  /* Segmented tab bars (e.g. Transações: Todas/Receitas/Despesas/Pagamentos/A
+     revisar) can hold many tabs — let them scroll horizontally on mobile instead
+     of forcing the whole page wider than the viewport. */
+  .seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .seg::-webkit-scrollbar { display: none; }
+  .seg button { flex: none; white-space: nowrap; }
   .mobile-only { display: inline-flex; }
   .canvas { padding: 16px 14px 96px; }
   .bottom-nav {
