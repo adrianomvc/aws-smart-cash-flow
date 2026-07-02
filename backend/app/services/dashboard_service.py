@@ -33,8 +33,9 @@ NEG_ONE = Decimal("-1")
 # dominate the bytes on the wire. `raiseload=True` turns any missed access into
 # a loud error instead of a silent per-row lazy SELECT (an N+1 egress
 # regression). The PK (`id`) is always loaded even under load_only.
+# NB: workspace_id is deliberately absent — it's a WHERE filter, never read off
+# the scanned objects, so loading it (a 36-char UUID per row) is wasted egress.
 _SCAN_LOADED_COLUMNS = (
-    Transaction.workspace_id,
     Transaction.source_file_id,
     Transaction.source_type,
     Transaction.direction,

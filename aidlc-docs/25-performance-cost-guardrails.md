@@ -99,6 +99,16 @@ Foi o método usado em todas as conversões acima.
 
 ## Estimativa de impacto
 
-Não mensurável agora (Neon fora de cota até ~01/07). Qualitativo: os widgets do
-dashboard passaram de "puxar ~todas as linhas do período" para "trazer dezenas de
-linhas agregadas" por request — a maior fonte de egress foi atacada.
+1ª rodada (agregação SQL), qualitativo: os widgets do dashboard passaram de
+"puxar ~todas as linhas do período" para "trazer dezenas de linhas agregadas" por
+request — a maior fonte de egress foi atacada.
+
+2ª rodada (`load_only` nos scans compartilhados), **medido** sobre a base real
+(9.216 lançamentos, 2026-07-02): o scan "Todos" caiu de **3,20 MB → 0,90 MB por
+varredura (−71,7%)**. Proxy = soma dos bytes-texto das colunas trazidas (o wire
+Postgres difere um pouco — UUID/numeric em binário — mas a razão se mantém). Os
+maiores ganhos vêm das duas chaves de dedupe (`dedupe_key` +
+`natural_dedupe_key` = 1,12 MB juntas) e dos UUIDs não usados (`import_job_id`,
+`workspace_id`). `workspace_id` foi deliberadamente deixado de fora do `load_only`
+(é filtro `WHERE`, nunca lido do objeto). Falta confirmar o delta no console da
+Neon com uma carga controlada quando for oportuno.
