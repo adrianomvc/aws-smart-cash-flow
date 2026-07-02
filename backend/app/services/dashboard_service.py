@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from sqlalchemy import and_, case, desc, func, or_, select
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session, aliased, load_only
 
 from app.core.config import settings
 from app.db.models import (
@@ -25,6 +25,25 @@ from app.services.parsers import extract_installment, normalize_transaction_desc
 ZERO = Decimal("0.00")
 ONE = Decimal("1")
 NEG_ONE = Decimal("-1")
+
+# Columns the shared per-request transaction scans (summary/cashflow/copilot)
+# actually read. Everything else — raw_description, the three dedupe keys,
+# source_name, account_or_card, etc. — is left unloaded to cut Neon egress:
+# these scans can sweep the whole base, so the entity's heavy Text columns
+# dominate the bytes on the wire. `raiseload=True` turns any missed access into
+# a loud error instead of a silent per-row lazy SELECT (an N+1 egress
+# regression). The PK (`id`) is always loaded even under load_only.
+# NB: workspace_id is deliberately absent — it's a WHERE filter, never read off
+# the scanned objects, so loading it (a 36-char UUID per row) is wasted egress.
+_SCAN_LOADED_COLUMNS = (
+    Transaction.source_file_id,
+    Transaction.source_type,
+    Transaction.direction,
+    Transaction.amount,
+    Transaction.transaction_date,
+    Transaction.installment_current,
+    Transaction.installment_total,
+)
 
 # Spending breakdown: transaction-size buckets (P/M/G/GG) in BRL. Tweak freely.
 _SIZE_BUCKETS = [
@@ -761,6 +780,7 @@ class DashboardService:
 
         rows = self.db.execute(
             select(Transaction, Category)
+            .options(load_only(Transaction.transaction_date, Transaction.amount, raiseload=True))
             .outerjoin(
                 TransactionCategoryAssignment,
                 and_(
@@ -925,6 +945,14 @@ class DashboardService:
     ) -> list[dict[str, object]]:
         rows = self.db.execute(
             select(Transaction, Category)
+            .options(
+                load_only(
+                    Transaction.description,
+                    Transaction.transaction_date,
+                    Transaction.amount,
+                    raiseload=True,
+                )
+            )
             .outerjoin(
                 TransactionCategoryAssignment,
                 and_(
@@ -1998,6 +2026,7 @@ class DashboardService:
             return cached
         rows = self.db.scalars(
             select(Transaction)
+            .options(load_only(*_SCAN_LOADED_COLUMNS, raiseload=True))
             .where(
                 *self._transaction_filters(
                     workspace_id=workspace_id,
@@ -2062,6 +2091,7 @@ class DashboardService:
             )
         rows = self.db.scalars(
             select(Transaction)
+            .options(load_only(*_SCAN_LOADED_COLUMNS, raiseload=True))
             .join(SourceFile, SourceFile.id == Transaction.source_file_id)
             .where(or_(*cashflow_clauses))
             .order_by(Transaction.transaction_date, Transaction.id)

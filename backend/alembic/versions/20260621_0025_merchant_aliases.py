@@ -11,6 +11,12 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Idempotent: the table may already exist on databases where it was created
+    # out-of-band via metadata.create_all (local and prod once shared the same
+    # Neon DB). The existing schema matches this definition, so skip creation
+    # and let Alembic just record the revision.
+    if sa.inspect(op.get_bind()).has_table("merchant_aliases"):
+        return
     op.create_table(
         "merchant_aliases",
         sa.Column("id", sa.Uuid(as_uuid=False), primary_key=True),
