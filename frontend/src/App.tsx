@@ -11,9 +11,9 @@ import {
   Loader2,
   LayoutDashboard,
   LogOut,
+  Menu,
   MessageSquare,
   Moon,
-  Settings,
   Sparkles,
   Sun,
   Tags,
@@ -209,21 +209,21 @@ function ThemeToggle() {
 // BottomNav — mobile (≤880px)
 // ---------------------------------------------------------------------------
 
-function BottomNav({ page, setPage }: { page: Page; setPage: (p: Page) => void }) {
-  const items: Array<{ id: Page; label: string; Icon: LucideIcon; fab?: boolean }> = [
+function BottomNav({ page, setPage, onOpenMenu }: { page: Page; setPage: (p: Page) => void; onOpenMenu: () => void }) {
+  const items: Array<{ id: Page; label: string; Icon: LucideIcon; fab?: boolean; menu?: boolean }> = [
     { id: "dashboard",    label: "Início",      Icon: LayoutDashboard },
     { id: "cashflow",     label: "Fluxo",       Icon: BarChart3 },
     { id: "transactions", label: "Nova",         Icon: Upload, fab: true },
     { id: "categories",   label: "Categorias",  Icon: Tags },
-    { id: "settings",     label: "Mais",        Icon: Settings },
+    { id: "settings",     label: "Mais",        Icon: Menu, menu: true },
   ];
   return (
     <nav className="bottom-nav">
-      {items.map(({ id, label, Icon, fab }) => (
+      {items.map(({ id, label, Icon, fab, menu }) => (
         <button
           key={id}
-          className={`${fab ? "fab" : ""}${!fab && page === id ? " active" : ""}`}
-          onClick={() => setPage(id)}
+          className={`${fab ? "fab" : ""}${!fab && !menu && page === id ? " active" : ""}`}
+          onClick={() => (menu ? onOpenMenu() : setPage(id))}
           type="button"
         >
           <Icon size={fab ? 24 : 21} />
@@ -536,6 +536,8 @@ function AppShell({
   children,
   page,
   setPage,
+  mobileOpen,
+  setMobileOpen,
   onLogout,
   workspaceName,
   workspaces = [],
@@ -560,7 +562,8 @@ function AppShell({
 
   return (
     <div className="app">
-      <aside className="side">
+      {mobileOpen ? <div className="side-scrim" onClick={() => setMobileOpen(false)} /> : null}
+      <aside className={`side${mobileOpen ? " side-open" : ""}`}>
         {/* Brand / logo */}
         <div className="side-brand">
           <img src={smartCashFlowLogo} alt="SmartCashFlow" className="brand-logo" style={{ maxWidth: 180 }} />
@@ -593,7 +596,7 @@ function AppShell({
                     className={`nav-item${isActive ? " active" : ""}`}
                     disabled={isDisabled}
                     key={`${item.label}-${item.id ?? "future"}`}
-                    onClick={() => { if (!item.id) return; setPage(item.id); }}
+                    onClick={() => { if (!item.id) return; setPage(item.id); setMobileOpen(false); }}
                     title={isDisabled ? `${item.label} — em breve` : item.label}
                   >
                     <NavIcon name={item.iconName} size={17} />
@@ -628,7 +631,7 @@ function AppShell({
         {children}
       </div>
 
-      <BottomNav page={page} setPage={setPage} />
+      <BottomNav page={page} setPage={setPage} onOpenMenu={() => setMobileOpen(true)} />
     </div>
   );
 }
