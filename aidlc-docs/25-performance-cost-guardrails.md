@@ -110,5 +110,9 @@ Postgres difere um pouco — UUID/numeric em binário — mas a razão se manté
 maiores ganhos vêm das duas chaves de dedupe (`dedupe_key` +
 `natural_dedupe_key` = 1,12 MB juntas) e dos UUIDs não usados (`import_job_id`,
 `workspace_id`). `workspace_id` foi deliberadamente deixado de fora do `load_only`
-(é filtro `WHERE`, nunca lido do objeto). Falta confirmar o delta no console da
-Neon com uma carga controlada quando for oportuno.
+(é filtro `WHERE`, nunca lido do objeto).
+
+**Confirmado na Neon real (2026-07-02, base prod = 3.825 linhas):** o scan "Todos"
+caiu de **1,52 MB → 0,40 MB (−73,9%)** e, de bônus, ficou **4,1× mais rápido**
+(1.556 ms → 376 ms) — menos bytes da `us-east-1`. Bate com o proxy local (~72%).
+O teste em si transferiu ~1,9 MB (não move o mostrador de 2 casas do console).
