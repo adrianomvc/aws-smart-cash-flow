@@ -91,3 +91,26 @@ export async function cognitoSignOut(): Promise<void> {
     /* ignore */
   }
 }
+
+// Cognito raises English exceptions; surface them in pt-BR. Unknown errors fall
+// back to the raw message so nothing gets swallowed.
+const AUTH_ERRORS: Record<string, string> = {
+  NotAuthorizedException: "E-mail ou senha incorretos.",
+  UserNotFoundException: "E-mail ou senha incorretos.",
+  UsernameExistsException: "Já existe uma conta com este e-mail. Tente entrar ou recuperar a senha.",
+  InvalidPasswordException:
+    "A senha não atende aos requisitos: mínimo de 8 caracteres, com maiúscula, minúscula, número e símbolo.",
+  CodeMismatchException: "Código incorreto. Confira o e-mail (e o spam) e tente novamente.",
+  ExpiredCodeException: "Código expirado. Solicite um novo código.",
+  LimitExceededException: "Muitas tentativas. Aguarde alguns minutos e tente novamente.",
+  TooManyRequestsException: "Muitas tentativas. Aguarde alguns minutos e tente novamente.",
+  TooManyFailedAttemptsException: "Muitas tentativas incorretas. Aguarde alguns minutos.",
+  UserNotConfirmedException: "Conta ainda não confirmada — use o código enviado ao seu e-mail.",
+  InvalidParameterException: "Dados inválidos. Confira os campos e tente novamente.",
+};
+
+export function translateAuthError(err: unknown): string {
+  const e = err as { name?: string; message?: string };
+  if (e?.name && AUTH_ERRORS[e.name]) return AUTH_ERRORS[e.name];
+  return e?.message || "Ocorreu um erro. Tente novamente.";
+}
