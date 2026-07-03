@@ -207,7 +207,7 @@ export function ReportsPage({ session, period, onNavigate }: {
         </div>
       </div>
 
-      <div className="grid" style={{ gridTemplateColumns: "232px 1fr", alignItems: "start", gap: 16 }}>
+      <div className="grid grid-collapse" style={{ gridTemplateColumns: "232px 1fr", alignItems: "start", gap: 16 }}>
         {/* Sidebar */}
         <div className="card card-pad" style={{ position: "sticky", top: 16 }}>
           <div className="eyebrow" style={{ marginBottom: 8, paddingLeft: 4 }}>Tipo de relatório</div>
@@ -363,7 +363,7 @@ function CatsReport({ session, q, registerCsv }: RepProps) {
 
   if (catsQ.isLoading) return <Loading />;
   return (
-    <div className="grid" style={{ gridTemplateColumns: "300px 1fr", gap: 16, alignItems: "start" }}>
+    <div className="grid grid-collapse" style={{ gridTemplateColumns: "300px 1fr", gap: 16, alignItems: "start" }}>
       <div className="card card-pad" style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
         <div className="eyebrow" style={{ alignSelf: "flex-start", marginBottom: 14 }}>Distribuição</div>
         <Donut data={cats.slice(0, 8).map((c, i) => ({ value: N(c.amount), color: c.color ?? PALETTE[i % PALETTE.length] }))}

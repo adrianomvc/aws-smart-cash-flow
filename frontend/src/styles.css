@@ -193,6 +193,8 @@ input, select, textarea { font-family: inherit; color: var(--ink); }
   position: sticky; top: 0; height: 100vh;
   border-right: 1px solid #0c0f14;
 }
+/* Mobile drawer scrim — hidden on desktop, styled inside the ≤880px query. */
+.side-scrim { display: none; }
 .side-brand { display: flex; align-items: center; gap: 11px; padding: 18px 18px 16px; }
 .brand-logo {
   width: 100%;
@@ -1062,13 +1064,41 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 @media (max-width: 880px) {
   :root { --side-w: 0px; }
-  .side { display: none; }
   .app { grid-template-columns: 1fr; }
-  .header { padding: 0 16px; height: 60px; }
+  /* Sidebar becomes a slide-in drawer so every screen is reachable on mobile
+     (the bottom-nav only lists the core ones). Toggled by the "Mais" tab. */
+  .side {
+    position: fixed; top: 0; left: 0; bottom: 0; height: 100dvh; z-index: 90;
+    width: 84%; max-width: 300px;
+    transform: translateX(-100%); transition: transform .22s ease;
+    will-change: transform;
+  }
+  .side.side-open { transform: none; box-shadow: 0 0 44px rgba(0,0,0,.4); }
+  .side-scrim {
+    position: fixed; inset: 0; z-index: 85; background: rgba(20,28,42,.5);
+    -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); animation: fadeIn .16s;
+  }
+  /* Two-row header on mobile: title on top, tools (period filter + bell + theme)
+     on their own full-width row. The period used to be display:none — leaving
+     the phone with no way to change the period — and cramming it beside the title
+     truncated the title to "Das...". Splitting rows fixes both. */
+  .header { padding: 8px 16px; height: auto; min-height: 60px; flex-wrap: wrap; row-gap: 8px; }
   .header .h-crumb { display: none; }
-  .header .h-name { font-size: 17px; }
-  .header .period { display: none; }
+  .header .h-name { font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .header .h-spacer { display: none; }
+  .header .h-tools { flex-basis: 100%; justify-content: space-between; gap: 8px; }
+  .header .period { display: flex; flex: none; }
+  .header .period-current span { white-space: nowrap; }
   .header .btn { display: none; }
+  /* Inline multi-column grids (reports, calendar) that don't collapse on their
+     own — force single column. !important beats the inline gridTemplateColumns. */
+  .grid-collapse { grid-template-columns: 1fr !important; }
+  /* Segmented tab bars (e.g. Transações: Todas/Receitas/Despesas/Pagamentos/A
+     revisar) can hold many tabs — let them scroll horizontally on mobile instead
+     of forcing the whole page wider than the viewport. */
+  .seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .seg::-webkit-scrollbar { display: none; }
+  .seg button { flex: none; white-space: nowrap; }
   .mobile-only { display: inline-flex; }
   .canvas { padding: 16px 14px 96px; }
   .bottom-nav {

@@ -1672,7 +1672,7 @@ export function TransactionExplorer({
     <div className="canvas stg">
       {/* ── Page header ── */}
       <div style={{ marginBottom: 18 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
           <div className="kpi-ic"><TIcon name="list" size={15} /></div>
           <h1 style={{ margin: 0, fontFamily: "var(--font-display)", fontSize: 20, fontWeight: 700 }}>Transações</h1>
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
@@ -1797,7 +1797,7 @@ export function TransactionExplorer({
           </div>
           {/* Filters + advanced toggles */}
           {!reviewMode && (
-            <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
+            <div style={{ display: "flex", gap: 6, marginLeft: "auto", flexWrap: "wrap" }}>
               <button className={`btn btn-sm ${groupMode ? "btn-primary" : "btn-ghost"}`} onClick={() => { setGroupMode((c) => !c); setReviewOne(false); setShowDuplicates(false); }} type="button">
                 <TIcon name="list" size={13} /> Categorizar em grupo
               </button>

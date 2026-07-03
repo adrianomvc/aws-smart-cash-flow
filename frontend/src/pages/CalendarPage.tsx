@@ -655,7 +655,7 @@ export function CalendarPage({
       <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 20 }}>
 
       {/* Próximos · Dias críticos · Pendências */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, order: 3, alignItems: "stretch" }}>
+      <div className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, order: 3, alignItems: "stretch" }}>
 
         {/* Próximos compromissos */}
         <div className="card" style={{ minHeight: 0 }}>
@@ -971,7 +971,7 @@ export function CalendarPage({
       </div>
 
       {/* ── Média por dia da semana + Entradas (Visão temporal, no topo via order) ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, order: 1 }}>
+      <div className="grid-collapse" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, order: 1 }}>
 
         {/* Média por dia da semana */}
         <div className="card card-pad cal-trio-card">
