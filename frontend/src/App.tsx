@@ -7,6 +7,8 @@ import {
   BarChart3,
   Bell,
   CheckCircle2,
+  Eye,
+  EyeOff,
   Inbox,
   Loader2,
   LayoutDashboard,
@@ -39,6 +41,7 @@ import {
 } from "./lib/api";
 import { pageMeta, periodRange, setDisplayCurrency } from "./lib/utils";
 import smartCashFlowLogo from "./assets/logo-smartcash-flow-main.png";
+import smartCashFlowIcon from "./assets/icon-smartcash-flow.png";
 import {
   cognitoConfigured, cognitoConfirmChallenge, cognitoConfirmReset, cognitoConfirmSignUp,
   cognitoResendSignUp, cognitoResetPassword, cognitoSignIn, cognitoSignOut, cognitoSignUp,
@@ -404,8 +407,9 @@ function LoginScreen({ onLogin }: { onLogin: (session: ApiSession) => void }) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showPw, setShowPw] = useState(false);
 
-  function reset(next: LoginStep) { setStep(next); setError(null); setSuccess(null); setCode(""); }
+  function reset(next: LoginStep) { setStep(next); setError(null); setSuccess(null); setCode(""); setShowPw(false); }
   async function run(fn: () => Promise<void>) {
     setError(null); setSuccess(null); setLoading(true);
     try { await fn(); }
@@ -438,19 +442,61 @@ function LoginScreen({ onLogin }: { onLogin: (session: ApiSession) => void }) {
   };
   const legacyReset = (e: FormEvent) => { e.preventDefault(); run(async () => { await apiResetPassword(email); setSuccess("Email de recuperação enviado se a conta existir."); }); };
 
+  // Step-specific heading so every screen tells the user where they are and
+  // what happens next (the old UI dropped users on bare unlabeled forms).
+  const stepMeta: Record<LoginStep, { title: string; sub: string }> = {
+    login: { title: "Bem-vindo de volta", sub: "Entre para acompanhar o fluxo de caixa da família." },
+    signup: { title: "Criar conta", sub: "Comece a organizar as finanças em poucos minutos." },
+    confirm_signup: { title: "Confirme seu e-mail", sub: `Digite o código que enviamos para ${email || "seu e-mail"}.` },
+    mfa: { title: "Verificação em duas etapas", sub: "Digite o código do seu app autenticador." },
+    mfa_setup: { title: "Proteja sua conta", sub: "Adicione a chave abaixo no app autenticador (Google Authenticator etc.) e informe o código gerado." },
+    new_password: { title: "Defina sua nova senha", sub: "Escolha uma senha para concluir o primeiro acesso." },
+    reset: { title: "Recuperar senha", sub: "Enviaremos um código de redefinição para seu e-mail." },
+    confirm_reset: { title: "Redefinir senha", sub: `Use o código enviado para ${email || "seu e-mail"} e escolha a nova senha.` },
+  };
+
   const Shell = (children: ReactNode) => (
     <main className="login-shell">
-      <section className="login-panel">
+      {/* Brand / pitch side (desktop) */}
+      <aside className="login-brand">
         <img className="login-brand-logo" src={smartCashFlowLogo} alt="SmartCashFlow" />
-        <p className="eyebrow">SmartCashFlow</p>
-        <h1>Controle financeiro auditável.</h1>
-        <p className="muted">Importe extratos, revise classificações e acompanhe sua saúde financeira com rastreabilidade.</p>
-        {error ? <div className="inline-error">{error}</div> : null}
-        {success ? <div className="inline-success">{success}</div> : null}
-        {children}
-        <button className="ghost-button full" onClick={() => onLogin({ token: "local-dev", mode: "local" })}>
-          Acessar demonstração MVP (local)
-        </button>
+        <h1>Clareza total sobre o dinheiro da família.</h1>
+        <p>Importe extratos e faturas, deixe a IA sugerir categorias e veja para onde o dinheiro vai — com projeção de saldo e metas.</p>
+        <ul className="login-feats">
+          <li>
+            <span className="login-feat-ic"><Upload size={15} /></span>
+            <div><strong>Importe em segundos</strong><span className="feat-sub">Extratos e faturas em PDF, CSV, Excel ou TXT</span></div>
+          </li>
+          <li>
+            <span className="login-feat-ic"><Sparkles size={15} /></span>
+            <div><strong>Categorização com IA</strong><span className="feat-sub">Sugestões automáticas que você revisa e aprova</span></div>
+          </li>
+          <li>
+            <span className="login-feat-ic"><BarChart3 size={15} /></span>
+            <div><strong>Projeção e metas</strong><span className="feat-sub">Saldo futuro, orçamentos e saúde financeira</span></div>
+          </li>
+        </ul>
+        <div className="login-brand-foot">Feito para famílias · seus dados ficam no seu workspace</div>
+      </aside>
+
+      {/* Form side */}
+      <section className="login-card">
+        <div className="login-card-inner">
+          <div className="login-logo-sm">
+            <img src={smartCashFlowIcon} alt="" />
+            <span>SmartCash<strong>Flow</strong></span>
+          </div>
+          <h2>{stepMeta[step].title}</h2>
+          <p className="login-sub">{stepMeta[step].sub}</p>
+          {error ? <div className="inline-error"><AlertCircle size={15} style={{ flex: "none" }} />{error}</div> : null}
+          {success ? <div className="inline-success"><CheckCircle2 size={15} style={{ flex: "none" }} />{success}</div> : null}
+          {children}
+          <div className="login-divider"><span>ou</span></div>
+          <button className="ghost-button full" onClick={() => onLogin({ token: "local-dev", mode: "local" })} type="button">
+            <LayoutDashboard size={15} /> Explorar a demonstração
+          </button>
+          <p className="login-demo-hint">Sem cadastro — abre o workspace de demonstração local.</p>
+        </div>
       </section>
     </main>
   );
@@ -460,16 +506,42 @@ function LoginScreen({ onLogin }: { onLogin: (session: ApiSession) => void }) {
       {loading ? <Loader2 className="spin" size={16} /> : null}{label}
     </button>
   );
-  const emailField = <label>Email<input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required /></label>;
-  const passwordField = (ph?: string) => <label>Senha<input value={password} onChange={(e) => setPassword(e.target.value)} type="password" required minLength={8} placeholder={ph} /></label>;
-  const codeField = <label>Código (e-mail/app)<input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" required /></label>;
-  const newPwField = <label>Nova senha<input value={newPassword} onChange={(e) => setNewPassword(e.target.value)} type="password" required minLength={8} /></label>;
+  const emailField = (
+    <label>E-mail
+      <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required autoComplete="email" autoFocus placeholder="voce@exemplo.com" />
+    </label>
+  );
+  const passwordField = (ph?: string, autoComplete = "current-password") => (
+    <label>Senha
+      <div className="pw-wrap">
+        <input value={password} onChange={(e) => setPassword(e.target.value)} type={showPw ? "text" : "password"} required minLength={8} placeholder={ph} autoComplete={autoComplete} />
+        <button className="pw-toggle" type="button" onClick={() => setShowPw((v) => !v)} aria-label={showPw ? "Ocultar senha" : "Mostrar senha"} tabIndex={-1}>
+          {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
+        </button>
+      </div>
+    </label>
+  );
+  const codeField = (
+    <label>Código de verificação
+      <input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" required autoComplete="one-time-code" autoFocus placeholder="000000" />
+    </label>
+  );
+  const newPwField = (
+    <label>Nova senha
+      <div className="pw-wrap">
+        <input value={newPassword} onChange={(e) => setNewPassword(e.target.value)} type={showPw ? "text" : "password"} required minLength={8} autoComplete="new-password" placeholder="mín. 8 caracteres" />
+        <button className="pw-toggle" type="button" onClick={() => setShowPw((v) => !v)} aria-label={showPw ? "Ocultar senha" : "Mostrar senha"} tabIndex={-1}>
+          {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
+        </button>
+      </div>
+    </label>
+  );
 
   // -------- Cognito UI --------
   if (cognitoConfigured) {
     if (step === "signup") return Shell(<>
       <form className="login-form" onSubmit={cognitoDoSignup}>
-        {emailField}{passwordField("mín. 8 caracteres")}
+        {emailField}{passwordField("mín. 8 caracteres", "new-password")}
         <label>Nome (opcional)<input value={displayName} onChange={(e) => setDisplayName(e.target.value)} type="text" /></label>
         {submitBtn("Criar conta")}
       </form>
@@ -483,16 +555,13 @@ function LoginScreen({ onLogin }: { onLogin: (session: ApiSession) => void }) {
       </div>
     </>);
     if (step === "mfa" || step === "mfa_setup") return Shell(<>
-      {step === "mfa_setup" && (
-        <p className="muted" style={{ fontSize: 12.5 }}>Configure o 2FA: adicione esta chave no app autenticador (Google Authenticator etc.) e digite o código gerado.<br /><strong className="mono">{mfaSecret}</strong></p>
-      )}
+      {step === "mfa_setup" && <div className="login-secret">{mfaSecret}</div>}
       <form className="login-form" onSubmit={cognitoChallenge}>{codeField}{submitBtn("Verificar")}</form>
       <div className="login-actions"><button className="ghost-button" type="button" onClick={() => reset("login")}>Cancelar</button></div>
     </>);
-    if (step === "new_password") return Shell(<>
-      <p className="muted" style={{ fontSize: 12.5 }}>Defina uma nova senha para concluir o primeiro acesso.</p>
+    if (step === "new_password") return Shell(
       <form className="login-form" onSubmit={cognitoChallenge}>{newPwField}{submitBtn("Definir senha")}</form>
-    </>);
+    );
     if (step === "reset") return Shell(<>
       <form className="login-form" onSubmit={cognitoDoReset}>{emailField}{submitBtn("Enviar código")}</form>
       <div className="login-actions"><button className="ghost-button" type="button" onClick={() => reset("login")}>Voltar</button></div>
