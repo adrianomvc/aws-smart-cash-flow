@@ -45,7 +45,7 @@ import smartCashFlowIcon from "./assets/icon-smartcash-flow.png";
 import {
   cognitoConfigured, cognitoConfirmChallenge, cognitoConfirmReset, cognitoConfirmSignUp,
   cognitoResendSignUp, cognitoResetPassword, cognitoSignIn, cognitoSignOut, cognitoSignUp,
-  getCognitoIdToken,
+  getCognitoIdToken, translateAuthError,
 } from "./lib/cognito";
 import type { ImportDrilldown, PeriodState, TransactionDrilldown, TransactionPeriodPreset } from "./types";
 import type { Page } from "./types";
@@ -408,13 +408,30 @@ function LoginScreen({ onLogin }: { onLogin: (session: ApiSession) => void }) {
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [showPw, setShowPw] = useState(false);
+  const [confirmPw, setConfirmPw] = useState("");
 
-  function reset(next: LoginStep) { setStep(next); setError(null); setSuccess(null); setCode(""); setShowPw(false); }
+  function reset(next: LoginStep) { setStep(next); setError(null); setSuccess(null); setCode(""); setShowPw(false); setConfirmPw(""); }
   async function run(fn: () => Promise<void>) {
     setError(null); setSuccess(null); setLoading(true);
     try { await fn(); }
-    catch (err) { setError(err instanceof Error ? err.message : "Ocorreu um erro"); }
+    catch (err) { setError(translateAuthError(err)); }
     finally { setLoading(false); }
+  }
+
+  // Cognito default policy: 8+ chars with lower/upper/digit/symbol. Validate
+  // client-side (with the confirm field) so mistakes fail fast in pt-BR
+  // instead of an English InvalidPasswordException after the round trip.
+  const PW_POLICY = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
+  const PW_HINT = "Mín. 8 caracteres, com maiúscula, minúscula, número e símbolo.";
+  function pwProblem(pw: string): string | null {
+    if (!PW_POLICY.test(pw)) return `A senha não atende aos requisitos: ${PW_HINT.toLowerCase()}`;
+    if (pw !== confirmPw) return "As senhas não coincidem. Digite a mesma senha nos dois campos.";
+    return null;
+  }
+  function guarded(pw: string, submit: () => void) {
+    const problem = pwProblem(pw);
+    if (problem) { setError(problem); setSuccess(null); return; }
+    submit();
   }
 
   function handleSignInResult(r: Awaited<ReturnType<typeof cognitoSignIn>>) {
@@ -425,12 +442,39 @@ function LoginScreen({ onLogin }: { onLogin: (session: ApiSession) => void }) {
   }
 
   // ----- Cognito handlers -----
-  const cognitoLogin = (e: FormEvent) => { e.preventDefault(); run(async () => handleSignInResult(await cognitoSignIn(email, password))); };
-  const cognitoChallenge = (e: FormEvent) => { e.preventDefault(); run(async () => handleSignInResult(await cognitoConfirmChallenge(step === "new_password" ? newPassword : code))); };
-  const cognitoDoSignup = (e: FormEvent) => { e.preventDefault(); run(async () => { await cognitoSignUp(email, password, displayName || undefined); setSuccess("Enviamos um código para seu e-mail."); setStep("confirm_signup"); }); };
+  const cognitoLogin = (e: FormEvent) => {
+    e.preventDefault();
+    run(async () => {
+      try {
+        handleSignInResult(await cognitoSignIn(email, password));
+      } catch (err) {
+        // Unconfirmed account: don't dead-end on an error — resend the code
+        // and take the user straight to the confirmation step.
+        if ((err as { name?: string }).name === "UserNotConfirmedException") {
+          await cognitoResendSignUp(email);
+          setStep("confirm_signup");
+          setSuccess("Sua conta ainda não foi confirmada. Enviamos um novo código para seu e-mail.");
+          return;
+        }
+        throw err;
+      }
+    });
+  };
+  const cognitoChallenge = (e: FormEvent) => {
+    e.preventDefault();
+    if (step === "new_password") return guarded(newPassword, () => run(async () => handleSignInResult(await cognitoConfirmChallenge(newPassword))));
+    run(async () => handleSignInResult(await cognitoConfirmChallenge(code)));
+  };
+  const cognitoDoSignup = (e: FormEvent) => {
+    e.preventDefault();
+    guarded(password, () => run(async () => { await cognitoSignUp(email, password, displayName || undefined); setSuccess("Enviamos um código para seu e-mail."); setStep("confirm_signup"); }));
+  };
   const cognitoDoConfirmSignup = (e: FormEvent) => { e.preventDefault(); run(async () => { await cognitoConfirmSignUp(email, code); setSuccess("Conta confirmada! Faça login."); reset("login"); }); };
   const cognitoDoReset = (e: FormEvent) => { e.preventDefault(); run(async () => { await cognitoResetPassword(email); setSuccess("Enviamos um código para seu e-mail."); setStep("confirm_reset"); }); };
-  const cognitoDoConfirmReset = (e: FormEvent) => { e.preventDefault(); run(async () => { await cognitoConfirmReset(email, code, newPassword); setSuccess("Senha redefinida! Faça login."); reset("login"); }); };
+  const cognitoDoConfirmReset = (e: FormEvent) => {
+    e.preventDefault();
+    guarded(newPassword, () => run(async () => { await cognitoConfirmReset(email, code, newPassword); setSuccess("Senha redefinida! Faça login."); reset("login"); }));
+  };
 
   // ----- Legacy (supabase) handlers, used only when Cognito is not configured -----
   const legacyAuth = (e: FormEvent) => {
@@ -511,13 +555,21 @@ function LoginScreen({ onLogin }: { onLogin: (session: ApiSession) => void }) {
       <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required autoComplete="email" autoFocus placeholder="voce@exemplo.com" />
     </label>
   );
-  const passwordField = (ph?: string, autoComplete = "current-password") => (
+  const passwordField = (ph?: string, autoComplete = "current-password", hint?: string) => (
     <label>Senha
       <div className="pw-wrap">
         <input value={password} onChange={(e) => setPassword(e.target.value)} type={showPw ? "text" : "password"} required minLength={8} placeholder={ph} autoComplete={autoComplete} />
         <button className="pw-toggle" type="button" onClick={() => setShowPw((v) => !v)} aria-label={showPw ? "Ocultar senha" : "Mostrar senha"} tabIndex={-1}>
           {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
         </button>
+      </div>
+      {hint ? <span className="pw-hint">{hint}</span> : null}
+    </label>
+  );
+  const confirmPwField = (
+    <label>Confirmar senha
+      <div className="pw-wrap">
+        <input value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} type={showPw ? "text" : "password"} required minLength={8} placeholder="repita a senha" autoComplete="new-password" />
       </div>
     </label>
   );
@@ -529,11 +581,12 @@ function LoginScreen({ onLogin }: { onLogin: (session: ApiSession) => void }) {
   const newPwField = (
     <label>Nova senha
       <div className="pw-wrap">
-        <input value={newPassword} onChange={(e) => setNewPassword(e.target.value)} type={showPw ? "text" : "password"} required minLength={8} autoComplete="new-password" placeholder="mín. 8 caracteres" />
+        <input value={newPassword} onChange={(e) => setNewPassword(e.target.value)} type={showPw ? "text" : "password"} required minLength={8} autoComplete="new-password" placeholder="crie a nova senha" />
         <button className="pw-toggle" type="button" onClick={() => setShowPw((v) => !v)} aria-label={showPw ? "Ocultar senha" : "Mostrar senha"} tabIndex={-1}>
           {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
         </button>
       </div>
+      <span className="pw-hint">{PW_HINT}</span>
     </label>
   );
 
@@ -541,8 +594,8 @@ function LoginScreen({ onLogin }: { onLogin: (session: ApiSession) => void }) {
   if (cognitoConfigured) {
     if (step === "signup") return Shell(<>
       <form className="login-form" onSubmit={cognitoDoSignup}>
-        {emailField}{passwordField("mín. 8 caracteres", "new-password")}
-        <label>Nome (opcional)<input value={displayName} onChange={(e) => setDisplayName(e.target.value)} type="text" /></label>
+        {emailField}{passwordField("crie sua senha", "new-password", PW_HINT)}{confirmPwField}
+        <label>Nome (opcional)<input value={displayName} onChange={(e) => setDisplayName(e.target.value)} type="text" autoComplete="name" /></label>
         {submitBtn("Criar conta")}
       </form>
       <div className="login-actions"><button className="ghost-button" type="button" onClick={() => reset("login")}>Já tem conta? Entrar</button></div>
@@ -560,15 +613,18 @@ function LoginScreen({ onLogin }: { onLogin: (session: ApiSession) => void }) {
       <div className="login-actions"><button className="ghost-button" type="button" onClick={() => reset("login")}>Cancelar</button></div>
     </>);
     if (step === "new_password") return Shell(
-      <form className="login-form" onSubmit={cognitoChallenge}>{newPwField}{submitBtn("Definir senha")}</form>
+      <form className="login-form" onSubmit={cognitoChallenge}>{newPwField}{confirmPwField}{submitBtn("Definir senha")}</form>
     );
     if (step === "reset") return Shell(<>
       <form className="login-form" onSubmit={cognitoDoReset}>{emailField}{submitBtn("Enviar código")}</form>
       <div className="login-actions"><button className="ghost-button" type="button" onClick={() => reset("login")}>Voltar</button></div>
     </>);
     if (step === "confirm_reset") return Shell(<>
-      <form className="login-form" onSubmit={cognitoDoConfirmReset}>{codeField}{newPwField}{submitBtn("Redefinir senha")}</form>
-      <div className="login-actions"><button className="ghost-button" type="button" onClick={() => reset("login")}>Voltar</button></div>
+      <form className="login-form" onSubmit={cognitoDoConfirmReset}>{codeField}{newPwField}{confirmPwField}{submitBtn("Redefinir senha")}</form>
+      <div className="login-actions">
+        <button className="ghost-button" type="button" disabled={loading || !email} onClick={() => run(async () => { await cognitoResetPassword(email); setSuccess("Novo código enviado. Confira o e-mail (e o spam)."); })}>Reenviar código</button>
+        <button className="ghost-button" type="button" onClick={() => reset("login")}>Voltar</button>
+      </div>
     </>);
     return Shell(<>
       <form className="login-form" onSubmit={cognitoLogin}>{emailField}{passwordField()}{submitBtn("Entrar")}</form>
