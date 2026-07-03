@@ -814,7 +814,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .cp-scroll { padding: 14px 14px; gap: 14px; }
   .cp-msg { max-width: 100%; }
   .cp-bubble { font-size: 14px; }
-  .cp-quick { padding: 10px 14px; }
+  /* Phones: wrap the (shortened) suggestion chips so every hint is visible —
+     the horizontal scroll row read as "cut off" with no swipe affordance. */
+  .cp-quick { padding: 10px 14px; flex-wrap: wrap; overflow-x: visible; }
   .cp-input { padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
   .cp-input input { font-size: 16px; }  /* ≥16px stops iOS zoom-on-focus */
 }
@@ -1075,6 +1077,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   }
   .side.side-open { transform: none; box-shadow: 0 0 44px rgba(0,0,0,.4); }
   .side-scrim {
+    display: block; /* base rule hides it on desktop */
     position: fixed; inset: 0; z-index: 85; background: rgba(20,28,42,.5);
     -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); animation: fadeIn .16s;
   }
@@ -1086,8 +1089,12 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .header .h-crumb { display: none; }
   .header .h-name { font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .header .h-spacer { display: none; }
-  .header .h-tools { flex-basis: 100%; justify-content: space-between; gap: 8px; }
-  .header .period { display: flex; flex: none; }
+  /* Tools right-aligned; the period (when present) pushes itself left via
+     margin. Keeping the bell on the RIGHT also keeps its 300px popover
+     (anchored right:0) inside the viewport — on the left it opened off-screen. */
+  .header .h-tools { flex-basis: 100%; justify-content: flex-end; gap: 8px; }
+  .header .period { display: flex; flex: none; margin-right: auto; }
+  .notif-popover { max-width: calc(100vw - 24px); }
   .header .period-current span { white-space: nowrap; }
   .header .btn { display: none; }
   /* Inline multi-column grids (reports, calendar) that don't collapse on their

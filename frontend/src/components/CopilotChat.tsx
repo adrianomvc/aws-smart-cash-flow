@@ -7,11 +7,12 @@ import type { ApiSession, CopilotTurn } from "../lib/api";
 import type { TransactionDrilldown } from "../types";
 import { money } from "../lib/utils";
 
+// Short enough to fit two per row on a 390px phone (they wrap there).
 const SUGGESTIONS = [
-  "Quais minhas 3 maiores categorias de gasto?",
-  "Onde eu poderia economizar?",
-  "Custos fixos vs variáveis?",
-  "Posso gastar R$ 1.000 com tranquilidade?",
+  "Top 3 categorias de gasto",
+  "Onde posso economizar?",
+  "Custos fixos vs variáveis",
+  "Posso gastar R$ 1.000?",
 ];
 const GREETING: CopilotTurn = {
   role: "assistant",

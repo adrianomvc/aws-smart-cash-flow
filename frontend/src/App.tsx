@@ -212,7 +212,7 @@ function ThemeToggle() {
 // BottomNav — mobile (≤880px)
 // ---------------------------------------------------------------------------
 
-function BottomNav({ page, setPage, onOpenMenu }: { page: Page; setPage: (p: Page) => void; onOpenMenu: () => void }) {
+function BottomNav({ page, setPage, onToggleMenu }: { page: Page; setPage: (p: Page) => void; onToggleMenu: () => void }) {
   const items: Array<{ id: Page; label: string; Icon: LucideIcon; fab?: boolean; menu?: boolean }> = [
     { id: "dashboard",    label: "Início",      Icon: LayoutDashboard },
     { id: "cashflow",     label: "Fluxo",       Icon: BarChart3 },
@@ -226,7 +226,7 @@ function BottomNav({ page, setPage, onOpenMenu }: { page: Page; setPage: (p: Pag
         <button
           key={id}
           className={`${fab ? "fab" : ""}${!fab && !menu && page === id ? " active" : ""}`}
-          onClick={() => (menu ? onOpenMenu() : setPage(id))}
+          onClick={() => (menu ? onToggleMenu() : setPage(id))}
           type="button"
         >
           <Icon size={fab ? 24 : 21} />
@@ -700,7 +700,7 @@ function AppShell({
         {children}
       </div>
 
-      <BottomNav page={page} setPage={setPage} onOpenMenu={() => setMobileOpen(true)} />
+      <BottomNav page={page} setPage={setPage} onToggleMenu={() => setMobileOpen(!mobileOpen)} />
     </div>
   );
 }
@@ -1080,7 +1080,9 @@ function Topbar({
       </div>
       <div className="h-spacer" />
       <div className="h-tools">
-        {!(["settings", "rules", "review", "transactions", "planning", "scenarios", "wealth", "family"] as Page[]).includes(page) ? (
+        {/* copilot: the chat is not tied to the dashboard period (it gets a
+            multi-period snapshot server-side), so hide the picker there. */}
+        {!(["settings", "rules", "review", "transactions", "planning", "scenarios", "wealth", "family", "copilot"] as Page[]).includes(page) ? (
           <DashboardPeriodPicker period={dashboardPeriod} onChange={setDashboardPeriod} />
         ) : null}
 
