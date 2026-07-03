@@ -814,7 +814,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .cp-scroll { padding: 14px 14px; gap: 14px; }
   .cp-msg { max-width: 100%; }
   .cp-bubble { font-size: 14px; }
-  .cp-quick { padding: 10px 14px; }
+  /* Phones: wrap the (shortened) suggestion chips so every hint is visible —
+     the horizontal scroll row read as "cut off" with no swipe affordance. */
+  .cp-quick { padding: 10px 14px; flex-wrap: wrap; overflow-x: visible; }
   .cp-input { padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); }
   .cp-input input { font-size: 16px; }  /* ≥16px stops iOS zoom-on-focus */
 }
@@ -1075,6 +1077,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   }
   .side.side-open { transform: none; box-shadow: 0 0 44px rgba(0,0,0,.4); }
   .side-scrim {
+    display: block; /* base rule hides it on desktop */
     position: fixed; inset: 0; z-index: 85; background: rgba(20,28,42,.5);
     -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); animation: fadeIn .16s;
   }
@@ -1086,8 +1089,12 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .header .h-crumb { display: none; }
   .header .h-name { font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .header .h-spacer { display: none; }
-  .header .h-tools { flex-basis: 100%; justify-content: space-between; gap: 8px; }
-  .header .period { display: flex; flex: none; }
+  /* Tools right-aligned; the period (when present) pushes itself left via
+     margin. Keeping the bell on the RIGHT also keeps its 300px popover
+     (anchored right:0) inside the viewport — on the left it opened off-screen. */
+  .header .h-tools { flex-basis: 100%; justify-content: flex-end; gap: 8px; }
+  .header .period { display: flex; flex: none; margin-right: auto; }
+  .notif-popover { max-width: calc(100vw - 24px); }
   .header .period-current span { white-space: nowrap; }
   .header .btn { display: none; }
   /* Inline multi-column grids (reports, calendar) that don't collapse on their
@@ -1561,49 +1568,113 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
    Estas classes existem apenas no repo e não estão no design system.
    ============================================================ */
 
-/* --- Login screen --- */
+/* --- Login screen (split-screen: brand pitch + form, on design-system tokens) --- */
 .login-shell {
-  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(440px, 1.15fr) minmax(400px, 1fr);
+  min-height: 100vh; min-height: 100dvh;
+  background: var(--bg);
+}
+.login-brand {
+  position: relative; overflow: hidden;
+  display: flex; flex-direction: column; justify-content: center;
+  padding: 56px 64px; gap: 16px;
   background:
-    radial-gradient(circle at 20% 10%, rgba(109,93,252,.18), transparent 32%),
-    linear-gradient(135deg, #07111f 0%, #0d1728 45%, #f7f8fc 45%);
-  display: flex;
-  min-height: 100vh;
-  padding: 24px;
+    radial-gradient(720px 420px at 88% -8%, rgba(0,184,255,.14), transparent 60%),
+    radial-gradient(640px 460px at -12% 108%, rgba(0,217,123,.13), transparent 55%),
+    linear-gradient(180deg, var(--side-bg-2, #0f1428), var(--side-bg, #0b1020));
+  color: #b7c0d8;
 }
-.login-panel {
-  background: rgba(255,255,255,.96);
-  border: 1px solid rgba(226,232,240,.9);
-  border-radius: 8px;
-  box-shadow: 0 24px 70px rgba(15,23,42,.24);
-  margin: 0 auto;
-  max-width: 440px;
-  padding: 32px;
-  width: 100%;
+.login-brand-logo { width: 216px; max-width: 62%; height: auto; border-radius: 10px; margin-bottom: 6px; }
+.login-brand h1 {
+  font-family: var(--font-display); font-size: 34px; font-weight: 700;
+  line-height: 1.12; letter-spacing: -.6px; color: #fff; margin: 0; max-width: 460px;
 }
-.login-brand-logo {
-  border-radius: 10px;
-  display: block;
-  height: auto;
-  margin-bottom: 14px;
-  max-width: 260px;
-  width: 72%;
+.login-brand > p { font-size: 14.5px; line-height: 1.55; max-width: 440px; margin: 0; }
+.login-feats { list-style: none; display: grid; gap: 14px; margin: 16px 0 0; padding: 0; max-width: 440px; }
+.login-feats li { display: flex; gap: 12px; align-items: flex-start; }
+.login-feat-ic {
+  flex: none; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
+  background: rgba(0,217,123,.10); color: #00d97b; border: 1px solid rgba(0,217,123,.24);
 }
-.login-panel h1 { font-size: 32px; line-height: 1.05; }
+.login-feats strong { display: block; color: #e8ecf6; font-size: 13.5px; font-weight: 650; }
+.login-feats .feat-sub { display: block; font-size: 12.5px; color: #7c87a5; margin-top: 1px; }
+.login-brand-foot {
+  margin-top: 26px; font-size: 11px; letter-spacing: .5px; color: #7c87a5;
+  font-family: var(--font-mono); text-transform: uppercase;
+}
+
+.login-card { display: flex; align-items: center; justify-content: center; padding: 40px 24px; }
+.login-card-inner { width: 100%; max-width: 400px; }
+/* Mobile brand header: gradient S icon + CSS wordmark (the main logo PNG has a
+   white wordmark and vanishes on the light form background). */
+.login-logo-sm { display: none; align-items: center; justify-content: center; gap: 10px; margin: 0 0 20px; }
+.login-logo-sm img { width: 38px; height: 38px; }
+.login-logo-sm span {
+  font-family: var(--font-display); font-size: 21px; font-weight: 700;
+  letter-spacing: -.4px; color: var(--ink);
+}
+.login-logo-sm span strong { color: var(--acc); font-weight: 700; }
+.login-card h2 { font-family: var(--font-display); font-size: 25px; font-weight: 700; letter-spacing: -.4px; margin: 0 0 6px; color: var(--ink); }
+.login-sub { color: var(--ink-3); font-size: 13.5px; line-height: 1.5; margin: 0 0 18px; }
 .login-form, .detail-stack { display: grid; gap: 14px; }
-.login-form { margin-top: 24px; }
-.login-actions { display: flex; gap: 12px; justify-content: center; margin-top: 16px; }
-.login-actions .ghost-button { font-size: 13px; min-height: auto; padding: 6px 12px; }
-.login-form label { color: #334155; display: grid; font-size: 13px; font-weight: 700; gap: 6px; }
+.login-form { margin-top: 4px; }
+.login-form label { color: var(--ink-2); display: grid; font-size: 12.5px; font-weight: 650; gap: 6px; }
+.login-form input { font-size: 14px; min-height: 42px; border-radius: 9px; width: 100%; }
+.login-actions { display: flex; gap: 12px; justify-content: center; margin-top: 14px; flex-wrap: wrap; }
+.login-actions .ghost-button { font-size: 13px; min-height: auto; padding: 6px 12px; border: none; background: none; color: var(--ink-3); }
+.login-actions .ghost-button:hover { color: var(--acc-ink); text-decoration: underline; }
+
+/* Password show/hide */
+.pw-wrap { position: relative; display: grid; }
+.pw-wrap input { padding-right: 42px; }
+.pw-toggle {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  width: 30px; height: 30px; display: grid; place-items: center; border-radius: 7px;
+  color: var(--ink-faint); transition: color .12s, background .12s;
+}
+.pw-toggle:hover { color: var(--ink); background: var(--bg-sunken); }
+
+/* Divider between real auth and the demo entry */
+.login-divider {
+  display: flex; align-items: center; gap: 12px; margin: 18px 0 12px;
+  color: var(--ink-faint); font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+}
+.login-divider::before, .login-divider::after { content: ""; height: 1px; background: var(--line); flex: 1; }
+.login-demo-hint { text-align: center; font-size: 11.5px; color: var(--ink-faint); margin: 8px 0 0; }
+
+/* 2FA setup secret */
+.login-secret {
+  background: var(--bg-sunken); border: 1px dashed var(--line-strong); border-radius: 9px;
+  padding: 10px 12px; margin-bottom: 12px; font-family: var(--font-mono); font-size: 12.5px;
+  word-break: break-all; color: var(--ink); user-select: all;
+}
+
+/* Mobile: single column, centered logo replaces the pitch panel */
+@media (max-width: 980px) {
+  .login-shell { grid-template-columns: 1fr; }
+  .login-brand { display: none; }
+  .login-logo-sm { display: flex; }
+  .login-card { padding: 36px 20px calc(36px + env(safe-area-inset-bottom)); }
+  .login-card h2, .login-sub { text-align: center; }
+}
 
 /* --- Buttons for login screen --- */
 .primary-button, .secondary-button, .ghost-button {
-  align-items: center; border-radius: 6px; display: inline-flex;
-  font-weight: 750; gap: 8px; justify-content: center; min-height: 40px; padding: 0 14px;
+  align-items: center; border-radius: 10px; display: inline-flex;
+  font-weight: 700; gap: 8px; justify-content: center; min-height: 44px; padding: 0 16px;
+  transition: background .15s, border-color .15s, transform .12s, box-shadow .15s;
 }
-.primary-button { background: #6d5dfc; border: 1px solid #6d5dfc; color: white; }
+.primary-button {
+  background: var(--acc); border: 1px solid var(--acc); color: #fff;
+  box-shadow: 0 6px 18px rgba(0,184,107,.22);
+}
+.primary-button:hover:not(:disabled) { background: var(--acc-strong); border-color: var(--acc-strong); transform: translateY(-1px); }
+.primary-button:disabled { opacity: .65; cursor: default; }
 .ghost-button { background: var(--card); border: 1px solid var(--line); color: var(--ink-2); }
-.full { margin-top: 12px; width: 100%; }
+.ghost-button:hover { border-color: var(--line-strong); color: var(--ink); }
+.compact-button { min-height: 34px; padding: 0 12px; font-size: 13px; border-radius: 8px; box-shadow: none; }
+.full { margin-top: 0; width: 100%; }
 
 /* --- Form inputs (login) --- */
 input, select {
