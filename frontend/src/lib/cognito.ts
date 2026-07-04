@@ -111,6 +111,12 @@ const AUTH_ERRORS: Record<string, string> = {
 
 export function translateAuthError(err: unknown): string {
   const e = err as { name?: string; message?: string };
+  // Password reset on an account whose e-mail was never verified: Cognito
+  // reports it as a generic InvalidParameterException — call out the real
+  // cause instead of a misleading "invalid data".
+  if (e?.message?.includes("no registered/verified email")) {
+    return "O e-mail desta conta ainda não foi verificado, então não é possível redefinir a senha. Peça ao administrador para verificar o e-mail no Cognito.";
+  }
   if (e?.name && AUTH_ERRORS[e.name]) return AUTH_ERRORS[e.name];
   return e?.message || "Ocorreu um erro. Tente novamente.";
 }
