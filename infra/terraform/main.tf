@@ -179,6 +179,22 @@ resource "aws_lambda_function" "backend" {
   tags = local.common_tags
 }
 
+# Import uploads answer immediately and hand parsing to an async self-invoke
+# of this same function (app.services.import_worker).
+data "aws_iam_policy_document" "backend_lambda_self_invoke" {
+  statement {
+    effect    = "Allow"
+    actions   = ["lambda:InvokeFunction"]
+    resources = [aws_lambda_function.backend.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "backend_lambda_self_invoke" {
+  name   = "${local.name_prefix}-backend-self-invoke"
+  role   = aws_iam_role.backend_lambda_execution.id
+  policy = data.aws_iam_policy_document.backend_lambda_self_invoke.json
+}
+
 resource "aws_apigatewayv2_api" "backend" {
   name          = "${local.name_prefix}-backend"
   protocol_type = "HTTP"

@@ -15,6 +15,9 @@ import os
 
 os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
 os.environ.setdefault("APP_ENV", "local")
+# Imports processam inline (mesma sessão) nos testes: o modo "thread" abriria
+# outra sessão que não enxerga o SQLite em memória do teste.
+os.environ.setdefault("IMPORT_WORKER_MODE", "inline")
 
 import pytest
 

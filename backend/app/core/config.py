@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     cognito_user_pool_id: str = Field(default="", alias="COGNITO_USER_POOL_ID")
     cognito_app_client_id: str = Field(default="", alias="COGNITO_APP_CLIENT_ID")
     allow_local_auth: bool = Field(default=False, alias="ALLOW_LOCAL_AUTH")
+    # How import jobs are processed after upload: "" → auto (Lambda self-invoke
+    # on AWS, background thread elsewhere); "inline" forces synchronous
+    # processing in the caller's session (tests).
+    import_worker_mode: str = Field(default="", alias="IMPORT_WORKER_MODE")
     database_pool_size: int = 5
     database_max_overflow: int = 10
     database_pool_recycle_seconds: int = 300

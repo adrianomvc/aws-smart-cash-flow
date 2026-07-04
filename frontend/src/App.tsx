@@ -647,7 +647,7 @@ function LoginScreen({ onLogin }: { onLogin: (session: ApiSession) => void }) {
         <button className="ghost-button" type="button" onClick={() => reset(step === "login" ? "signup" : "login")}>
           {step === "login" ? "Não tem conta? Criar conta" : "Já tem conta? Entrar"}
         </button>
-      ) : <p className="muted">Cadastro real indisponível no modo local. Use a demonstração MVP.</p>}
+      ) : <p className="muted">Cadastro real indisponível no modo local. Use o modo demonstração.</p>}
       {step === "login" && supabase ? <button className="ghost-button" onClick={legacyReset} disabled={loading || !email}>Esqueceu a senha?</button> : null}
     </div>
   </>);

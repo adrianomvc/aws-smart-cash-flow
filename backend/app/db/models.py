@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -131,6 +132,21 @@ class SourceFile(Base):
     )
 
     import_jobs: Mapped[list["ImportJob"]] = relationship(back_populates="source_file")
+
+
+class SourceFileContent(Base):
+    """Raw bytes of an uploaded file, kept so the async import worker can
+    re-read the upload after the HTTP request has already returned."""
+
+    __tablename__ = "source_file_contents"
+
+    source_file_id: Mapped[str] = mapped_column(
+        UUID_TYPE, ForeignKey("source_files.id"), primary_key=True
+    )
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 
 class ImportJob(Base):

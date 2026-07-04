@@ -2156,7 +2156,7 @@ export function TransactionExplorer({
                   <TransactionRow
                     categoryGroups={categoryGroups}
                     key={transaction.id}
-                    onDelete={() => { if (window.confirm(`Excluir a transação "${transaction.description}"? Esta ação não pode ser desfeita no MVP.`)) remove.mutate(transaction.id); }}
+                    onDelete={() => { if (window.confirm(`Excluir a transação "${transaction.description}"? Esta ação não pode ser desfeita.`)) remove.mutate(transaction.id); }}
                     onSelect={() => onSelect(selected?.id === transaction.id ? null : transaction)}
                     onCategorized={handleCategoryChanged}
                     session={session}
@@ -2207,7 +2207,7 @@ export function TransactionExplorer({
             categories={categories.data?.items ?? []}
             categoryGroups={categoryGroups}
             deleting={remove.isPending}
-            onDelete={() => { if (window.confirm(`Excluir a transação "${selected.description}"? Esta ação não pode ser desfeita no MVP.`)) remove.mutate(selected.id); }}
+            onDelete={() => { if (window.confirm(`Excluir a transação "${selected.description}"? Esta ação não pode ser desfeita.`)) remove.mutate(selected.id); }}
             onCategorized={handleCategoryChanged}
             onCreateRuleFromAI={openRuleFromAi}
             session={session}
