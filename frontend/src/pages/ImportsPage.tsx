@@ -1,4 +1,4 @@
-import { useRef, useMemo, useState } from "react";
+import { useEffect, useRef, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -145,31 +145,52 @@ function ProgressBar({ pct }: { pct: number }) {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function BatchUploadSummary({ results }: { results: BatchUploadResult[] }) {
+function BatchUploadSummary({ jobsById, results }: { jobsById: Map<string, ImportJobRead>; results: BatchUploadResult[] }) {
   const successCount = results.filter((item) => item.status === "success").length;
   const errorCount = results.length - successCount;
+  // The upload response is a snapshot (usually "pending"); prefer the live job
+  // from the history query so the summary follows the background processing.
+  const liveStatus = (item: Extract<BatchUploadResult, { status: "success" }>) =>
+    jobsById.get(item.result.import_job_id) ?? item.result;
+  const processingCount = results.filter(
+    (item) => item.status === "success" && ["pending", "processing"].includes(liveStatus(item).status),
+  ).length;
   return (
     <div className="card card-pad" style={{ marginTop: 12 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-        <span style={{ fontWeight: 700, fontSize: 13.5 }}>{successCount} arquivo{successCount === 1 ? "" : "s"} importado{successCount === 1 ? "" : "s"}</span>
+        <span style={{ fontWeight: 700, fontSize: 13.5 }}>{successCount} arquivo{successCount === 1 ? "" : "s"} enviado{successCount === 1 ? "" : "s"}</span>
         {errorCount > 0
           ? <span className="badge b-neg">{errorCount} falha{errorCount === 1 ? "" : "s"}</span>
-          : <span className="badge b-real"><IIcon name="check" size={11} />Lote concluído</span>}
+          : processingCount > 0
+            ? <span className="badge b-low"><IIcon name="clock" size={11} />Processando em segundo plano</span>
+            : <span className="badge b-real"><IIcon name="check" size={11} />Lote concluído</span>}
       </div>
+      {processingCount > 0 && (
+        <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 8 }}>
+          Você já pode sair desta tela — o processamento continua no servidor e o status é atualizado no histórico.
+        </div>
+      )}
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {results.map((item) => (
-          <div key={item.fileName} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 0", borderBottom: "1px solid var(--line)" }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="t-desc" style={{ fontSize: 12.5 }}>{item.fileName}</div>
-              <div className="t-sub">
-                {item.status === "success"
-                  ? `${item.result.valid_rows} novas · ${item.result.duplicate_rows} duplicadas · ${item.result.error_rows} erros`
-                  : item.errorMessage}
+        {results.map((item) => {
+          const live = item.status === "success" ? liveStatus(item) : null;
+          return (
+            <div key={item.fileName} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "6px 0", borderBottom: "1px solid var(--line)" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="t-desc" style={{ fontSize: 12.5 }}>{item.fileName}</div>
+                <div className="t-sub">
+                  {live
+                    ? ["pending", "processing"].includes(live.status)
+                      ? "Processando em segundo plano…"
+                      : `${live.valid_rows} novas · ${live.duplicate_rows} duplicadas · ${live.error_rows} erros`
+                    : item.status === "error"
+                      ? item.errorMessage
+                      : null}
+                </div>
               </div>
+              <ImportStatusBadge status={live ? live.status : "failed"} />
             </div>
-            <ImportStatusBadge status={item.status === "success" ? item.result.status : "failed"} />
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -190,8 +211,12 @@ function BatchUploadProgressSummary({ progress }: { progress: BatchUploadProgres
       <div className="alert info" style={{ marginTop: 10 }}>
         <div className="alert-ic"><IIcon name="info" size={15} /></div>
         <div>
-          <div className="a-ttl">Mantenha esta tela aberta</div>
-          <div className="a-txt">Cada arquivo é enviado separadamente para reduzir risco de timeout.</div>
+          <div className="a-ttl">{progress.label === "Gerando prévia" ? "Gerando prévia" : "Enviando arquivos"}</div>
+          <div className="a-txt">
+            {progress.label === "Gerando prévia"
+              ? "A prévia é rápida e não grava nada — mantenha a tela aberta só até ela terminar."
+              : "Cada arquivo é enviado separadamente. Depois do envio, o processamento continua no servidor."}
+          </div>
         </div>
       </div>
     </div>
@@ -224,8 +249,8 @@ function BatchPreviewSummary({ disabled, onConfirm, recommendedLimit, results, s
         <div className="alert warn" style={{ marginBottom: 10 }}>
           <div className="alert-ic"><IIcon name="alert" size={15} /></div>
           <div>
-            <div className="a-ttl">Lote grande detectado</div>
-            <div className="a-txt">O MVP vai processar arquivo por arquivo; para produção, blocos de até {recommendedLimit} arquivos tendem a ser mais estáveis.</div>
+            <div className="a-ttl">Lote grande</div>
+            <div className="a-txt">Os arquivos são enviados um a um; acima de {recommendedLimit} arquivos o envio pode levar alguns minutos. O processamento em si continua em segundo plano.</div>
           </div>
         </div>
       )}
@@ -567,7 +592,7 @@ function ImportDetailDrawer({
               disabled={removeImport.isPending}
               onClick={() => {
                 const filename = item.source_file?.original_filename ?? "esta importação";
-                if (window.confirm(`Excluir "${filename}" e seus lançamentos? Esta ação não pode ser desfeita no MVP.`)) {
+                if (window.confirm(`Excluir "${filename}" e seus lançamentos? Esta ação não pode ser desfeita.`)) {
                   removeImport.mutate(item.id);
                 }
               }}
@@ -629,7 +654,15 @@ export function ImportsPage({
     return `?${params.toString()}`;
   }, [issueFilter, page, search, sourceKindFilter, statusFilter]);
 
-  const imports = useQuery({ queryKey: ["imports", session.token, query], queryFn: () => getImports(session, query) });
+  const imports = useQuery({
+    queryKey: ["imports", session.token, query],
+    queryFn: () => getImports(session, query),
+    // While any job is still processing in the background, poll for status.
+    refetchInterval: (q) => {
+      const items = q.state.data?.items ?? [];
+      return items.some((item) => item.status === "pending" || item.status === "processing") ? 2500 : false;
+    },
+  });
   const importCards = useQuery({ queryKey: ["credit-cards", session.token, "import-link"], queryFn: () => getCreditCards(session) });
   const importStatements = useQuery({ queryKey: ["credit-card-statements", session.token, "import-link"], queryFn: () => getCreditCardStatements(session, "") });
   const dataQuality = useQuery({ queryKey: ["data-quality", session.token], queryFn: () => getDataQuality(session, "") });
@@ -640,6 +673,19 @@ export function ImportsPage({
   const totalImports = imports.data?.total ?? 0;
   const visibleImports = imports.data?.items ?? [];
   const nextPageDisabled = imports.isLoading || (page + 1) * pageSize >= totalImports;
+  const jobsById = useMemo(() => new Map(visibleImports.map((item) => [item.id, item])), [visibleImports]);
+
+  // When a background job finishes, refresh everything fed by the import.
+  const processingCount = visibleImports.filter((item) => item.status === "pending" || item.status === "processing").length;
+  const prevProcessingCount = useRef(0);
+  useEffect(() => {
+    if (processingCount < prevProcessingCount.current) {
+      for (const key of ["transactions", "dashboard-summary", "credit-card-statements", "credit-cards", "monthly-cashflow", "category-ranking", "data-quality"]) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
+    }
+    prevProcessingCount.current = processingCount;
+  }, [processingCount, queryClient]);
 
   // Today's summary
   const today = new Date().toISOString().slice(0, 10);
@@ -683,16 +729,16 @@ export function ImportsPage({
     mutationFn: async (files: File[]) => {
       const results: BatchUploadResult[] = [];
       setBatchResults([]);
-      setUploadProgress({ currentFileName: "", done: 0, label: "Importando lote", total: files.length });
+      setUploadProgress({ currentFileName: "", done: 0, label: "Enviando arquivos", total: files.length });
       for (const file of files) {
-        setUploadProgress({ currentFileName: file.name, done: results.length, label: "Importando lote", total: files.length });
+        setUploadProgress({ currentFileName: file.name, done: results.length, label: "Enviando arquivos", total: files.length });
         try {
           const result = await uploadImport(session, file, uploadSourceKind);
           results.push({ fileName: file.name, result, status: "success" });
         } catch (error) {
           results.push({ errorMessage: apiErrorMessage(error, "Falha ao importar arquivo."), fileName: file.name, status: "error" });
         }
-        setUploadProgress({ currentFileName: file.name, done: results.length, label: "Importando lote", total: files.length });
+        setUploadProgress({ currentFileName: file.name, done: results.length, label: "Enviando arquivos", total: files.length });
       }
       return results;
     },
@@ -741,11 +787,7 @@ export function ImportsPage({
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
-    if (files.length > RECOMMENDED_BATCH_FILE_LIMIT) {
-      setImportActionMessage(`Lote grande com ${files.length} arquivos. Vamos processar um por vez; se ficar lento em produção, divida em blocos de até ${RECOMMENDED_BATCH_FILE_LIMIT}.`);
-    } else {
-      setImportActionMessage("");
-    }
+    setImportActionMessage("");
     if (files.length) previewMutation.mutate(files);
     e.currentTarget.value = "";
   }
@@ -812,11 +854,7 @@ export function ImportsPage({
               e.preventDefault();
               const files = Array.from(e.dataTransfer.files);
               if (files.length) {
-                if (files.length > RECOMMENDED_BATCH_FILE_LIMIT) {
-                  setImportActionMessage(`Lote grande com ${files.length} arquivos. Vamos processar um por vez.`);
-                } else {
-                  setImportActionMessage("");
-                }
+                setImportActionMessage("");
                 previewMutation.mutate(files);
               }
             }}
@@ -825,7 +863,7 @@ export function ImportsPage({
               <IIcon name="upload" size={24} />
             </div>
             <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>
-              {previewMutation.isPending ? "Gerando prévia…" : upload.isPending ? "Importando lote…" : "Arraste arquivos aqui"}
+              {previewMutation.isPending ? "Gerando prévia…" : upload.isPending ? "Enviando arquivos…" : "Arraste arquivos aqui"}
             </div>
             <div style={{ fontSize: 12.5, color: "var(--ink-3)", marginBottom: 14 }}>
               ou clique para selecionar · OFX, CSV, TXT, XLSX
@@ -850,12 +888,12 @@ export function ImportsPage({
             />
           </div>
 
-          {/* Alert: large batches */}
+          {/* Alert: background processing */}
           <div className="alert info">
             <div className="alert-ic"><IIcon name="info" size={15} /></div>
             <div>
-              <div className="a-ttl">Lotes grandes</div>
-              <div className="a-txt">Para arquivos com mais de 5.000 linhas, o processamento é assíncrono. Você pode sair desta tela — avisaremos quando concluir.</div>
+              <div className="a-ttl">Processamento em segundo plano</div>
+              <div className="a-txt">Depois de confirmar a importação, o processamento continua no servidor. Você pode sair desta tela — o status fica no histórico abaixo.</div>
             </div>
           </div>
 
@@ -870,7 +908,7 @@ export function ImportsPage({
             />
           ) : null}
           {uploadProgress ? <BatchUploadProgressSummary progress={uploadProgress} /> : null}
-          {batchResults.length > 0 && !uploadProgress ? <BatchUploadSummary results={batchResults} /> : null}
+          {batchResults.length > 0 && !uploadProgress ? <BatchUploadSummary jobsById={jobsById} results={batchResults} /> : null}
         </div>
 
         {/* Right: summary + categorization */}

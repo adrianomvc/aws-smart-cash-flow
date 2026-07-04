@@ -1118,7 +1118,7 @@ function AboutBody({ workspaceName, session }: { workspaceName: string; session:
         <PrefRow label="Workspace"><span style={{ fontWeight: 700 }}>{workspaceName}</span></PrefRow>
         <PrefRow label="Modo de sessão"><span style={{ fontWeight: 700 }}>{session.mode === "local" ? "Local" : "Supabase"}</span></PrefRow>
         <PrefRow label="API"><span className="badge b-pos">Conectada</span></PrefRow>
-        <PrefRow label="Versão" hint="MVP em evolução"><span className="mono">v0.1</span></PrefRow>
+        <PrefRow label="Versão" hint="Em evolução contínua"><span className="mono">v0.1</span></PrefRow>
         <PrefRow label="Privacidade" hint="Dados financeiros ficam restritos ao workspace ativo"><ShieldCheck size={16} /></PrefRow>
       </div>
     </div>

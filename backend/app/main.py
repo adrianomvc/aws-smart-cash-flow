@@ -63,4 +63,15 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
-handler = Mangum(app)
+_http_handler = Mangum(app)
+
+
+def handler(event, context):  # noqa: ANN001, ANN201 - AWS Lambda entrypoint
+    # Async worker self-invokes bypass API Gateway, so they reach the Lambda
+    # as a plain task event that Mangum would reject.
+    if isinstance(event, dict) and event.get("task") == "process_import_job":
+        from app.services.import_worker import run_import_job
+
+        run_import_job(event["import_job_id"], source_kind=event.get("source_kind"))
+        return {"task": "process_import_job", "import_job_id": event["import_job_id"]}
+    return _http_handler(event, context)

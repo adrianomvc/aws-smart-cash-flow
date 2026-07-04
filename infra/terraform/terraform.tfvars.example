@@ -18,7 +18,9 @@ amplify_app_arn = ""
 #   zip -r ../backend-lambda.zip .
 backend_lambda_package_path = "../../backend/build/backend-lambda.zip"
 backend_lambda_memory_size  = 512
-backend_lambda_timeout_seconds = 30
+# HTTP requests are capped at ~30s by API Gateway anyway; 120s is the budget
+# for the async import worker (self-invoke).
+backend_lambda_timeout_seconds = 120
 backend_log_retention_days  = 14
 api_gateway_log_retention_days = 14
 

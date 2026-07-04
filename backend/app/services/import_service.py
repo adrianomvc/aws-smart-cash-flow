@@ -17,6 +17,7 @@ from app.db.models import (
     ImportJob,
     RawTransactionLine,
     SourceFile,
+    SourceFileContent,
     Transaction,
 )
 from app.domain.imports import (
@@ -66,9 +67,20 @@ class ImportService:
         file: UploadFile,
         source_kind: str | None = None,
     ) -> ImportResult:
+        """Record the upload and hand processing to the async worker.
+
+        The HTTP request only validates, stores the bytes and creates a
+        pending ImportJob — parsing + persisting happens in the worker, so the
+        request returns well within the API Gateway 30s window. Duplicate
+        files are resolved synchronously (nothing new is persisted for them),
+        so the user still gets the "duplicada" feedback right away.
+        """
+        from app.services.import_worker import dispatch_import_job
+
         filename = file.filename or "upload"
         raw_bytes = await file.read()
-        _, workspace, _ = WorkspaceService(self.db).get_or_create_current_workspace(auth)
+        self._validate_upload(filename, raw_bytes)
+        user, workspace, _ = WorkspaceService(self.db).get_or_create_current_workspace(auth)
         content_hash = sha256(raw_bytes).hexdigest()
         existing_source_file = self.db.scalar(
             select(SourceFile).where(
@@ -76,33 +88,73 @@ class ImportService:
                 SourceFile.content_hash == content_hash,
             )
         )
-        if existing_source_file is not None:
+        if existing_source_file is not None and self._source_file_has_imported_data(
+            workspace_id=workspace.id,
+            source_file_id=existing_source_file.id,
+        ):
             return self.import_bytes(
-                auth=AuthContext(user_id=auth.user_id, workspace_id=workspace.id, email=auth.email),
+                auth=AuthContext(
+                    user_id=auth.user_id, workspace_id=workspace.id, email=auth.email
+                ),
                 filename=filename,
                 mime_type=file.content_type or "application/octet-stream",
                 storage_bucket=existing_source_file.storage_bucket,
-            storage_path=existing_source_file.storage_path,
-            content=raw_bytes,
-            source_kind=source_kind,
-        )
+                storage_path=existing_source_file.storage_path,
+                content=raw_bytes,
+                source_kind=source_kind,
+                workspace_id=workspace.id,
+            )
 
-        source_file_id = str(uuid4())
-        stored_file = self.storage.store_original_file(
+        source_file = existing_source_file
+        if source_file is None:
+            source_file_id = str(uuid4())
+            stored_file = self.storage.store_original_file(
+                workspace_id=workspace.id,
+                original_filename=filename,
+                content=raw_bytes,
+                source_file_id=source_file_id,
+            )
+            source_file = SourceFile(
+                id=source_file_id,
+                workspace_id=workspace.id,
+                original_filename=filename,
+                content_hash=content_hash,
+                mime_type=file.content_type or "application/octet-stream",
+                size_bytes=len(raw_bytes),
+                storage_bucket=stored_file.bucket,
+                storage_path=stored_file.path,
+                source_kind=self._resolve_source_kind(filename, raw_bytes, source_kind).value,
+                created_by_user_id=user.id,
+            )
+            self.db.add(source_file)
+
+        blob = self.db.get(SourceFileContent, source_file.id)
+        if blob is None:
+            self.db.add(SourceFileContent(source_file_id=source_file.id, content=raw_bytes))
+        else:
+            blob.content = raw_bytes
+        import_job = ImportJob(
+            id=str(uuid4()),
             workspace_id=workspace.id,
-            original_filename=filename,
-            content=raw_bytes,
-            source_file_id=source_file_id,
+            source_file_id=source_file.id,
+            status=ImportStatus.PENDING.value,
         )
-        return self.import_bytes(
-            auth=AuthContext(user_id=auth.user_id, workspace_id=workspace.id, email=auth.email),
-            filename=filename,
-            mime_type=file.content_type or "application/octet-stream",
-            storage_bucket=stored_file.bucket,
-            storage_path=stored_file.path,
-            content=raw_bytes,
-            source_file_id=source_file_id,
-            source_kind=source_kind,
+        self.db.add(import_job)
+        self.db.commit()
+
+        dispatch_import_job(self.db, import_job.id, source_kind=source_kind)
+
+        # In inline mode (tests / self-invoke fallback) the job already
+        # finished; report whatever state it is in.
+        self.db.refresh(import_job)
+        return ImportResult(
+            import_job_id=import_job.id,
+            source_file_id=source_file.id,
+            status=ImportStatus(import_job.status),
+            total_rows=import_job.total_rows,
+            valid_rows=import_job.valid_rows,
+            error_rows=import_job.error_rows,
+            duplicate_rows=import_job.duplicate_rows,
         )
 
     async def preview_upload(
@@ -120,13 +172,7 @@ class ImportService:
             source_kind=source_kind,
         )
 
-    def preview_bytes(
-        self,
-        auth: AuthContext,
-        filename: str,
-        content: bytes,
-        source_kind: str | None = None,
-    ) -> ImportPreviewResult:
+    def _validate_upload(self, filename: str, content: bytes) -> None:
         suffix = filename.rsplit(".", maxsplit=1)[-1].lower() if "." in filename else ""
         if suffix not in {"txt", "csv", "xls", "pdf"}:
             raise HTTPException(
@@ -136,8 +182,17 @@ class ImportService:
         if len(content) > self.max_upload_bytes:
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail="File exceeds MVP upload limit",
+                detail="O arquivo excede o limite de 2 MB por upload.",
             )
+
+    def preview_bytes(
+        self,
+        auth: AuthContext,
+        filename: str,
+        content: bytes,
+        source_kind: str | None = None,
+    ) -> ImportPreviewResult:
+        self._validate_upload(filename, content)
         parsed_source_kind = self._resolve_source_kind(filename, content, source_kind)
         text_content = self._decode_text_content(parsed_source_kind, content)
         parse_result = self._parse(parsed_source_kind, content, text_content)
@@ -236,26 +291,26 @@ class ImportService:
         content: bytes,
         source_file_id: str | None = None,
         source_kind: str | None = None,
+        workspace_id: str | None = None,
+        existing_job: ImportJob | None = None,
     ) -> ImportResult:
-        suffix = filename.rsplit(".", maxsplit=1)[-1].lower() if "." in filename else ""
-        if suffix not in {"txt", "csv", "xls", "pdf"}:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only TXT, CSV, XLS Excel and PDF files are supported",
-            )
-        if len(content) > self.max_upload_bytes:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail="File exceeds MVP upload limit",
-            )
+        """Parse and persist an upload synchronously.
+
+        When the async worker calls this, `existing_job` is the pending
+        ImportJob created at upload time (it gets finalized in place instead
+        of creating a new one) and `workspace_id` is passed directly so no
+        user/workspace resolution happens outside a request context.
+        """
+        self._validate_upload(filename, content)
 
         content_hash = sha256(content).hexdigest()
         parsed_source_kind = self._resolve_source_kind(filename, content, source_kind)
         text_content = self._decode_text_content(parsed_source_kind, content)
         parse_result = self._parse(parsed_source_kind, content, text_content)
 
-        _, workspace, _ = WorkspaceService(self.db).get_or_create_current_workspace(auth)
-        workspace_id = workspace.id
+        if workspace_id is None:
+            _, workspace, _ = WorkspaceService(self.db).get_or_create_current_workspace(auth)
+            workspace_id = workspace.id
         existing_source_file = self.db.scalar(
             select(SourceFile).where(
                 SourceFile.workspace_id == workspace_id,
@@ -267,23 +322,43 @@ class ImportService:
             or parse_result.account_balances
             or parse_result.calendar_events
         )
-        if existing_source_file is not None and (
-            not has_valid_rows
-            or self._source_file_has_imported_data(
+        has_imported_data = existing_source_file is not None and (
+            self._source_file_has_imported_data(
                 workspace_id=workspace_id,
                 source_file_id=existing_source_file.id,
             )
+        )
+        # In the async path the SourceFile was created before processing, so
+        # finding our own file by hash does not make this run a duplicate.
+        is_own_pending_file = (
+            existing_job is not None
+            and existing_source_file is not None
+            and existing_source_file.id == existing_job.source_file_id
+            and not has_imported_data
+        )
+        if (
+            existing_source_file is not None
+            and not is_own_pending_file
+            and (not has_valid_rows or has_imported_data)
         ):
-            import_job = self._create_import_job(
-                workspace_id=workspace_id,
-                source_file_id=existing_source_file.id,
-                status_value=ImportStatus.DUPLICATE_FILE,
-                total_rows=0,
-                valid_rows=0,
-                error_rows=0,
-                duplicate_rows=0,
-            )
-            self.db.add(import_job)
+            if existing_job is None:
+                import_job = self._create_import_job(
+                    workspace_id=workspace_id,
+                    source_file_id=existing_source_file.id,
+                    status_value=ImportStatus.DUPLICATE_FILE,
+                    total_rows=0,
+                    valid_rows=0,
+                    error_rows=0,
+                    duplicate_rows=0,
+                )
+                self.db.add(import_job)
+            else:
+                import_job = self._finalize_existing_job(
+                    existing_job,
+                    status_value=ImportStatus.DUPLICATE_FILE,
+                    total_rows=0,
+                    error_rows=0,
+                )
             self.db.commit()
             # Even when the rows are a duplicate, the card may have been deleted
             # (soft-deleted) since the first import. Re-running the same statement
@@ -323,15 +398,23 @@ class ImportService:
                 created_by_user_id=auth.user_id,
             )
             self.db.add(source_file)
-        import_job = self._create_import_job(
-            workspace_id=workspace_id,
-            source_file_id=source_file.id,
-            status_value=status_value,
-            total_rows=parse_result.total_rows,
-            valid_rows=0,
-            error_rows=len(parse_result.errors),
-        )
-        self.db.add(import_job)
+        if existing_job is None:
+            import_job = self._create_import_job(
+                workspace_id=workspace_id,
+                source_file_id=source_file.id,
+                status_value=status_value,
+                total_rows=parse_result.total_rows,
+                valid_rows=0,
+                error_rows=len(parse_result.errors),
+            )
+            self.db.add(import_job)
+        else:
+            import_job = self._finalize_existing_job(
+                existing_job,
+                status_value=status_value,
+                total_rows=parse_result.total_rows,
+                error_rows=len(parse_result.errors),
+            )
         self.db.flush()
 
         raw_lines = self._persist_raw_lines(
@@ -831,6 +914,25 @@ class ImportService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="File must be encoded as UTF-8",
             ) from exc
+
+    def _finalize_existing_job(
+        self,
+        import_job: ImportJob,
+        status_value: ImportStatus,
+        total_rows: int,
+        error_rows: int,
+    ) -> ImportJob:
+        now = datetime.now(UTC)
+        import_job.status = status_value.value
+        import_job.total_rows = total_rows
+        import_job.valid_rows = 0
+        import_job.error_rows = error_rows
+        import_job.duplicate_rows = 0
+        import_job.finished_at = now
+        if import_job.started_at is None:
+            import_job.started_at = now
+        self.db.add(import_job)
+        return import_job
 
     def _create_import_job(
         self,

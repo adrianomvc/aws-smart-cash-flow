@@ -76,9 +76,9 @@ variable "backend_lambda_memory_size" {
 }
 
 variable "backend_lambda_timeout_seconds" {
-  description = "Timeout in seconds for the backend Lambda function."
+  description = "Timeout in seconds for the backend Lambda function. HTTP requests are capped at ~30s by API Gateway regardless; the higher value is the budget for async import-worker self-invokes."
   type        = number
-  default     = 30
+  default     = 120
 }
 
 variable "backend_log_retention_days" {
