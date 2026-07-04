@@ -296,6 +296,67 @@ def test_apply_rules_matches_by_priority_and_preserves_manual_assignments(
     assert assignments["MERCADO"].source == "manual"
 
 
+def test_apply_rules_recategorizes_existing_non_manual_assignment(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    ImportService(db_session).import_bytes(
+        auth=auth,
+        filename="fatura.csv",
+        mime_type="text/csv",
+        storage_bucket="financial-files",
+        storage_path=f"{auth.workspace_id}/fatura.csv",
+        content=b"data,lan\xc3\xa7amento,valor\n2026-05-08,UBER TRIP,12.50\n",
+    )
+    transport = Category(id=str(uuid4()), workspace_id=auth.workspace_id, name="Transporte")
+    other = Category(id=str(uuid4()), workspace_id=auth.workspace_id, name="Outros")
+    db_session.add_all([transport, other])
+    db_session.commit()
+    transaction = db_session.scalars(
+        select(Transaction).where(Transaction.description == "UBER TRIP")
+    ).one()
+    db_session.add(
+        TransactionCategoryAssignment(
+            id=str(uuid4()),
+            workspace_id=auth.workspace_id,
+            transaction_id=transaction.id,
+            category_id=other.id,
+            source="llm",
+            confidence=Decimal("0.5000"),
+            review_status="pending",
+        )
+    )
+    db_session.commit()
+    client.post(
+        "/v1/categorization-rules",
+        json={
+            "name": "Uber",
+            "field": "description",
+            "match_type": "starts_with",
+            "pattern": "UBER",
+            "category_id": transport.id,
+            "priority": 1,
+        },
+    )
+
+    response = client.post("/v1/categorization-rules/apply")
+
+    assert response.status_code == 200
+    assert response.json()["applied_count"] == 1
+    assert response.json()["category_applied_count"] == 1
+    db_session.expire_all()
+    assignment = db_session.scalars(
+        select(TransactionCategoryAssignment).where(
+            TransactionCategoryAssignment.transaction_id == transaction.id
+        )
+    ).one()
+    assert assignment.category_id == transport.id
+    assert assignment.source == "rule"
+    assert assignment.review_status == "accepted"
+    assert assignment.reason == "Matched rule Uber"
+
+
 def test_preview_and_apply_financial_direction_rule(
     client: TestClient,
     db_session: Session,
