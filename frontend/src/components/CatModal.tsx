@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { CATEGORY_HEX_PALETTE } from "../lib/utils";
+import { CATEGORY_HEX_PALETTE, CATEGORY_HEX_TONES } from "../lib/utils";
 import type { CategoryRead } from "../lib/api";
 
 // ---------------------------------------------------------------------------
@@ -73,10 +73,11 @@ export function CIcon({ name, size = 15 }: { name: string; size?: number }) {
 // Constants
 // ---------------------------------------------------------------------------
 
-// Picker palette = exactly the validated chart palette. Every swatch is
-// far apart from every other (no near-duplicate hues), and the array order
-// doubles as the auto-assignment order for new categories.
-export const CAT_PALETTE = [...CATEGORY_HEX_PALETTE];
+// Picker palette = the validated chart palette (row 1) plus one extra tone
+// per hue (row 2, same hue family, shifted lightness — also validated on both
+// app surfaces). The array order doubles as the auto-assignment order for new
+// categories: all 10 distinct hues first, then their tones.
+export const CAT_PALETTE = [...CATEGORY_HEX_PALETTE, ...CATEGORY_HEX_TONES];
 
 export const CAT_ICON_OPTIONS = [
   "home", "wallet", "coins", "car", "cap", "shield", "plane", "spark",
@@ -196,6 +197,14 @@ export function CatModal({ state, categories, onClose, onSaveCat, onSaveSub, zIn
   const parentCat = categories.find((c) => c.id === parentId);
   const subsOfParent = categories.filter((c) => c.parent_category_id === parentId);
 
+  const normColor = (v?: string | null) => (v ?? "").trim().toLowerCase();
+  const isCustomColor = !CAT_PALETTE.some((p) => normColor(p) === normColor(color));
+  // Guard-rail, not a block: warn when the chosen color is already taken by
+  // another top-level category (identical colors break identity in charts).
+  const colorTakenBy = rootCategories.find(
+    (c) => c.id !== state.editing?.id && normColor(c.color) === normColor(color),
+  );
+
   const previewSubs = subsText.split(",").map((s) => s.trim()).filter(Boolean);
 
   function submit() {
@@ -284,14 +293,15 @@ export function CatModal({ state, categories, onClose, onSaveCat, onSaveSub, zIn
           {/* Cat-only fields */}
           {kind === "cat" && (
             <>
-              {/* Color */}
+              {/* Color: 10 hue columns × 2 tones, plus a free custom picker. */}
               <label className="fld">
                 <span className="fld-label">Cor</span>
-                <div className="swatch-row">
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(10, 28px)", gap: 6, justifyContent: "start" }}>
                   {CAT_PALETTE.map((p) => (
                     <button
                       key={p}
-                      className={"swatch" + (color === p ? " on" : "")}
+                      type="button"
+                      className={"swatch" + (normColor(color) === normColor(p) ? " on" : "")}
                       style={{ background: p }}
                       onClick={() => setColor(p)}
                       title={p}
@@ -299,9 +309,39 @@ export function CatModal({ state, categories, onClose, onSaveCat, onSaveSub, zIn
                     />
                   ))}
                 </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                  <span
+                    className={"swatch" + (isCustomColor ? " on" : "")}
+                    style={{
+                      position: "relative", overflow: "hidden", display: "inline-block", flex: "none",
+                      background: isCustomColor
+                        ? color
+                        : "conic-gradient(#e34948, #c98500, #3f8f29, #0e9fb5, #2a78d6, #8a5cd6, #e34948)",
+                    }}
+                    title="Cor personalizada"
+                  >
+                    <input
+                      type="color"
+                      value={color}
+                      onChange={(e) => setColor(e.target.value)}
+                      aria-label="Cor personalizada"
+                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer" }}
+                    />
+                  </span>
+                  <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+                    {isCustomColor ? <>Personalizada · <span className="mono">{color}</span></> : "Quer outra? Toque para escolher qualquer cor."}
+                  </span>
+                </div>
                 <span className="fld-help">
-                  {state.editing ? "Cor da categoria." : "Sugerimos uma cor ainda não usada — clique para trocar."}
+                  {state.editing
+                    ? "Cada coluna é uma família de cor em dois tons."
+                    : "Sugerimos uma cor ainda não usada — cada coluna é uma família em dois tons."}
                 </span>
+                {colorTakenBy && (
+                  <span className="fld-help" style={{ color: "var(--warn)" }}>
+                    Essa cor já é usada por “{colorTakenBy.name}” — nos gráficos as duas ficarão idênticas.
+                  </span>
+                )}
               </label>
 
               {/* Icon */}
