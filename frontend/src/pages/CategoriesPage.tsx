@@ -34,6 +34,7 @@ import {
 } from "../lib/utils";
 import {
   CatModal,
+  CatColorField,
   CIcon,
   CAT_PALETTE,
   CAT_ICON_OPTIONS,
@@ -222,22 +223,13 @@ function EditCatModal({ category, categories, onClose, onSave }: EditModalProps)
             </label>
           )}
 
-          {/* Color */}
-          <label className="fld">
-            <span className="fld-label">Cor</span>
-            <div className="swatch-row">
-              {CAT_PALETTE.map((p) => (
-                <button
-                  key={p}
-                  className={"swatch" + (color === p ? " on" : "")}
-                  style={{ background: p }}
-                  onClick={() => setColor(p)}
-                  title={p}
-                  aria-label={p}
-                />
-              ))}
-            </div>
-          </label>
+          {/* Color — same picker as the create form (12 swatches + custom). */}
+          <CatColorField
+            color={color}
+            onChange={setColor}
+            categories={categories}
+            excludeId={category.id}
+          />
 
           {/* Icon */}
           <label className="fld">

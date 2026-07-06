@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { CATEGORY_HEX_PALETTE, CATEGORY_HEX_TONES } from "../lib/utils";
+import { CATEGORY_HEX_PALETTE } from "../lib/utils";
 import type { CategoryRead } from "../lib/api";
 
 // ---------------------------------------------------------------------------
@@ -73,11 +73,9 @@ export function CIcon({ name, size = 15 }: { name: string; size?: number }) {
 // Constants
 // ---------------------------------------------------------------------------
 
-// Picker palette = the validated chart palette (row 1) plus one extra tone
-// per hue (row 2, same hue family, shifted lightness — also validated on both
-// app surfaces). The array order doubles as the auto-assignment order for new
-// categories: all 10 distinct hues first, then their tones.
-export const CAT_PALETTE = [...CATEGORY_HEX_PALETTE, ...CATEGORY_HEX_TONES];
+// Picker palette = exactly the 12 validated, clearly distinct hue families.
+// The array order doubles as the auto-assignment order for new categories.
+export const CAT_PALETTE = [...CATEGORY_HEX_PALETTE];
 
 export const CAT_ICON_OPTIONS = [
   "home", "wallet", "coins", "car", "cap", "shield", "plane", "spark",
@@ -118,6 +116,77 @@ export const CAT_ICON_LABELS: Record<string, string> = {
   coffee: "Café / Lazer",
   bag: "Compras",
 };
+
+// ---------------------------------------------------------------------------
+// CatColorField — the single category color picker (12 validated swatches +
+// free custom color + duplicate warning). Shared by the create form (CatModal)
+// and the edit modal on the Categorias page, so both flows behave the same.
+// ---------------------------------------------------------------------------
+
+const normColor = (v?: string | null) => (v ?? "").trim().toLowerCase();
+
+export function CatColorField({ color, onChange, categories, excludeId, help }: {
+  color: string;
+  onChange: (hex: string) => void;
+  categories: CategoryRead[];
+  /** Category being edited, so its own color doesn't trigger the duplicate warning. */
+  excludeId?: string;
+  help?: string;
+}) {
+  const isCustom = !CAT_PALETTE.some((p) => normColor(p) === normColor(color));
+  // Guard-rail, not a block: warn when the chosen color is already taken by
+  // another top-level category (identical colors break identity in charts).
+  const takenBy = categories.find(
+    (c) => !c.parent_category_id && c.id !== excludeId && normColor(c.color) === normColor(color),
+  );
+  return (
+    <label className="fld">
+      <span className="fld-label">Cor</span>
+      <div className="swatch-row">
+        {CAT_PALETTE.map((p) => (
+          <button
+            key={p}
+            type="button"
+            className={"swatch" + (normColor(color) === normColor(p) ? " on" : "")}
+            style={{ background: p }}
+            onClick={() => onChange(p)}
+            title={p}
+            aria-label={p}
+          />
+        ))}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+        <span
+          className={"swatch" + (isCustom ? " on" : "")}
+          style={{
+            position: "relative", overflow: "hidden", display: "inline-block", flex: "none",
+            background: isCustom
+              ? color
+              : "conic-gradient(#e34948, #c98500, #3f8f29, #0e9fb5, #2a78d6, #a644a0, #e34948)",
+          }}
+          title="Cor personalizada"
+        >
+          <input
+            type="color"
+            value={color}
+            onChange={(e) => onChange(e.target.value)}
+            aria-label="Cor personalizada"
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer" }}
+          />
+        </span>
+        <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
+          {isCustom ? <>Personalizada · <span className="mono">{color}</span></> : "Quer outra? Toque para escolher qualquer cor."}
+        </span>
+      </div>
+      {help && <span className="fld-help">{help}</span>}
+      {takenBy && (
+        <span className="fld-help" style={{ color: "var(--warn)" }}>
+          Essa cor já é usada por “{takenBy.name}” — nos gráficos as duas ficarão idênticas.
+        </span>
+      )}
+    </label>
+  );
+}
 
 /** First palette color not already used by a category, so new categories get a
  * distinct color automatically. Falls back to a rotating color when all are used. */
@@ -197,13 +266,6 @@ export function CatModal({ state, categories, onClose, onSaveCat, onSaveSub, zIn
   const parentCat = categories.find((c) => c.id === parentId);
   const subsOfParent = categories.filter((c) => c.parent_category_id === parentId);
 
-  const normColor = (v?: string | null) => (v ?? "").trim().toLowerCase();
-  const isCustomColor = !CAT_PALETTE.some((p) => normColor(p) === normColor(color));
-  // Guard-rail, not a block: warn when the chosen color is already taken by
-  // another top-level category (identical colors break identity in charts).
-  const colorTakenBy = rootCategories.find(
-    (c) => c.id !== state.editing?.id && normColor(c.color) === normColor(color),
-  );
 
   const previewSubs = subsText.split(",").map((s) => s.trim()).filter(Boolean);
 
@@ -293,56 +355,14 @@ export function CatModal({ state, categories, onClose, onSaveCat, onSaveSub, zIn
           {/* Cat-only fields */}
           {kind === "cat" && (
             <>
-              {/* Color: 10 hue columns × 2 tones, plus a free custom picker. */}
-              <label className="fld">
-                <span className="fld-label">Cor</span>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(10, 28px)", gap: 6, justifyContent: "start" }}>
-                  {CAT_PALETTE.map((p) => (
-                    <button
-                      key={p}
-                      type="button"
-                      className={"swatch" + (normColor(color) === normColor(p) ? " on" : "")}
-                      style={{ background: p }}
-                      onClick={() => setColor(p)}
-                      title={p}
-                      aria-label={p}
-                    />
-                  ))}
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
-                  <span
-                    className={"swatch" + (isCustomColor ? " on" : "")}
-                    style={{
-                      position: "relative", overflow: "hidden", display: "inline-block", flex: "none",
-                      background: isCustomColor
-                        ? color
-                        : "conic-gradient(#e34948, #c98500, #3f8f29, #0e9fb5, #2a78d6, #8a5cd6, #e34948)",
-                    }}
-                    title="Cor personalizada"
-                  >
-                    <input
-                      type="color"
-                      value={color}
-                      onChange={(e) => setColor(e.target.value)}
-                      aria-label="Cor personalizada"
-                      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer" }}
-                    />
-                  </span>
-                  <span style={{ fontSize: 12, color: "var(--ink-3)" }}>
-                    {isCustomColor ? <>Personalizada · <span className="mono">{color}</span></> : "Quer outra? Toque para escolher qualquer cor."}
-                  </span>
-                </div>
-                <span className="fld-help">
-                  {state.editing
-                    ? "Cada coluna é uma família de cor em dois tons."
-                    : "Sugerimos uma cor ainda não usada — cada coluna é uma família em dois tons."}
-                </span>
-                {colorTakenBy && (
-                  <span className="fld-help" style={{ color: "var(--warn)" }}>
-                    Essa cor já é usada por “{colorTakenBy.name}” — nos gráficos as duas ficarão idênticas.
-                  </span>
-                )}
-              </label>
+              {/* Color */}
+              <CatColorField
+                color={color}
+                onChange={setColor}
+                categories={categories}
+                excludeId={state.editing?.id}
+                help={state.editing ? undefined : "Sugerimos uma cor ainda não usada — clique para trocar."}
+              />
 
               {/* Icon */}
               <label className="fld">
