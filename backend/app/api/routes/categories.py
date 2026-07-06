@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.orm import Session
 
 from app.core.auth import AuthContext, AuthDependency
@@ -733,18 +733,40 @@ async def apply_rules(
         )
         .order_by(CategorizationRule.priority, CategorizationRule.id)
     ).all()
-    transactions = db.scalars(
-        select(Transaction)
-        .where(Transaction.workspace_id == auth.workspace_id)
-        .order_by(Transaction.transaction_date, Transaction.id)
+    if not rules:
+        return RuleApplyResponse(
+            workspace_id=auth.workspace_id,
+            applied_count=0,
+            category_applied_count=0,
+            direction_applied_count=0,
+            skipped_manual_count=0,
+        )
+
+    fields_used = sorted({rule.field for rule in rules})
+
+    # Fetch only the columns the rules read, as plain rows instead of ORM
+    # instances. Hydrating every Transaction in the workspace used to exhaust
+    # the Lambda's memory and CPU budget (API Gateway then cut the request at
+    # ~29s, surfacing as "Failed to fetch" in the browser).
+    transactions = db.execute(
+        select(
+            Transaction.id,
+            Transaction.direction,
+            *(getattr(Transaction, field) for field in fields_used),
+        ).where(Transaction.workspace_id == auth.workspace_id)
     ).all()
 
     # Batch-load existing assignments in a single query to avoid an N+1 query
     # pattern (one DB round-trip per transaction) against the remote database.
     existing_assignments = {
-        assignment.transaction_id: assignment
-        for assignment in db.scalars(
-            select(TransactionCategoryAssignment).where(
+        row.transaction_id: row
+        for row in db.execute(
+            select(
+                TransactionCategoryAssignment.id,
+                TransactionCategoryAssignment.transaction_id,
+                TransactionCategoryAssignment.category_id,
+                TransactionCategoryAssignment.source,
+            ).where(
                 TransactionCategoryAssignment.workspace_id == auth.workspace_id,
             )
         ).all()
@@ -757,20 +779,26 @@ async def apply_rules(
         (rule, _normalize_spaces(rule.pattern).casefold(), rule.match_type, rule.field)
         for rule in rules
     ]
-    fields_used = {rule.field for rule in rules}
 
     applied_count = 0
     category_applied_count = 0
     direction_applied_count = 0
     skipped_manual_count = 0
 
+    # Accumulate writes and flush them in bulk after the matching loop instead
+    # of mutating ORM objects one by one.
+    direction_changes: dict[str, list[str]] = {}
+    new_assignments: list[dict] = []
+    assignment_updates: list[dict] = []
+
     for transaction in transactions:
         existing_assignment = existing_assignments.get(transaction.id)
 
         # Normalize the transaction's fields once, then reuse for every rule.
+        row_mapping = transaction._mapping
         norm_fields: dict[str, str | None] = {}
         for field in fields_used:
-            raw = getattr(transaction, field, None)
+            raw = row_mapping.get(field)
             norm_fields[field] = None if raw is None else _normalize_spaces(str(raw)).casefold()
 
         matching_rule = None
@@ -802,7 +830,9 @@ async def apply_rules(
             matching_rule.target_direction is not None
             and transaction.direction != matching_rule.target_direction
         ):
-            transaction.direction = matching_rule.target_direction
+            direction_changes.setdefault(matching_rule.target_direction, []).append(
+                transaction.id
+            )
             direction_applied_count += 1
             changed = True
 
@@ -810,32 +840,50 @@ async def apply_rules(
             if existing_assignment is not None and existing_assignment.source == "manual":
                 skipped_manual_count += 1
             elif existing_assignment is None:
-                db.add(
-                    TransactionCategoryAssignment(
-                        id=str(uuid4()),
-                        workspace_id=auth.workspace_id,
-                        transaction_id=transaction.id,
-                        category_id=matching_rule.category_id,
-                        source="rule",
-                        confidence=Decimal("1.0000"),
-                        reason=f"Matched rule {matching_rule.name}",
-                        review_status="accepted",
-                    )
+                new_assignments.append(
+                    {
+                        "id": str(uuid4()),
+                        "workspace_id": auth.workspace_id,
+                        "transaction_id": transaction.id,
+                        "category_id": matching_rule.category_id,
+                        "source": "rule",
+                        "confidence": Decimal("1.0000"),
+                        "reason": f"Matched rule {matching_rule.name}",
+                        "review_status": "accepted",
+                    }
                 )
                 category_applied_count += 1
                 changed = True
             elif existing_assignment.category_id != matching_rule.category_id:
-                existing_assignment.category_id = matching_rule.category_id
-                existing_assignment.source = "rule"
-                existing_assignment.confidence = Decimal("1.0000")
-                existing_assignment.reason = f"Matched rule {matching_rule.name}"
-                existing_assignment.review_status = "accepted"
+                assignment_updates.append(
+                    {
+                        "id": existing_assignment.id,
+                        "category_id": matching_rule.category_id,
+                        "source": "rule",
+                        "confidence": Decimal("1.0000"),
+                        "reason": f"Matched rule {matching_rule.name}",
+                        "review_status": "accepted",
+                    }
+                )
                 category_applied_count += 1
                 changed = True
 
         if changed:
             applied_count += 1
 
+    for direction, transaction_ids in direction_changes.items():
+        for chunk_start in range(0, len(transaction_ids), 1000):
+            chunk = transaction_ids[chunk_start : chunk_start + 1000]
+            db.execute(
+                update(Transaction)
+                .where(Transaction.id.in_(chunk))
+                .values(direction=direction)
+                .execution_options(synchronize_session=False)
+            )
+    if new_assignments:
+        db.execute(insert(TransactionCategoryAssignment), new_assignments)
+    if assignment_updates:
+        db.execute(update(TransactionCategoryAssignment), assignment_updates)
     db.commit()
     return RuleApplyResponse(
         workspace_id=auth.workspace_id,
