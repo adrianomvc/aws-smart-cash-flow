@@ -73,13 +73,10 @@ export function CIcon({ name, size = 15 }: { name: string; size?: number }) {
 // Constants
 // ---------------------------------------------------------------------------
 
-// Picker palette: the chart palette first (visual continuity) plus extra distinct
-// hues, so a new category can be auto-assigned a fresh, still-unused color.
-export const CAT_PALETTE = [
-  ...CATEGORY_HEX_PALETTE,
-  "#2563eb", "#0891b2", "#16a34a", "#65a30d", "#ea580c", "#e11d48",
-  "#db2777", "#9333ea", "#7c3aed", "#4f46e5", "#0d9488", "#b45309",
-];
+// Picker palette = exactly the validated chart palette. Every swatch is
+// far apart from every other (no near-duplicate hues), and the array order
+// doubles as the auto-assignment order for new categories.
+export const CAT_PALETTE = [...CATEGORY_HEX_PALETTE];
 
 export const CAT_ICON_OPTIONS = [
   "home", "wallet", "coins", "car", "cap", "shield", "plane", "spark",

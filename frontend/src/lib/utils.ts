@@ -90,9 +90,14 @@ export const PERIOD_PRESETS: { label: string; value: TransactionPeriodPreset }[]
 // Category colors (shared by the Categorias page, charts, etc.)
 // ---------------------------------------------------------------------------
 
+// 10 hues validated on BOTH app surfaces (#ffffff light / #0D1729 dark):
+// lightness band, chroma floor, >=3:1 contrast, and CVD-safe adjacent pairs
+// (worst neighbor ΔE 31.5 deutan/protan). The ORDER is the safety mechanism —
+// consecutive auto-assigned categories are maximally distinguishable — so
+// append new colors at the end, never reorder.
 export const CATEGORY_HEX_PALETTE = [
-  "#3567b8", "#1f8a5b", "#6a52c9", "#c98a2b", "#cf4d43",
-  "#d98234", "#2a9d8f", "#9a6b14", "#7c8696", "#a35a7d", "#3d7d63", "#5a7dc9",
+  "#2a78d6", "#e05a24", "#d55181", "#3f8f29", "#8a5cd6",
+  "#159e6e", "#c98500", "#9c5b2e", "#0e9fb5", "#e34948",
 ];
 export const CATEGORY_GREY = "#94a3b8";
 

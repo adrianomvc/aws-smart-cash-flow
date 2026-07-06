@@ -10,7 +10,7 @@ import {
   getDashboardSummary, getGoals, getMonthlyCashflow, getPlanningProjection, getRecurringIncomes,
   getWealth,
 } from "../lib/api";
-import { money } from "../lib/utils";
+import { categoryChartColor, money } from "../lib/utils";
 import { PageState } from "../components/ui";
 import type { ApiSession } from "../lib/api";
 import type { Page, PeriodState } from "../types";
@@ -300,9 +300,9 @@ function ExecReport({ session, q, period, registerCsv }: RepProps) {
         <div className="card-body" style={{ display: "grid", gap: 11 }}>
           {cats.map((c, i) => (
             <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span className="catdot" style={{ background: c.color ?? PALETTE[i % PALETTE.length] }} />
+              <span className="catdot" style={{ background: categoryChartColor(c.category_name, c.color, c.category_id) }} />
               <span style={{ fontSize: 12.5, width: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.category_name}</span>
-              <div style={{ flex: 1 }}><Bar value={N(c.amount)} max={catMax} color={c.color ?? PALETTE[i % PALETTE.length]} /></div>
+              <div style={{ flex: 1 }}><Bar value={N(c.amount)} max={catMax} color={categoryChartColor(c.category_name, c.color, c.category_id)} /></div>
               <span className="mono" style={{ fontWeight: 700, fontSize: 12.5 }}>{money(c.amount)}</span>
             </div>
           ))}
@@ -366,7 +366,7 @@ function CatsReport({ session, q, registerCsv }: RepProps) {
     <div className="grid grid-collapse" style={{ gridTemplateColumns: "300px 1fr", gap: 16, alignItems: "start" }}>
       <div className="card card-pad" style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
         <div className="eyebrow" style={{ alignSelf: "flex-start", marginBottom: 14 }}>Distribuição</div>
-        <Donut data={cats.slice(0, 8).map((c, i) => ({ value: N(c.amount), color: c.color ?? PALETTE[i % PALETTE.length] }))}
+        <Donut data={cats.slice(0, 8).map((c) => ({ value: N(c.amount), color: categoryChartColor(c.category_name, c.color, c.category_id) }))}
           center={<div><div className="mono" style={{ fontFamily: "var(--font-display)", fontSize: 18, fontWeight: 700 }}>{money(total)}</div><div className="t-sub">total</div></div>} />
       </div>
       <div className="card">
@@ -377,7 +377,7 @@ function CatsReport({ session, q, registerCsv }: RepProps) {
             <tbody>
               {cats.map((c, i) => (
                 <tr key={i}>
-                  <td><span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><span className="catdot" style={{ background: c.color ?? PALETTE[i % PALETTE.length] }} /><span className="t-desc">{c.category_name}</span></span></td>
+                  <td><span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><span className="catdot" style={{ background: categoryChartColor(c.category_name, c.color, c.category_id) }} /><span className="t-desc">{c.category_name}</span></span></td>
                   <td className="num" style={{ fontWeight: 700 }}>{money(c.amount)}</td>
                   <td className="num t-sub mono">{total > 0 ? num((N(c.amount) / total) * 100) : "0"}%</td>
                   <td className="num t-sub mono">{c.count}</td>
