@@ -90,23 +90,15 @@ export const PERIOD_PRESETS: { label: string; value: TransactionPeriodPreset }[]
 // Category colors (shared by the Categorias page, charts, etc.)
 // ---------------------------------------------------------------------------
 
-// 10 hues validated on BOTH app surfaces (#ffffff light / #0D1729 dark):
-// lightness band, chroma floor, >=3:1 contrast, and CVD-safe adjacent pairs
-// (worst neighbor ΔE 31.5 deutan/protan). The ORDER is the safety mechanism —
-// consecutive auto-assigned categories are maximally distinguishable — so
-// append new colors at the end, never reorder.
+// 12 hue families (oliva, azul, laranja, rosa, verde, violeta, teal, âmbar,
+// roxo, marrom, ciano, vermelho) validated on BOTH app surfaces (#ffffff
+// light / #0D1729 dark): lightness band, chroma floor, >=3:1 contrast, and
+// CVD-safe adjacent pairs (worst neighbor ΔE 34.6 deutan/protan). The ORDER
+// is the safety mechanism — consecutive auto-assigned categories are
+// maximally distinguishable — so append new colors at the end, never reorder.
 export const CATEGORY_HEX_PALETTE = [
-  "#2a78d6", "#e05a24", "#d55181", "#3f8f29", "#8a5cd6",
-  "#159e6e", "#c98500", "#9c5b2e", "#0e9fb5", "#e34948",
-];
-// Second tone per hue for the cadastro picker: same OKLCH hue, lightness
-// shifted within the band that keeps >=3:1 contrast on both surfaces
-// (generated + validated with the same tooling as the base row — the full
-// 20-swatch assignment chain passes every check, worst neighbor ΔE 15.6).
-// Index i is the tone of CATEGORY_HEX_PALETTE[i]; keep the rows aligned.
-export const CATEGORY_HEX_TONES = [
-  "#196ac7", "#b63e02", "#b53266", "#2f8016", "#7b4cc4",
-  "#038057", "#926001", "#c67742", "#008ea3", "#c2262d",
+  "#848f1e", "#2a78d6", "#e05a24", "#d55181", "#3f8f29", "#8a5cd6",
+  "#159e6e", "#c98500", "#a644a0", "#9c5b2e", "#0e9fb5", "#e34948",
 ];
 export const CATEGORY_GREY = "#94a3b8";
 
