@@ -19,6 +19,7 @@ import {
   isoDate,
   money,
   moneyAbs,
+  categoryChartColor,
   withQueryParams,
 } from "../lib/utils";
 import { CalendarDays } from "lucide-react";
@@ -850,7 +851,7 @@ export function CalendarPage({
           ) : (
             <div style={{ display: "grid", gap: 9 }}>
               {catDist.slice(0, 5).map((d) => {
-                const c = d.color ?? kindColor(d.name);
+                const c = categoryChartColor(d.name, d.color);
                 const pct = (d.value / catDistTotal) * 100;
                 return (
                   <div key={d.name}>

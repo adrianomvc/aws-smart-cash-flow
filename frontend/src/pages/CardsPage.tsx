@@ -16,6 +16,7 @@ import {
 import {
   amountClass,
   apiErrorMessage,
+  categoryChartColor,
   compactMoneyAbs,
   compactMoneyAxis,
   compactValueAbs,
@@ -93,11 +94,6 @@ function sumTransactions(items: Array<Pick<TransactionRead, "amount">>) {
 function bestPurchaseDay(closingDay: number): number {
   return (closingDay % 31) + 1;
 }
-
-const CAT_PALETTE = [
-  "#3567b8", "#1f8a5b", "#6a52c9", "#c98a2b", "#cf4d43",
-  "#d98234", "#2a9d8f", "#9a6b14", "#7c8696", "#a35a7d",
-];
 
 // ---------------------------------------------------------------------------
 // Donut chart
@@ -446,12 +442,6 @@ export function CardsPage({
     (categories.data?.items ?? []).forEach((c) => m.set(c.id, c));
     return m;
   }, [categories.data?.items]);
-  // índice de paleta estável por categoria-pai (para fallback de cor)
-  const parentPaletteIndex = useMemo(() => {
-    const m = new Map<string, number>();
-    (categories.data?.items ?? []).filter((c) => !c.parent_category_id).forEach((c, i) => m.set(c.id, i));
-    return m;
-  }, [categories.data?.items]);
   const gastosPorCategoria = useMemo(() => {
     const map = new Map<string, number>();
     for (const t of cardDebits) {
@@ -464,12 +454,12 @@ export function CardsPage({
     return [...map.entries()]
       .map(([id, value]) => {
         const cat = catById.get(id);
-        const color = cat?.color ?? CAT_PALETTE[(parentPaletteIndex.get(id) ?? 0) % CAT_PALETTE.length];
+        const color = categoryChartColor(cat?.name ?? "Sem categoria", cat?.color, cat ? cat.id : null);
         return { id, name: cat?.name ?? "Sem categoria", color, value };
       })
       .sort((a, b) => b.value - a.value)
       .slice(0, 7);
-  }, [cardDebits, catById, parentPaletteIndex]);
+  }, [cardDebits, catById]);
 
   function openCardTransactions(direction: string | undefined, label: string) {
     onOpenTransactions({ dateFrom: period.dateFrom, dateTo: period.dateTo, direction, label, periodPreset: period.periodPreset, sourceType: "credit_card_statement" });

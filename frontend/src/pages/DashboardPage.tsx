@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 
 import type { ApiSession } from "../lib/api";
-import { yearQueryFromDate } from "../lib/utils";
+import { categoryChartColor, yearQueryFromDate } from "../lib/utils";
 import type { ImportDrilldown, Page, PeriodState, TransactionDrilldown } from "../types";
 import {
   getDashboardOverview, getMonthlyCashflow,
@@ -33,30 +33,6 @@ import {
 } from "../lib/api";
 import { SpendingProfileCard } from "../components/SpendingBreakdown";
 
-// ─── Cores por categoria (mapeamento de nomes → hex) ──────────────────────────
-const CAT_COLORS: Record<string, string> = {
-  "Moradia": "#3567b8", "Habitação": "#3567b8", "Casa": "#3567b8",
-  "Alimentação": "#1f8a5b", "Comida": "#1f8a5b", "Restaurante": "#1f8a5b",
-  "Educação": "#6a52c9", "Ensino": "#6a52c9",
-  "Transporte": "#c98a2b", "Mobilidade": "#c98a2b",
-  "Saúde": "#cf4d43", "Médico": "#cf4d43",
-  "Lazer": "#d98234", "Entretenimento": "#d98234",
-  "Assinaturas": "#9a6b14", "Streaming": "#9a6b14",
-  "Mercado": "#2a9d8f", "Supermercado": "#2a9d8f",
-  "Serviços": "#7c8696",
-  "Investimentos": "#135737", "Investimento": "#135737",
-  "Renda": "#1f8a5b", "Receita": "#1f8a5b",
-  "Outros": "#9aa3b0", "Sem categoria": "#9aa3b0",
-};
-function catColor(name: string): string {
-  if (CAT_COLORS[name]) return CAT_COLORS[name];
-  for (const [k, v] of Object.entries(CAT_COLORS)) {
-    if (name.toLowerCase().includes(k.toLowerCase())) return v;
-  }
-  const palette = Object.values(CAT_COLORS);
-  const h = name.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
-  return palette[h % palette.length];
-}
 
 // ─── Formatação ────────────────────────────────────────────────────────────────
 function brl(val: number | string | null | undefined, opts: { sign?: boolean; dec?: number } = {}): string {
@@ -709,7 +685,7 @@ function TopCats({
       </div>
       <div className="card-body" style={{ display: "grid", gap: 8, paddingTop: 4 }}>
         {top.map((c, i) => {
-          const color  = c.color ?? catColor(c.category_name);
+          const color  = categoryChartColor(c.category_name, c.color, c.category_id);
           const amount = parseFloat(c.amount ?? "0");
           const share  = (amount / totalExp) * 100;
           const isOpen = open === (c.category_id ?? c.category_name);
@@ -861,7 +837,7 @@ function CardsMini({ cards, onNav }: { cards: CreditCardRead[]; onNav: (p: Page)
         <div className="card-body" style={{ display: "grid", gap: 14 }}>
           {active.map((c, i) => {
             const limit = c.limit_amount ? parseFloat(c.limit_amount) : 0;
-            const col = c.color || catColor(c.issuer ?? c.name);
+            const col = categoryChartColor(c.issuer ?? c.name, c.color);
             return (
               <div key={i}>
                 <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 7 }}>
@@ -1207,7 +1183,7 @@ function SankeyMini({
       id: c.category_id ?? c.category_name,
       label: c.category_name,
       value: parseFloat(c.amount ?? "0"),
-      color: c.color ?? catColor(c.category_name),
+      color: categoryChartColor(c.category_name, c.color, c.category_id),
       kind: "expense" as const,
     }));
 

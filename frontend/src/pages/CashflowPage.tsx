@@ -655,8 +655,6 @@ function MiniStat({ dot, label, value, pct }: { dot: string; label: string; valu
 // CatImpactAccordion
 // ---------------------------------------------------------------------------
 
-const CAT_PALETTE = ["#8b5cf6", "#ef4444", "#f59e0b", "#22c55e", "#38bdf8", "#64748b", "#2563eb", "#14b8a6"];
-
 function CatImpactAccordion({
   items,
   subcategoryItems,
@@ -685,10 +683,10 @@ function CatImpactAccordion({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {sorted.map((cat, index) => {
+      {sorted.map((cat) => {
         const amount = Math.abs(Number(cat.amount ?? 0));
         const pct = totalAmount > 0 ? (amount / totalAmount) * 100 : 0;
-        const color = CAT_PALETTE[index % CAT_PALETTE.length];
+        const color = categoryChartColor(cat.category_name, cat.color, cat.category_id);
         const isOpen = open === cat.category_id;
         const subs = subcategoryItems
           .filter((s) => s.category_id === cat.category_id)
