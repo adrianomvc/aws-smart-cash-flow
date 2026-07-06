@@ -1281,6 +1281,10 @@ export function TransactionExplorer({
     }
     if (dateFrom) params.set("date_from", dateFrom);
     if (dateTo) params.set("date_to", dateTo);
+    // Period filters follow the cash-out date (invoice due date for card rows)
+    // so the list matches the dashboards — EXCEPT the weekday drill-down, whose
+    // source chart is purchase-based ("which day do I shop?").
+    if ((dateFrom || dateTo) && weekday === undefined) params.set("date_field", "fatura");
     if (weekday !== undefined) params.set("weekday", String(weekday));
     params.set("sort_by", sortBy);
     params.set("sort_dir", sortDir);

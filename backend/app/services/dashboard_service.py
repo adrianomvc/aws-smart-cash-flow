@@ -1,4 +1,3 @@
-import re
 from calendar import monthrange
 from collections import Counter, defaultdict
 from datetime import date, timedelta
@@ -14,7 +13,6 @@ from app.db.models import (
     CreditCardStatement,
     FinancialCalendarEvent,
     ImportJob,
-    SourceFile,
     Transaction,
     TransactionCategoryAssignment,
     WorkspacePreferences,
@@ -41,9 +39,21 @@ _SCAN_LOADED_COLUMNS = (
     Transaction.direction,
     Transaction.amount,
     Transaction.transaction_date,
+    Transaction.payment_date,
     Transaction.installment_current,
     Transaction.installment_total,
 )
+
+# Effective cash-out date: the stored payment_date (credit-card invoice due
+# date, computed per installment at import time) with the purchase date as
+# fallback for bank rows. Cash-aligned analytics filter AND bucket by this
+# expression so every screen tells the same story ("Opção A"): a card purchase
+# in 12 installments hits twelve different months, not the purchase month.
+CASHFLOW_DATE = func.coalesce(Transaction.payment_date, Transaction.transaction_date)
+
+
+def _effective_date(transaction: Transaction) -> date:
+    return transaction.payment_date or transaction.transaction_date
 
 # Spending breakdown: transaction-size buckets (P/M/G/GG) in BRL. Tweak freely.
 _SIZE_BUCKETS = [
@@ -90,15 +100,10 @@ class DashboardService:
             date_from=date_from,
             date_to=date_to,
         )
-        source_file_due_dates = self._source_file_statement_due_dates(transactions)
         income = expenses = payments = ZERO
         counted = 0
         for transaction in transactions:
-            cashflow_date = self._cashflow_date(
-                transaction,
-                source_file_due_dates.get(transaction.source_file_id),
-            )
-            if not _date_in_range(cashflow_date, date_from, date_to):
+            if not _date_in_range(_effective_date(transaction), date_from, date_to):
                 continue
             counted += 1
             if transaction.direction == "credit":
@@ -201,17 +206,13 @@ class DashboardService:
             date_from=date_from,
             date_to=date_to,
         )
-        source_file_due_dates = self._source_file_statement_due_dates(transactions)
         month_balances = self._account_balances_by_month(
             workspace_id=workspace_id,
             date_from=date_from,
             date_to=date_to,
         )
         for transaction in transactions:
-            cashflow_date = self._cashflow_date(
-                transaction,
-                source_file_due_dates.get(transaction.source_file_id),
-            )
+            cashflow_date = _effective_date(transaction)
             if not _date_in_range(cashflow_date, date_from, date_to):
                 continue
             month = cashflow_date.strftime("%Y-%m")
@@ -261,7 +262,6 @@ class DashboardService:
             date_from=date_from,
             date_to=date_to,
         )
-        source_file_due_dates = self._source_file_statement_due_dates(transactions)
         buckets: dict[date, dict[str, Decimal | date | int]] = {}
         account_balances = self._account_balances_by_date(
             workspace_id=workspace_id,
@@ -269,10 +269,7 @@ class DashboardService:
             date_to=date_to,
         )
         for transaction in transactions:
-            cashflow_date = self._cashflow_date(
-                transaction,
-                source_file_due_dates.get(transaction.source_file_id),
-            )
+            cashflow_date = _effective_date(transaction)
             if not _date_in_range(cashflow_date, date_from, date_to):
                 continue
             bucket = buckets.setdefault(
@@ -596,7 +593,7 @@ class DashboardService:
         # Project only the 3 columns this detector reads (not the full row).
         detect_rows = self.db.execute(
             select(
-                Transaction.description, Transaction.amount, Transaction.transaction_date
+                Transaction.description, Transaction.amount, CASHFLOW_DATE
             ).where(
                 *self._transaction_filters(workspace_id, detect_from, date_to),
                 Transaction.direction == "debit",
@@ -780,7 +777,14 @@ class DashboardService:
 
         rows = self.db.execute(
             select(Transaction, Category)
-            .options(load_only(Transaction.transaction_date, Transaction.amount, raiseload=True))
+            .options(
+                load_only(
+                    Transaction.transaction_date,
+                    Transaction.payment_date,
+                    Transaction.amount,
+                    raiseload=True,
+                )
+            )
             .outerjoin(
                 TransactionCategoryAssignment,
                 and_(
@@ -809,7 +813,7 @@ class DashboardService:
 
         acc: dict[str | None, dict[str, object]] = {}
         for transaction, category in rows:
-            month = bucket_of(transaction.transaction_date)
+            month = bucket_of(_effective_date(transaction))
             if month not in month_index:
                 continue
             display = (
@@ -949,6 +953,7 @@ class DashboardService:
                 load_only(
                     Transaction.description,
                     Transaction.transaction_date,
+                    Transaction.payment_date,
                     Transaction.amount,
                     raiseload=True,
                 )
@@ -1001,7 +1006,7 @@ class DashboardService:
             assert isinstance(amounts, list)
             assert isinstance(months, set)
             amounts.append(abs(transaction.amount))
-            months.add(transaction.transaction_date.strftime("%Y-%m"))
+            months.add(_effective_date(transaction).strftime("%Y-%m"))
             item["last_amount"] = abs(transaction.amount)
             item["last_transaction_date"] = transaction.transaction_date
             display_category = (
@@ -1140,6 +1145,9 @@ class DashboardService:
         # Aggregate per weekday in SQL (≤7 rows). The weekday function is
         # dialect-specific; both return Sunday=0..Saturday=6, which we remap to
         # Python's Monday=0..Sunday=6 used by the buckets.
+        # PURCHASE basis on purpose: this chart answers "which day do I shop?",
+        # and invoice due dates would collapse every card debit onto the same
+        # few weekdays.
         if self.db.bind.dialect.name == "sqlite":
             dow = func.strftime("%w", Transaction.transaction_date)
         else:
@@ -1155,6 +1163,7 @@ class DashboardService:
                     workspace_id=workspace_id,
                     date_from=date_from,
                     date_to=date_to,
+                    date_basis="purchase",
                 ),
                 Transaction.direction == "debit",
             )
@@ -1248,10 +1257,15 @@ class DashboardService:
         limit: int,
     ) -> list[dict[str, object]]:
         # Only payment rows are needed (a small subset), not the whole period.
+        # PURCHASE basis: reconciliation compares the dates printed on the two
+        # documents (bank statement vs card statement), not cash-out dates.
         payments = self.db.scalars(
             select(Transaction).where(
                 *self._transaction_filters(
-                    workspace_id=workspace_id, date_from=date_from, date_to=date_to
+                    workspace_id=workspace_id,
+                    date_from=date_from,
+                    date_to=date_to,
+                    date_basis="purchase",
                 ),
                 Transaction.direction == "payment",
             )
@@ -1844,8 +1858,8 @@ class DashboardService:
             .where(
                 Transaction.workspace_id == workspace_id,
                 Transaction.direction == "debit",
-                Transaction.transaction_date >= history_from,
-                Transaction.transaction_date <= today,
+                CASHFLOW_DATE >= history_from,
+                CASHFLOW_DATE <= today,
             )
             .order_by(Transaction.transaction_date, Transaction.id)
         ).all()
@@ -1875,7 +1889,7 @@ class DashboardService:
                     "current_month_spent": ZERO,
                 },
             )
-            month = transaction.transaction_date.strftime("%Y-%m")
+            month = _effective_date(transaction).strftime("%Y-%m")
             amount = abs(transaction.amount)
             if month == current_month_str:
                 item["current_month_spent"] = Decimal(item["current_month_spent"]) + amount
@@ -2045,120 +2059,37 @@ class DashboardService:
         date_from: date | None,
         date_to: date | None,
     ) -> list[Transaction]:
-        key = ("cf", workspace_id, date_from, date_to)
-        cached = self._tx_memo.get(key)
-        if cached is not None:
-            return cached
-        if date_from is None and date_to is None:
-            rows = self._transactions(
-                workspace_id=workspace_id,
-                date_from=None,
-                date_to=None,
-            )
-            self._tx_memo[key] = rows
-            return rows
-
-        installment_from = _add_months(date_from, -99) if date_from is not None else None
-        installment_clause = and_(
-            Transaction.source_type == "credit_card_statement",
-            Transaction.direction == "debit",
-            Transaction.installment_current.is_not(None),
-            Transaction.installment_total.is_not(None),
-        )
-        regular_filters = self._transaction_filters(
+        # _transaction_filters already ranges over CASHFLOW_DATE, so the plain
+        # scan is the cashflow scan — installments land in the invoice months
+        # via their stored payment_date, no over-fetch or filename inference.
+        return self._transactions(
             workspace_id=workspace_id,
             date_from=date_from,
             date_to=date_to,
         )
-        installment_filters = self._transaction_filters(
-            workspace_id=workspace_id,
-            date_from=installment_from,
-            date_to=date_to,
-        )
-        source_file_month_filters = _source_file_month_filters(date_from, date_to)
-        cashflow_clauses = [
-            and_(*regular_filters),
-            and_(installment_clause, *installment_filters),
-        ]
-        if source_file_month_filters:
-            cashflow_clauses.append(
-                and_(
-                    Transaction.source_type == "credit_card_statement",
-                    Transaction.direction == "debit",
-                    SourceFile.source_kind == "credit_card_csv",
-                    or_(*source_file_month_filters),
-                )
-            )
-        rows = self.db.scalars(
-            select(Transaction)
-            .options(load_only(*_SCAN_LOADED_COLUMNS, raiseload=True))
-            .join(SourceFile, SourceFile.id == Transaction.source_file_id)
-            .where(or_(*cashflow_clauses))
-            .order_by(Transaction.transaction_date, Transaction.id)
-        ).all()
-        self._tx_memo[key] = rows
-        return rows
-
-    def _source_file_statement_due_dates(self, transactions: list[Transaction]) -> dict[str, date]:
-        source_file_ids = {
-            transaction.source_file_id
-            for transaction in transactions
-            if transaction.source_type == "credit_card_statement"
-            and transaction.direction == "debit"
-        }
-        if not source_file_ids:
-            return {}
-
-        rows = self.db.execute(
-            select(SourceFile.id, SourceFile.original_filename, SourceFile.source_kind).where(
-                SourceFile.id.in_(source_file_ids)
-            )
-        ).all()
-        due_dates: dict[str, date] = {}
-        for source_file_id, original_filename, source_kind in rows:
-            if source_kind != "credit_card_csv":
-                continue
-            due_date = _statement_due_date_from_filename(original_filename)
-            if due_date is not None:
-                due_dates[str(source_file_id)] = due_date
-        return due_dates
-
-    def _cashflow_date(
-        self,
-        transaction: Transaction,
-        statement_due_date: date | None = None,
-    ) -> date:
-        if transaction.source_type == "credit_card_statement" and transaction.direction == "debit":
-            if statement_due_date is not None:
-                return statement_due_date
-            if not (transaction.installment_current and transaction.installment_total):
-                return transaction.transaction_date
-            first_invoice_month = get_first_invoice_month(
-                transaction.transaction_date,
-                settings.default_credit_card_closing_day,
-            )
-            invoice_month = _add_months(first_invoice_month, transaction.installment_current - 1)
-            return _day_in_month(
-                invoice_month.year,
-                invoice_month.month,
-                settings.default_credit_card_due_day,
-            )
-        return transaction.transaction_date
 
     def _transaction_filters(
         self,
         workspace_id: str,
         date_from: date | None,
         date_to: date | None,
+        date_basis: str = "cashflow",
     ) -> list[object]:
+        """Default basis is the cash-out date (CASHFLOW_DATE) so every analytic
+        answers "what hit the account in the period". Pass
+        date_basis="purchase" only where the question is behavioral/documental
+        (weekday shopping habits, statement-vs-bank reconciliation)."""
+        date_column = (
+            Transaction.transaction_date if date_basis == "purchase" else CASHFLOW_DATE
+        )
         filters: list[object] = [
             Transaction.workspace_id == workspace_id,
             Transaction.natural_dedupe_key.is_not(None),
         ]
         if date_from is not None:
-            filters.append(Transaction.transaction_date >= date_from)
+            filters.append(date_column >= date_from)
         if date_to is not None:
-            filters.append(Transaction.transaction_date <= date_to)
+            filters.append(date_column <= date_to)
         return filters
 
     def _sum(self, transactions: list[Transaction], direction: str) -> Decimal:
@@ -2179,7 +2110,7 @@ class DashboardService:
         row = self.db.execute(
             select(
                 func.sum(func.abs(Transaction.amount)),
-                func.min(Transaction.transaction_date),
+                func.min(CASHFLOW_DATE),
                 func.count(),
             ).where(
                 *self._transaction_filters(
@@ -2257,15 +2188,10 @@ class DashboardService:
             date_from=horizon_start,
             date_to=horizon_end,
         )
-        source_file_due_dates = self._source_file_statement_due_dates(transactions)
         income = ZERO
         outflow = ZERO
         for transaction in transactions:
-            cashflow_date = self._cashflow_date(
-                transaction,
-                source_file_due_dates.get(transaction.source_file_id),
-            )
-            if not _date_in_range(cashflow_date, horizon_start, horizon_end):
+            if not _date_in_range(_effective_date(transaction), horizon_start, horizon_end):
                 continue
             if transaction.direction == "credit":
                 income += abs(transaction.amount)
@@ -2390,31 +2316,6 @@ class DashboardService:
         for balance_date in sorted(by_date):
             balances[balance_date.strftime("%Y-%m")] = by_date[balance_date]
         return balances
-
-
-def _statement_due_date_from_filename(filename: str) -> date | None:
-    match = re.search(r"(?<!\d)(20\d{2})(0[1-9]|1[0-2])([0-2]\d|3[01])(?!\d)", filename)
-    if match is None:
-        return None
-    year, month, day = (int(part) for part in match.groups())
-    try:
-        return date(year, month, day)
-    except ValueError:
-        return None
-
-
-
-
-def _source_file_month_filters(date_from: date | None, date_to: date | None) -> list[object]:
-    if date_from is None or date_to is None or date_from > date_to:
-        return []
-    month_count = _inclusive_months(date(date_from.year, date_from.month, 1), date_to)
-    if month_count > 24:
-        return []
-    return [
-        SourceFile.original_filename.ilike(f"%{_add_months(date_from, offset):%Y%m}%")
-        for offset in range(month_count)
-    ]
 
 
 def _inclusive_months(date_from: date, date_to: date) -> int:

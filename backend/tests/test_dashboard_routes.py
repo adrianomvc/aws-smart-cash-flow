@@ -334,7 +334,19 @@ def test_dashboard_daily_cashflow_groups_by_day_and_separates_payments(
     assert payload["items"][2]["expenses"] == "0.00"
     assert payload["items"][2]["payments"] == "800.00"
     assert payload["items"][2]["balance"] == "0.00"
-    assert payload["items"][3]["expenses"] == "25.50"
+    # The 99APP card purchase (2026-05-04) is cash-out on the invoice due date
+    # (2026-05-30, default closing 23 / due 30), not on the purchase day.
+    assert payload["items"][3]["expenses"] == "0.00"
+
+    due_window = client.get(
+        "/v1/dashboard/daily-cashflow?date_from=2026-05-29&date_to=2026-05-31"
+    ).json()
+    assert [item["date"] for item in due_window["items"]] == [
+        "2026-05-29",
+        "2026-05-30",
+        "2026-05-31",
+    ]
+    assert due_window["items"][1]["expenses"] == "25.50"
 
 
 def test_dashboard_expense_size_profile_uses_expenses_without_card_payments(
@@ -397,11 +409,14 @@ def test_dashboard_cashflow_places_card_installment_on_invoice_due_month(
     assert april_daily["items"][-1]["expenses"] == "6536.76"
 
 
-def test_dashboard_cashflow_uses_statement_due_date_from_credit_card_filename(
+def test_dashboard_cashflow_uses_stored_payment_date_not_statement_filename(
     client: TestClient,
     db_session: Session,
     auth: AuthContext,
 ) -> None:
+    # The filename hints at an April due date, but the stored payment_date is
+    # authoritative: purchase 2026-02-24 (after the default closing day 23) puts
+    # installment 1 on the March invoice, so installment 4 is due 2026-06-30.
     ImportService(db_session).import_bytes(
         auth=auth,
         filename="fatura-20260420.csv",
@@ -420,16 +435,16 @@ def test_dashboard_cashflow_uses_statement_due_date_from_credit_card_filename(
     june = client.get(
         "/v1/dashboard/monthly-cashflow?date_from=2026-06-01&date_to=2026-06-30"
     ).json()
-    april_daily = client.get(
-        "/v1/dashboard/daily-cashflow?date_from=2026-04-01&date_to=2026-04-30"
+    june_daily = client.get(
+        "/v1/dashboard/daily-cashflow?date_from=2026-06-01&date_to=2026-06-30"
     ).json()
 
     assert february["items"] == []
-    assert june["items"] == []
-    assert april["items"][0]["month"] == "2026-04"
-    assert april["items"][0]["expenses"] == "6536.76"
-    assert april_daily["items"][19]["date"] == "2026-04-20"
-    assert april_daily["items"][19]["expenses"] == "6536.76"
+    assert april["items"] == []
+    assert june["items"][0]["month"] == "2026-06"
+    assert june["items"][0]["expenses"] == "6536.76"
+    assert june_daily["items"][-1]["date"] == "2026-06-30"
+    assert june_daily["items"][-1]["expenses"] == "6536.76"
 
 
 def test_dashboard_credit_card_payment_matches_suggests_same_amount_nearby(
