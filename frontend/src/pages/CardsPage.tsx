@@ -94,6 +94,15 @@ function sumTransactions(items: Array<Pick<TransactionRead, "amount">>) {
 function bestPurchaseDay(closingDay: number): number {
   return (closingDay % 31) + 1;
 }
+// Last calendar day of the month of an ISO date (YYYY-MM-DD).
+function endOfMonthIso(iso: string): string {
+  const d = new Date(iso + "T00:00:00");
+  if (Number.isNaN(d.getTime())) return iso;
+  const end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+  const m = String(end.getMonth() + 1).padStart(2, "0");
+  const day = String(end.getDate()).padStart(2, "0");
+  return `${end.getFullYear()}-${m}-${day}`;
+}
 
 // ---------------------------------------------------------------------------
 // Donut chart
@@ -304,10 +313,17 @@ export function CardsPage({
   // The card month means "the invoice PAID that month": filter by the invoice's due
   // (payment) month, not by each purchase's date. This query (limit 100) feeds the
   // KPIs aggregate and the category breakdown.
+  // Card invoices are filtered by their DUE date, which lands late in the month
+  // (e.g. day 20). The global "current month" period ends today, so before the due
+  // day the current open invoice would be missed — widen the due window to the full
+  // month so the invoice that comes due this month always shows.
+  const dueTo = period.periodPreset === "current_month" && period.dateTo
+    ? endOfMonthIso(period.dateTo)
+    : period.dateTo;
   const cardQueryParams: Record<string, string> = { limit: "100", sort_by: "transaction_date", sort_dir: "desc", source_type: "credit_card_statement" };
   if (selectedCard) cardQueryParams.credit_card_id = selectedCard.id;
   if (period.dateFrom) cardQueryParams.due_from = period.dateFrom;
-  if (period.dateTo) cardQueryParams.due_to = period.dateTo;
+  if (dueTo) cardQueryParams.due_to = dueTo;
   const cardQuery = withQueryParams("", cardQueryParams);
   // The chart, category breakdown and per-day aggregate must cover the WHOLE invoice.
   // A single page is capped at 100 and sorted by purchase date, which dropped
@@ -371,7 +387,7 @@ export function CardsPage({
   };
   if (selectedCard) ledgerParams.credit_card_id = selectedCard.id;
   if (period.dateFrom) ledgerParams.due_from = period.dateFrom;
-  if (period.dateTo) ledgerParams.due_to = period.dateTo;
+  if (dueTo) ledgerParams.due_to = dueTo;
   const ledgerQuery = withQueryParams("", ledgerParams);
   const cardLedger = useQuery({ queryKey: ["card-ledger", session.token, ledgerQuery], queryFn: () => getTransactions(session, ledgerQuery) });
   const ledgerItems = cardLedger.data?.items ?? [];

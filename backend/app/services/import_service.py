@@ -1104,14 +1104,12 @@ class ImportService:
             self.db.flush()
         else:
             # Importing a statement means this card is in use again: re-activate it
-            # (it may have been soft-deleted) and backfill the limit when newly known.
+            # (it may have been soft-deleted).
             if not card.active:
                 card.active = True
-            if card_info.limit_amount is not None and card.limit_amount is None:
-                card.limit_amount = card_info.limit_amount
             if card.bin is None and card_info.bin:
                 card.bin = card_info.bin
-            self._apply_reissue(card, card_info)
+            self._apply_latest_statement_fields(card, card_info)
             self.db.add(card)
 
         already_linked = self.db.scalar(
@@ -1162,13 +1160,13 @@ class ImportService:
                 return card
         return None
 
-    def _apply_reissue(self, card: CreditCard, card_info: ParsedCreditCard) -> None:
-        """Record a last_four change on a card matched by BIN. The most recent
-        statement's plastic becomes the current last_four; older ones are archived
-        in previous_last_four so past statements still resolve to this card."""
-        if not card_info.last_four or card.last_four == card_info.last_four:
-            return
-        history = list(card.previous_last_four or [])
+    def _apply_latest_statement_fields(
+        self, card: CreditCard, card_info: ParsedCreditCard
+    ) -> None:
+        """Update the card from an imported statement, keyed on whether this is its
+        newest statement: the newest one's plastic becomes the current last_four and
+        its limit refreshes the card; older statements only add last_four history.
+        (The stored limit tracks the latest invoice, not just the first import.)"""
         latest_due = self.db.scalar(
             select(func.max(CreditCardStatement.due_date)).where(
                 CreditCardStatement.credit_card_id == card.id
@@ -1177,6 +1175,12 @@ class ImportService:
         is_newest = latest_due is None or (
             card_info.due_date is not None and card_info.due_date >= latest_due
         )
+        if card_info.limit_amount is not None and (is_newest or card.limit_amount is None):
+            card.limit_amount = card_info.limit_amount
+
+        if not card_info.last_four or card.last_four == card_info.last_four:
+            return
+        history = list(card.previous_last_four or [])
         if is_newest:
             if card.last_four and card.last_four not in history:
                 history.append(card.last_four)
