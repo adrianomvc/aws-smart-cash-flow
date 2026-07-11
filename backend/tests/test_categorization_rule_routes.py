@@ -421,3 +421,54 @@ def test_rule_requires_category_or_financial_direction(
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Rule must define a category or target direction"
+
+
+def test_amount_recurring_rule_matches_debit_with_positive_reference(
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    from datetime import date
+
+    from app.services.categorization_service import CategorizationService
+
+    category = Category(id=str(uuid4()), workspace_id=auth.workspace_id, name="Condominio")
+    rule = CategorizationRule(
+        id=str(uuid4()),
+        workspace_id=auth.workspace_id,
+        name="Condominio",
+        field="description",
+        match_type="amount_recurring",
+        pattern="DDA TIT",
+        category_id=category.id,
+        amount_ref=Decimal("1500.00"),  # user enters a POSITIVE reference
+        amount_tolerance=Decimal("500.00"),
+        day_min=7,
+        day_max=15,
+    )
+    db_session.add_all([category, rule])
+
+    def _tx(amount: str, day: int) -> Transaction:
+        return Transaction(
+            id=str(uuid4()),
+            workspace_id=auth.workspace_id,
+            source_file_id=str(uuid4()),
+            import_job_id=str(uuid4()),
+            source_type="bank_statement",
+            transaction_date=date(2026, 7, day),
+            description="DDA TIT",
+            raw_description="DDA PAG TIT",
+            amount=Decimal(amount),
+            direction="debit",
+            dedupe_key=str(uuid4()),
+        )
+
+    in_window = _tx("-1724.44", 10)  # negative debit, magnitude within ref ± tolerance
+    out_of_value = _tx("-800.00", 10)  # magnitude 800 → outside 1500 ± 500
+    out_of_day = _tx("-1500.00", 20)  # day 20 → outside 7..15
+    db_session.add_all([in_window, out_of_value, out_of_day])
+    db_session.commit()
+
+    service = CategorizationService(db_session)
+    assert service.matches(rule, in_window) is True
+    assert service.matches(rule, out_of_value) is False
+    assert service.matches(rule, out_of_day) is False
