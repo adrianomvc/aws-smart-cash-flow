@@ -560,8 +560,14 @@ export function CardsPage({
                   <span style={{ fontSize: 11, opacity: .8, fontFamily: "var(--font-mono)" }}>{c.brand ?? ""}</span>
                 </div>
                 <div style={{ fontFamily: "var(--font-mono)", fontSize: 14, letterSpacing: 2, marginTop: 18 }}>
-                  •••• {c.last_four ?? "----"}
+                  {c.bin ? `${c.bin} •••• ••••` : "••••"} {c.last_four ?? "----"}
                 </div>
+                {c.previous_last_four?.length > 0 && (
+                  <div style={{ fontFamily: "var(--font-mono)", fontSize: 9.5, opacity: .7, marginTop: 3 }}
+                    title="Finais anteriores deste cartão (reemissões)">
+                    antes {c.previous_last_four.map((f) => `•••• ${f}`).join(" · ")}
+                  </div>
+                )}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginTop: 14 }}>
                   <div>
                     <div style={{ fontSize: 9.5, opacity: .75, textTransform: "uppercase", letterSpacing: .5 }}>Limite</div>

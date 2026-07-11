@@ -324,6 +324,13 @@ class CreditCard(Base):
     issuer: Mapped[str | None] = mapped_column(Text)
     brand: Mapped[str | None] = mapped_column(Text)
     last_four: Mapped[str | None] = mapped_column(String(4))
+    # Identity key from the statement's masked PAN prefix (e.g. "5312"): stable
+    # across a card reissue, unlike last_four. Used to match imported statements to
+    # the same physical card even when the plastic (last_four) was reissued.
+    bin: Mapped[str | None] = mapped_column(String(8))
+    # last_four values this card had before the current one (reissue history), most
+    # recent last. Kept so old statements still match and the UI can show past cards.
+    previous_last_four: Mapped[list | None] = mapped_column(JSONB_TYPE, default=list)
     color: Mapped[str | None] = mapped_column(Text)
     closing_day: Mapped[int] = mapped_column(Integer, nullable=False)
     due_day: Mapped[int] = mapped_column(Integer, nullable=False)

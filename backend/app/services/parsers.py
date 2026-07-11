@@ -987,7 +987,7 @@ _ITAU_PDF_IOF_RE = re.compile(
 # Primary card number on the statement, e.g. "5312.XXXX.XXXX.7164" or "4771.XXXX.XXXX.9163".
 # Product tier (VISA INFINITE, MASTERCARD BLACK…) may appear on the same line or the next.
 _ITAU_PDF_CARD_RE = re.compile(
-    r"(?P<bin>\d)\d{3}\.[X*]{4}\.[X*]{4}\.(?P<last4>\d{4})(?P<product>[^\n]{0,40})"
+    r"(?P<bin>\d{4})\.[X*]{4}\.[X*]{4}\.(?P<last4>\d{4})(?P<product>[^\n]{0,40})"
 )
 _ITAU_PDF_CLOSING_RE = re.compile(r"Fechamento:?\s*(\d{2})/(\d{2})/(\d{4})", re.IGNORECASE)
 
@@ -1023,7 +1023,8 @@ def extract_itau_card_metadata(text: str) -> ParsedCreditCard | None:
     if card is None:
         return None
     last_four = card.group("last4")
-    brand = _ITAU_CARD_BRANDS.get(card.group("bin"))
+    card_bin = card.group("bin")
+    brand = _ITAU_CARD_BRANDS.get(card_bin[0])
     # Product tier may be on the same line or on the very next line (newer layout).
     product = card.group("product").strip()
     if not product:
@@ -1068,6 +1069,7 @@ def extract_itau_card_metadata(text: str) -> ParsedCreditCard | None:
             limit_amount = parse_brazilian_decimal(box.group(1))
     return ParsedCreditCard(
         last_four=last_four,
+        bin=card_bin,
         brand=brand,
         name=name,
         closing_day=closing_day,

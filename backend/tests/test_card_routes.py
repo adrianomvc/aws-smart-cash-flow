@@ -9,10 +9,21 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from sqlalchemy import select
+
 from app.core.auth import AuthContext, get_auth_context
-from app.db.models import Base, CreditCard, ImportJob, SourceFile, Transaction
+from app.db.models import (
+    Base,
+    CreditCard,
+    CreditCardStatement,
+    ImportJob,
+    SourceFile,
+    Transaction,
+)
 from app.db.session import get_db
+from app.domain.imports import ParsedCreditCard, ParseResult, SourceKind
 from app.main import create_app
+from app.services.import_service import ImportService
 
 
 @pytest.fixture()
@@ -350,3 +361,159 @@ def test_credit_card_source_file_association_falls_back_to_transaction_dates(
     assert statement["closing_date"] == "2026-04-23"
     assert statement["due_date"] == "2026-05-05"
     assert statement["total_amount"] == "15.00"
+
+
+# ---------------------------------------------------------------------------
+# Card identity by BIN (reissue handling) + manual merge
+# ---------------------------------------------------------------------------
+
+def _pdf_source_file(db: Session, workspace_id: str, name: str) -> SourceFile:
+    source_file = SourceFile(
+        id=str(uuid4()),
+        workspace_id=workspace_id,
+        original_filename=name,
+        content_hash=str(uuid4()),
+        mime_type="application/pdf",
+        size_bytes=1,
+        storage_bucket="local",
+        storage_path=f"local/{name}",
+        source_kind="credit_card_pdf",
+        created_by_user_id=str(uuid4()),
+    )
+    db.add(source_file)
+    db.flush()
+    return source_file
+
+
+def _register_pdf_card(
+    db: Session,
+    workspace_id: str,
+    source_file: SourceFile,
+    *,
+    last_four: str,
+    card_bin: str,
+    due: date,
+    name: str = "Visa Infinite",
+    brand: str = "visa",
+) -> None:
+    card_info = ParsedCreditCard(
+        last_four=last_four,
+        bin=card_bin,
+        brand=brand,
+        name=name,
+        closing_day=5,
+        due_day=15,
+        due_date=due,
+        statement_total=Decimal("100.00"),
+    )
+    result = ParseResult(
+        source_kind=SourceKind.CREDIT_CARD_PDF, total_rows=0, credit_card=card_info
+    )
+    ImportService(db)._register_pdf_credit_card(workspace_id, source_file, result)
+
+
+def test_reissued_card_is_one_card_matched_by_bin(db_session: Session) -> None:
+    ws = str(uuid4())
+    _register_pdf_card(
+        db_session, ws, _pdf_source_file(db_session, ws, "2023_01.pdf"),
+        last_four="9163", card_bin="4771", due=date(2023, 1, 15),
+    )
+    _register_pdf_card(
+        db_session, ws, _pdf_source_file(db_session, ws, "2023_02.pdf"),
+        last_four="1359", card_bin="4771", due=date(2023, 2, 15),
+    )
+    db_session.commit()
+
+    cards = db_session.scalars(
+        select(CreditCard).where(CreditCard.workspace_id == ws)
+    ).all()
+    assert len(cards) == 1
+    card = cards[0]
+    assert card.last_four == "1359"  # newest plastic is current
+    assert card.previous_last_four == ["9163"]  # old plastic archived
+    statements = db_session.scalars(
+        select(CreditCardStatement).where(CreditCardStatement.credit_card_id == card.id)
+    ).all()
+    assert len(statements) == 2  # both faturas resolve to the one card
+
+
+def test_reissue_import_out_of_order_keeps_newest_as_current(db_session: Session) -> None:
+    ws = str(uuid4())
+    # newest first, then the older statement of the previous plastic
+    _register_pdf_card(
+        db_session, ws, _pdf_source_file(db_session, ws, "2023_02.pdf"),
+        last_four="1359", card_bin="4771", due=date(2023, 2, 15),
+    )
+    _register_pdf_card(
+        db_session, ws, _pdf_source_file(db_session, ws, "2023_01.pdf"),
+        last_four="9163", card_bin="4771", due=date(2023, 1, 15),
+    )
+    db_session.commit()
+
+    card = db_session.scalars(
+        select(CreditCard).where(CreditCard.workspace_id == ws)
+    ).one()
+    assert card.last_four == "1359"
+    assert card.previous_last_four == ["9163"]
+
+
+def test_different_bin_stays_a_separate_card(db_session: Session) -> None:
+    ws = str(uuid4())
+    _register_pdf_card(
+        db_session, ws, _pdf_source_file(db_session, ws, "visa.pdf"),
+        last_four="1359", card_bin="4771", due=date(2023, 2, 15),
+    )
+    _register_pdf_card(
+        db_session, ws, _pdf_source_file(db_session, ws, "master.pdf"),
+        last_four="3123", card_bin="5234", due=date(2023, 2, 15),
+        name="Mastercard Black", brand="mastercard",
+    )
+    db_session.commit()
+
+    cards = db_session.scalars(
+        select(CreditCard).where(CreditCard.workspace_id == ws)
+    ).all()
+    assert len(cards) == 2
+
+
+def test_merge_cards_moves_statements_and_records_history(
+    client: TestClient, db_session: Session, auth: AuthContext
+) -> None:
+    keep = client.post(
+        "/v1/credit-cards",
+        json={"name": "Mastercard 7164", "last_four": "7164", "closing_day": 5, "due_day": 15},
+    ).json()
+    drop = client.post(
+        "/v1/credit-cards",
+        json={"name": "Mastercard 6645", "last_four": "6645", "closing_day": 5, "due_day": 15},
+    ).json()
+    db_session.add(
+        CreditCardStatement(
+            id=str(uuid4()),
+            workspace_id=auth.workspace_id,
+            credit_card_id=drop["id"],
+            statement_month=date(2023, 10, 1),
+            due_date=date(2023, 10, 15),
+            total_amount=Decimal("100.00"),
+            status="closed",
+        )
+    )
+    db_session.commit()
+
+    response = client.post(
+        f"/v1/credit-cards/{keep['id']}/merge", json={"source_card_id": drop["id"]}
+    )
+
+    assert response.status_code == 200
+    merged = response.json()
+    assert merged["last_four"] == "7164"
+    assert "6645" in merged["previous_last_four"]
+    # the dropped card is gone
+    assert client.get("/v1/credit-cards").json()["total"] == 1
+    # its statement now belongs to the kept card
+    moved = db_session.scalars(
+        select(CreditCardStatement).where(
+            CreditCardStatement.credit_card_id == keep["id"]
+        )
+    ).all()
+    assert len(moved) == 1

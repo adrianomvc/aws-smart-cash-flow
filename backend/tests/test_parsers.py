@@ -33,6 +33,7 @@ def test_extract_itau_card_metadata_reads_identity_from_pdf():
 
     assert card is not None
     assert card.last_four == "1359"
+    assert card.bin == "4771"
     assert card.brand == "visa"
     assert card.name == "Visa Infinite"
     assert (card.closing_day, card.due_day) == (13, 20)
@@ -46,6 +47,7 @@ def test_extract_itau_card_metadata_falls_back_to_brand_and_last_four():
     card = extract_itau_card_metadata(text)
 
     assert card is not None
+    assert card.bin == "5312"
     assert card.brand == "mastercard"
     assert card.name == "Mastercard final 7164"
 

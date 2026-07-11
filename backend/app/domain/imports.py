@@ -66,6 +66,10 @@ class ParseError(BaseModel):
 
 class ParsedCreditCard(BaseModel):
     last_four: str
+    # First digits of the masked PAN (e.g. "5312" from "5312.XXXX.XXXX.6645").
+    # Stable across a reissue — the last_four changes, this does not — so it is the
+    # card's identity key at import time. See CreditCard.bin.
+    bin: str | None = None
     brand: str | None = None
     name: str
     closing_day: int | None = None

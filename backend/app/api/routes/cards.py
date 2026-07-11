@@ -49,6 +49,8 @@ class CreditCardRead(BaseModel):
     issuer: str | None
     brand: str | None
     last_four: str | None
+    bin: str | None = None
+    previous_last_four: list[str] = Field(default_factory=list)
     color: str | None
     closing_day: int
     due_day: int
@@ -187,6 +189,64 @@ def update_credit_card(
         ) from exc
     db.refresh(card)
     return _credit_card_read(card)
+
+
+class CreditCardMergeRequest(BaseModel):
+    source_card_id: str
+
+
+@router.post("/credit-cards/{credit_card_id}/merge")
+def merge_credit_cards(
+    credit_card_id: str,
+    payload: CreditCardMergeRequest,
+    auth: AuthContext = AuthDependency,
+    db: Session = DbDependency,
+) -> CreditCardRead:
+    """Merge `source_card_id` into `credit_card_id` (kept): move every statement to
+    the kept card, fold the source's last_four(s) into its reissue history, and
+    delete the now-empty source card. Manual override for when two cards are really
+    the same physical card (e.g. a reissue the BIN match missed)."""
+    target = _get_credit_card(db, auth.workspace_id, credit_card_id)
+    source = _get_credit_card(db, auth.workspace_id, payload.source_card_id)
+    if source.id == target.id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cannot merge a card into itself",
+        )
+
+    target_due_dates = {
+        s.due_date
+        for s in db.scalars(
+            select(CreditCardStatement).where(
+                CreditCardStatement.credit_card_id == target.id
+            )
+        ).all()
+    }
+    for statement in db.scalars(
+        select(CreditCardStatement).where(
+            CreditCardStatement.credit_card_id == source.id
+        )
+    ).all():
+        if statement.due_date in target_due_dates:
+            # Target already has this month; drop the duplicate from the source.
+            db.delete(statement)
+        else:
+            statement.credit_card_id = target.id
+            target_due_dates.add(statement.due_date)
+            db.add(statement)
+
+    history = list(target.previous_last_four or [])
+    for value in [source.last_four, *(source.previous_last_four or [])]:
+        if value and value != target.last_four and value not in history:
+            history.append(value)
+    target.previous_last_four = history
+    if target.bin is None and source.bin is not None:
+        target.bin = source.bin
+    db.add(target)
+    db.delete(source)
+    db.commit()
+    db.refresh(target)
+    return _credit_card_read(target)
 
 
 @router.get("/credit-card-statements")
@@ -642,6 +702,8 @@ def _credit_card_read(card: CreditCard) -> CreditCardRead:
         issuer=card.issuer,
         brand=card.brand,
         last_four=card.last_four,
+        bin=card.bin,
+        previous_last_four=list(card.previous_last_four or []),
         color=card.color,
         closing_day=card.closing_day,
         due_day=card.due_day,

@@ -402,6 +402,8 @@ export type CreditCardRead = {
   issuer: string | null;
   brand: string | null;
   last_four: string | null;
+  bin: string | null;
+  previous_last_four: string[];
   color: string | null;
   closing_day: number;
   due_day: number;
@@ -938,6 +940,15 @@ export function updateCreditCard(session: ApiSession, cardId: string, payload: P
   return apiRequest<CreditCardRead>(`/credit-cards/${cardId}`, session, {
     method: "PATCH",
     body: payload,
+  });
+}
+
+// Merge `sourceCardId` into `cardId` (kept). Use when a reissue created a second
+// card: the kept card absorbs every statement and records the old final(s).
+export function mergeCreditCards(session: ApiSession, cardId: string, sourceCardId: string) {
+  return apiRequest<CreditCardRead>(`/credit-cards/${cardId}/merge`, session, {
+    method: "POST",
+    body: { source_card_id: sourceCardId },
   });
 }
 
