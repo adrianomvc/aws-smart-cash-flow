@@ -234,7 +234,11 @@ class CategorizationService:
         if rule.amount_ref is None:
             return False
         tolerance = rule.amount_tolerance or Decimal("0.01")
-        amount_ok = abs(transaction.amount - rule.amount_ref) <= tolerance
+        # Compare magnitudes: debits are stored negative, but users enter the
+        # reference as a positive amount (e.g. 1500 for a R$1.5k boleto). Without
+        # this a positive amount_ref could never match a debit. Use direction_filter
+        # to restrict the sign when needed.
+        amount_ok = abs(abs(transaction.amount) - abs(rule.amount_ref)) <= tolerance
         if not amount_ok:
             return False
         if rule.day_min is not None and transaction.transaction_date.day < rule.day_min:
