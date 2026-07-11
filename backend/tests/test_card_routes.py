@@ -5,11 +5,9 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
-
-from sqlalchemy import select
 
 from app.core.auth import AuthContext, get_auth_context
 from app.db.models import (
