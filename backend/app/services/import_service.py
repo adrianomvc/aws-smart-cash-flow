@@ -4,7 +4,7 @@ from hashlib import sha256
 from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import AuthContext
@@ -1084,12 +1084,7 @@ class ImportService:
         card_info = parse_result.credit_card
         if card_info is None or card_info.due_date is None:
             return
-        card = self.db.scalar(
-            select(CreditCard).where(
-                CreditCard.workspace_id == workspace_id,
-                CreditCard.last_four == card_info.last_four,
-            )
-        )
+        card = self._find_card_for_statement(workspace_id, card_info)
         if card is None:
             card = CreditCard(
                 id=str(uuid4()),
@@ -1098,6 +1093,8 @@ class ImportService:
                 issuer="Itaú",
                 brand=card_info.brand,
                 last_four=card_info.last_four,
+                bin=card_info.bin,
+                previous_last_four=[],
                 closing_day=card_info.closing_day or 1,
                 due_day=card_info.due_day or 10,
                 limit_amount=card_info.limit_amount,
@@ -1112,6 +1109,9 @@ class ImportService:
                 card.active = True
             if card_info.limit_amount is not None and card.limit_amount is None:
                 card.limit_amount = card_info.limit_amount
+            if card.bin is None and card_info.bin:
+                card.bin = card_info.bin
+            self._apply_reissue(card, card_info)
             self.db.add(card)
 
         already_linked = self.db.scalar(
@@ -1135,3 +1135,54 @@ class ImportService:
                 status="closed",
             )
         )
+
+    def _find_card_for_statement(
+        self, workspace_id: str, card_info: ParsedCreditCard
+    ) -> CreditCard | None:
+        """Find the physical card this statement belongs to. The BIN (masked PAN
+        prefix) is stable across a reissue, so it is tried first; last_four (current
+        or a past one) is the fallback for cards without a BIN yet."""
+        cards = list(
+            self.db.scalars(
+                select(CreditCard).where(CreditCard.workspace_id == workspace_id)
+            ).all()
+        )
+        # 1. Same BIN = same card, even if the plastic (last_four) was reissued.
+        if card_info.bin:
+            for card in cards:
+                if card.bin and card.bin == card_info.bin:
+                    return card
+        # 2. Current last_four (cards imported before BIN existed).
+        for card in cards:
+            if card.last_four and card.last_four == card_info.last_four:
+                return card
+        # 3. A last_four this card used to have (older statement of a reissued card).
+        for card in cards:
+            if card_info.last_four in (card.previous_last_four or []):
+                return card
+        return None
+
+    def _apply_reissue(self, card: CreditCard, card_info: ParsedCreditCard) -> None:
+        """Record a last_four change on a card matched by BIN. The most recent
+        statement's plastic becomes the current last_four; older ones are archived
+        in previous_last_four so past statements still resolve to this card."""
+        if not card_info.last_four or card.last_four == card_info.last_four:
+            return
+        history = list(card.previous_last_four or [])
+        latest_due = self.db.scalar(
+            select(func.max(CreditCardStatement.due_date)).where(
+                CreditCardStatement.credit_card_id == card.id
+            )
+        )
+        is_newest = latest_due is None or (
+            card_info.due_date is not None and card_info.due_date >= latest_due
+        )
+        if is_newest:
+            if card.last_four and card.last_four not in history:
+                history.append(card.last_four)
+            if card_info.last_four in history:
+                history.remove(card_info.last_four)
+            card.last_four = card_info.last_four
+        elif card_info.last_four not in history:
+            history.append(card_info.last_four)
+        card.previous_last_four = history  # reassign so the JSON change is tracked
