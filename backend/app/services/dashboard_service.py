@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.db.models import (
     AccountBalance,
     Category,
+    CreditCard,
     CreditCardStatement,
     FinancialCalendarEvent,
     ImportJob,
@@ -1386,26 +1387,31 @@ class DashboardService:
         items: list[dict[str, object]] = []
         total_future_amount = ZERO
         active_count = 0
-        reference_date = self._next_month_reference(date_to) if date_to is not None else None
+        closing_day = self._resolve_closing_day(workspace_id, credit_card_id)
+        # Without an explicit period, "current" installment means the one due THIS
+        # month (today). Anchoring to the purchase month instead would, for a purchase
+        # made after the closing day, land before its first invoice → installment 0 →
+        # the whole active plan gets dropped from the list.
+        reference_date = (
+            self._next_month_reference(date_to) if date_to is not None else date.today()
+        )
         for item in grouped.values():
             purchase_date = item["purchase_date"]
-            target_year = reference_date.year if reference_date is not None else purchase_date.year
-            target_month = (
-                reference_date.month if reference_date is not None else purchase_date.month
-            )
+            target_year = reference_date.year
+            target_month = reference_date.month
             current_installment = get_installment_for_target_month(
                 purchase_date=purchase_date,
                 total_installments=int(item["installment_total"]),
                 target_year=target_year,
                 target_month=target_month,
-                closing_day=settings.default_credit_card_closing_day,
+                closing_day=closing_day,
             )
             if current_installment is None:
                 continue
             item["installment_current"] = current_installment
             item["first_invoice_month"] = get_first_invoice_month(
                 purchase_date,
-                settings.default_credit_card_closing_day,
+                closing_day,
             )
             del item["purchase_date"]
             remaining = max(int(item["installment_total"]) - current_installment, 0)
@@ -1427,11 +1433,25 @@ class DashboardService:
         return {
             "workspace_id": workspace_id,
             "active_count": active_count,
-            "closing_day": settings.default_credit_card_closing_day,
+            "closing_day": closing_day,
             "due_day": settings.default_credit_card_due_day,
             "total_future_amount": total_future_amount,
             "items": items[:limit],
         }
+
+    def _resolve_closing_day(self, workspace_id: str, credit_card_id: str | None) -> int:
+        """The card's real closing day drives which invoice each installment falls in.
+        Fall back to the global default for the all-cards aggregate (no card in view)."""
+        if credit_card_id is not None:
+            closing_day = self.db.scalar(
+                select(CreditCard.closing_day).where(
+                    CreditCard.id == credit_card_id,
+                    CreditCard.workspace_id == workspace_id,
+                )
+            )
+            if closing_day is not None:
+                return closing_day
+        return settings.default_credit_card_closing_day
 
     def projection_feed(
         self,
@@ -1968,6 +1988,7 @@ class DashboardService:
         ).all()
         target_year = date_from.year
         target_month = date_from.month
+        closing_day = self._resolve_closing_day(workspace_id, credit_card_id)
         grouped: dict[tuple[str, Decimal, int, date], dict[str, object]] = {}
         for transaction in rows:
             current = transaction.installment_current
@@ -1983,7 +2004,7 @@ class DashboardService:
                 total_installments=total,
                 target_year=target_year,
                 target_month=target_month,
-                closing_day=settings.default_credit_card_closing_day,
+                closing_day=closing_day,
             )
             if installment_number is None:
                 continue
@@ -1993,7 +2014,7 @@ class DashboardService:
             key = (description, amount, int(total), purchase_date)
             first_invoice_month = get_first_invoice_month(
                 purchase_date,
-                settings.default_credit_card_closing_day,
+                closing_day,
             )
             if key not in grouped:
                 grouped[key] = {
@@ -2022,7 +2043,7 @@ class DashboardService:
         return {
             "workspace_id": workspace_id,
             "active_count": len(items),
-            "closing_day": settings.default_credit_card_closing_day,
+            "closing_day": closing_day,
             "due_day": settings.default_credit_card_due_day,
             "total_future_amount": total_amount,
             "items": items[:limit],

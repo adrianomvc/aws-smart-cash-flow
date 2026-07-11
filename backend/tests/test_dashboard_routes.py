@@ -10,10 +10,19 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.auth import AuthContext, get_auth_context
-from app.db.models import AccountBalance, Base, ImportJob, SourceFile
+from app.db.models import (
+    AccountBalance,
+    Base,
+    CreditCard,
+    CreditCardStatement,
+    ImportJob,
+    SourceFile,
+    Transaction,
+)
 from app.db.session import get_db
 from app.main import create_app
 from app.services.dashboard_service import (
+    DashboardService,
     get_first_invoice_month,
     get_installment_for_target_month,
 )
@@ -933,3 +942,96 @@ def test_dashboard_data_quality_counts_categories_and_import_issues(
     assert payload["categorized_ratio"] == "0.2000"
     assert payload["imports_with_errors"] == 1
     assert payload["duplicate_imports"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Credit-card installments: anchor + real closing day
+# ---------------------------------------------------------------------------
+
+def _add_installment_tx(
+    db: Session,
+    workspace_id: str,
+    *,
+    source_file_id: str,
+    purchase_date: date,
+    current: int,
+    total: int,
+    description: str = "ANGLO",
+    amount: Decimal = Decimal("-100.00"),
+) -> None:
+    key = f"{source_file_id}-{current}-{purchase_date}"
+    db.add(
+        Transaction(
+            id=str(uuid4()),
+            workspace_id=workspace_id,
+            source_file_id=source_file_id,
+            import_job_id=str(uuid4()),
+            source_type="credit_card_statement",
+            transaction_date=purchase_date,
+            description=description,
+            raw_description=f"{description} {current:02d}/{total:02d}",
+            amount=amount,
+            direction="debit",
+            installment_current=current,
+            installment_total=total,
+            dedupe_key=key,
+            natural_dedupe_key=key,
+        )
+    )
+
+
+def test_installments_without_period_anchor_to_today_not_purchase_month(
+    db_session: Session,
+) -> None:
+    # Purchase made AFTER the default closing day (24 > 23): its first invoice is the
+    # NEXT month. With no period, anchoring to the purchase month would compute
+    # installment 0 and drop the whole active plan. A long plan stays active for years.
+    ws = str(uuid4())
+    sf = str(uuid4())
+    _add_installment_tx(
+        db_session, ws, source_file_id=sf,
+        purchase_date=date(2024, 3, 24), current=1, total=48,
+    )
+    db_session.commit()
+
+    result = DashboardService(db_session).credit_card_installments(
+        workspace_id=ws, date_from=None, date_to=None, limit=100,
+    )
+    descriptions = [str(i["description"]) for i in result["items"]]
+    assert any("ANGLO" in d for d in descriptions)  # active plan is no longer dropped
+
+
+def test_installments_use_the_cards_real_closing_day(db_session: Session) -> None:
+    ws = str(uuid4())
+    card = CreditCard(
+        id=str(uuid4()), workspace_id=ws, name="Visa Infinite",
+        closing_day=5, due_day=15,
+    )
+    sf = SourceFile(
+        id=str(uuid4()), workspace_id=ws, original_filename="fatura.pdf",
+        content_hash=str(uuid4()), mime_type="application/pdf", size_bytes=1,
+        storage_bucket="local", storage_path="local/f.pdf",
+        source_kind="credit_card_pdf", created_by_user_id=str(uuid4()),
+    )
+    db_session.add_all([card, sf])
+    db_session.add(
+        CreditCardStatement(
+            id=str(uuid4()), workspace_id=ws, credit_card_id=card.id,
+            source_file_id=sf.id, statement_month=date(2026, 1, 1),
+            due_date=date(2026, 1, 15), status="closed",
+        )
+    )
+    # Purchase on day 10: after the card's real closing day (5), so the first invoice
+    # is the NEXT month. With the global default (23) it would wrongly be the same month.
+    _add_installment_tx(
+        db_session, ws, source_file_id=sf.id,
+        purchase_date=date(2025, 6, 10), current=1, total=48,
+    )
+    db_session.commit()
+
+    result = DashboardService(db_session).credit_card_installments(
+        workspace_id=ws, date_from=None, date_to=None, limit=100, credit_card_id=card.id,
+    )
+    assert result["closing_day"] == 5
+    item = next(i for i in result["items"] if "ANGLO" in str(i["description"]))
+    assert item["first_invoice_month"] == date(2025, 7, 1)  # month AFTER the day-10 buy

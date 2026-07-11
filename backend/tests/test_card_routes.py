@@ -393,6 +393,7 @@ def _register_pdf_card(
     due: date,
     name: str = "Visa Infinite",
     brand: str = "visa",
+    limit: Decimal | None = None,
 ) -> None:
     card_info = ParsedCreditCard(
         last_four=last_four,
@@ -403,11 +404,34 @@ def _register_pdf_card(
         due_day=15,
         due_date=due,
         statement_total=Decimal("100.00"),
+        limit_amount=limit,
     )
     result = ParseResult(
         source_kind=SourceKind.CREDIT_CARD_PDF, total_rows=0, credit_card=card_info
     )
     ImportService(db)._register_pdf_credit_card(workspace_id, source_file, result)
+
+
+def test_import_refreshes_limit_from_newest_statement(db_session: Session) -> None:
+    ws = str(uuid4())
+    # first import sets the limit; a NEWER statement refreshes it even though it is
+    # already set; an OLDER statement must not clobber the current value.
+    _register_pdf_card(
+        db_session, ws, _pdf_source_file(db_session, ws, "2026_01.pdf"),
+        last_four="1359", card_bin="4771", due=date(2026, 1, 15), limit=Decimal("100000.00"),
+    )
+    _register_pdf_card(
+        db_session, ws, _pdf_source_file(db_session, ws, "2026_02.pdf"),
+        last_four="1359", card_bin="4771", due=date(2026, 2, 15), limit=Decimal("155480.00"),
+    )
+    _register_pdf_card(
+        db_session, ws, _pdf_source_file(db_session, ws, "2025_12.pdf"),
+        last_four="1359", card_bin="4771", due=date(2025, 12, 15), limit=Decimal("90000.00"),
+    )
+    db_session.commit()
+
+    card = db_session.scalars(select(CreditCard).where(CreditCard.workspace_id == ws)).one()
+    assert card.limit_amount == Decimal("155480.00")  # from the newest statement
 
 
 def test_reissued_card_is_one_card_matched_by_bin(db_session: Session) -> None:
