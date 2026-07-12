@@ -472,3 +472,55 @@ def test_amount_recurring_rule_matches_debit_with_positive_reference(
     assert service.matches(rule, in_window) is True
     assert service.matches(rule, out_of_value) is False
     assert service.matches(rule, out_of_day) is False
+
+
+def test_apply_endpoint_categorizes_amount_recurring_rule(
+    client: TestClient,
+    db_session: Session,
+    auth: AuthContext,
+) -> None:
+    # The optimized apply endpoint used to only handle text match types, so an
+    # amount_recurring rule previewed matches but applied 0. It must categorize.
+    from datetime import date
+
+    category = Category(id=str(uuid4()), workspace_id=auth.workspace_id, name="Condominio")
+    rule = CategorizationRule(
+        id=str(uuid4()),
+        workspace_id=auth.workspace_id,
+        name="Condominio",
+        field="description",
+        match_type="amount_recurring",
+        pattern="DDA TIT",
+        category_id=category.id,
+        amount_ref=Decimal("1500.00"),
+        amount_tolerance=Decimal("500.00"),
+        day_min=7,
+        day_max=15,
+    )
+    tx = Transaction(
+        id=str(uuid4()),
+        workspace_id=auth.workspace_id,
+        source_file_id=str(uuid4()),
+        import_job_id=str(uuid4()),
+        source_type="bank_statement",
+        transaction_date=date(2026, 7, 10),
+        description="DDA TIT",
+        raw_description="DDA PAG TIT",
+        amount=Decimal("-1724.44"),
+        direction="debit",
+        dedupe_key=str(uuid4()),
+    )
+    db_session.add_all([category, rule, tx])
+    db_session.commit()
+
+    response = client.post("/v1/categorization-rules/apply")
+
+    assert response.status_code == 200
+    assert response.json()["category_applied_count"] == 1
+    assignment = db_session.scalars(
+        select(TransactionCategoryAssignment).where(
+            TransactionCategoryAssignment.transaction_id == tx.id
+        )
+    ).one()
+    assert assignment.category_id == category.id
+    assert assignment.source == "rule"
