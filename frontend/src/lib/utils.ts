@@ -118,6 +118,16 @@ export function categoryChartColor(name?: string | null, registered?: string | n
   return CATEGORY_HEX_PALETTE[Math.abs(n.charCodeAt(0) + n.length) % CATEGORY_HEX_PALETTE.length];
 }
 
+// Colour for a credit card: the registered colour if the user picked one, else a
+// palette hue by position so each card in a list is distinct. Shared by the Cards
+// page and the dashboard mini-widget so a card looks the same in both. (Cards are
+// often auto-created from imports with no colour and the same issuer, so a per-name
+// hash would paint them all identically — use the index instead.)
+export const CREDIT_CARD_PALETTE = ["#2a4d8f", "#1f8a5b", "#6a4ba8", "#c98a2b", "#a35a7d", "#2a9d8f"];
+export function creditCardColor(registered: string | null | undefined, index: number): string {
+  return registered || CREDIT_CARD_PALETTE[index % CREDIT_CARD_PALETTE.length];
+}
+
 // ---------------------------------------------------------------------------
 // Money formatters
 // ---------------------------------------------------------------------------

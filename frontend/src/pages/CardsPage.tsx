@@ -17,6 +17,7 @@ import {
   amountClass,
   apiErrorMessage,
   categoryChartColor,
+  creditCardColor,
   compactMoneyAbs,
   compactMoneyAxis,
   compactValueAbs,
@@ -76,10 +77,6 @@ function KIcon({ name, size = 15 }: { name: string; size?: number }) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const CARD_PALETTE = ["#2a4d8f", "#1f8a5b", "#6a4ba8", "#c98a2b", "#a35a7d", "#2a9d8f"];
-function cardColor(index: number): string {
-  return CARD_PALETTE[index % CARD_PALETTE.length];
-}
 function shade(hex: string): string {
   const n = parseInt(hex.slice(1), 16);
   const r = Math.max(0, (n >> 16) - 36);
@@ -560,7 +557,7 @@ export function CardsPage({
             </div>
           </button>
           {cardList.map((c, i) => {
-            const col = c.color || cardColor(i);
+            const col = creditCardColor(c.color, i);
             return (
               <button
                 key={c.id}

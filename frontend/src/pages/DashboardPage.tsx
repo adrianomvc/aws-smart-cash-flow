@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 
 import type { ApiSession } from "../lib/api";
-import { categoryChartColor, yearQueryFromDate } from "../lib/utils";
+import { categoryChartColor, creditCardColor, yearQueryFromDate } from "../lib/utils";
 import type { ImportDrilldown, Page, PeriodState, TransactionDrilldown } from "../types";
 import {
   getDashboardOverview, getMonthlyCashflow,
@@ -837,7 +837,7 @@ function CardsMini({ cards, onNav }: { cards: CreditCardRead[]; onNav: (p: Page)
         <div className="card-body" style={{ display: "grid", gap: 14 }}>
           {active.map((c, i) => {
             const limit = c.limit_amount ? parseFloat(c.limit_amount) : 0;
-            const col = categoryChartColor(c.issuer ?? c.name, c.color);
+            const col = creditCardColor(c.color, i);
             return (
               <div key={i}>
                 <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 7 }}>
