@@ -1,5 +1,5 @@
 import re
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import uuid4
 
@@ -743,6 +743,12 @@ async def apply_rules(
         )
 
     fields_used = sorted({rule.field for rule in rules})
+    # amount_recurring rules match on the value + day of month, so those columns
+    # must be loaded too (only when such a rule exists, to keep the lean path lean).
+    has_amount_recurring = any(rule.match_type == "amount_recurring" for rule in rules)
+    extra_columns = (
+        [Transaction.amount, Transaction.transaction_date] if has_amount_recurring else []
+    )
 
     # Fetch only the columns the rules read, as plain rows instead of ORM
     # instances. Hydrating every Transaction in the workspace used to exhaust
@@ -753,6 +759,7 @@ async def apply_rules(
             Transaction.id,
             Transaction.direction,
             *(getattr(Transaction, field) for field in fields_used),
+            *extra_columns,
         ).where(Transaction.workspace_id == auth.workspace_id)
     ).all()
 
@@ -804,9 +811,19 @@ async def apply_rules(
         matching_rule = None
         for rule, pattern, match_type, field in compiled_rules:
             value = norm_fields.get(field)
-            if value is None:
+            if match_type == "amount_recurring":
+                # value/pattern optional text constraint; amount + day are required.
+                matched = _row_matches_amount_recurring(
+                    rule=rule,
+                    amount=row_mapping.get("amount"),
+                    transaction_date=row_mapping.get("transaction_date"),
+                    direction=transaction.direction,
+                    value=value,
+                    pattern=pattern,
+                )
+            elif value is None:
                 continue
-            if match_type == "contains":
+            elif match_type == "contains":
                 matched = pattern in value
             elif match_type == "starts_with":
                 matched = value.startswith(pattern)
@@ -1552,3 +1569,36 @@ def _preview_item(
 
 def _normalize_spaces(value: str) -> str:
     return " ".join(value.strip().split())
+
+
+def _row_matches_amount_recurring(
+    *,
+    rule: CategorizationRule,
+    amount: Decimal | None,
+    transaction_date: date | None,
+    direction: str | None,
+    value: str | None,
+    pattern: str,
+) -> bool:
+    """Row-level twin of CategorizationService._matches_amount_recurring for the
+    optimized apply path. Compares amount magnitudes (debits are stored negative,
+    users enter a positive reference), with optional day-of-month, direction and
+    text (pattern) constraints."""
+    if rule.amount_ref is None or amount is None:
+        return False
+    tolerance = rule.amount_tolerance or Decimal("0.01")
+    if abs(abs(amount) - abs(rule.amount_ref)) > tolerance:
+        return False
+    if transaction_date is None:
+        if rule.day_min is not None or rule.day_max is not None:
+            return False
+    else:
+        if rule.day_min is not None and transaction_date.day < rule.day_min:
+            return False
+        if rule.day_max is not None and transaction_date.day > rule.day_max:
+            return False
+    if rule.direction_filter and direction != rule.direction_filter:
+        return False
+    if pattern and (value is None or pattern not in value):
+        return False
+    return True
